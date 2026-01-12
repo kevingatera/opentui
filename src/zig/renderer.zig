@@ -81,6 +81,7 @@ pub const CliRenderer = struct {
     allocator: Allocator,
     renderThread: ?std.Thread = null,
     stdoutBuffer: [4096]u8,
+    writeOutBuf: [1024]u8 = undefined,
     debugOverlay: struct {
         enabled: bool,
         corner: DebugOverlayCorner,
@@ -811,9 +812,47 @@ pub const CliRenderer = struct {
     }
 
     pub fn clearTerminal(self: *CliRenderer) void {
+        self.writeOut(ansi.ANSI.clearAndHome);
+    }
+
+    pub fn writeOut(self: *CliRenderer, data: []const u8) void {
+        if (data.len == 0) return;
+
+        if (self.useThread) {
+            self.renderMutex.lock();
+            while (self.renderInProgress) {
+                self.renderCondition.wait(&self.renderMutex);
+            }
+            self.renderMutex.unlock();
+        }
+
         var stdoutWriter = std.fs.File.stdout().writer(&self.stdoutBuffer);
         const w = &stdoutWriter.interface;
-        w.writeAll(ansi.ANSI.clearAndHome) catch {};
+        w.writeAll(data) catch {};
+        w.flush() catch {};
+    }
+
+    pub fn writeOutMultiple(self: *CliRenderer, data_slices: []const []const u8) void {
+        if (self.useThread) {
+            self.renderMutex.lock();
+            while (self.renderInProgress) {
+                self.renderCondition.wait(&self.renderMutex);
+            }
+            self.renderMutex.unlock();
+        }
+
+        var totalLen: usize = 0;
+        for (data_slices) |slice| {
+            totalLen += slice.len;
+        }
+
+        if (totalLen == 0) return;
+
+        var stdoutWriter = std.fs.File.stdout().writer(&self.stdoutBuffer);
+        const w = &stdoutWriter.interface;
+        for (data_slices) |slice| {
+            w.writeAll(slice) catch {};
+        }
         w.flush() catch {};
     }
 
@@ -1093,47 +1132,32 @@ pub const CliRenderer = struct {
     }
 
     pub fn enableMouse(self: *CliRenderer, enableMovement: bool) void {
-        _ = enableMovement; // TODO: Use this to control motion tracking levels
-        var stdoutWriter = std.fs.File.stdout().writer(&self.stdoutBuffer);
-        const writer = &stdoutWriter.interface;
-
-        self.terminal.setMouseMode(writer, true) catch {};
-
-        writer.flush() catch {};
+        _ = enableMovement;
+        var stream = std.io.fixedBufferStream(&self.writeOutBuf);
+        self.terminal.setMouseMode(stream.writer(), true) catch {};
+        self.writeOut(stream.getWritten());
     }
 
     pub fn queryPixelResolution(self: *CliRenderer) void {
-        var stdoutWriter = std.fs.File.stdout().writer(&self.stdoutBuffer);
-        const writer = &stdoutWriter.interface;
-
-        writer.writeAll(ansi.ANSI.queryPixelSize) catch {};
-
-        writer.flush() catch {};
+        self.writeOut(ansi.ANSI.queryPixelSize);
     }
 
     pub fn disableMouse(self: *CliRenderer) void {
-        var stdoutWriter = std.fs.File.stdout().writer(&self.stdoutBuffer);
-        const writer = &stdoutWriter.interface;
-
-        self.terminal.setMouseMode(writer, false) catch {};
-
-        writer.flush() catch {};
+        var stream = std.io.fixedBufferStream(&self.writeOutBuf);
+        self.terminal.setMouseMode(stream.writer(), false) catch {};
+        self.writeOut(stream.getWritten());
     }
 
     pub fn enableKittyKeyboard(self: *CliRenderer, flags: u8) void {
-        var stdoutWriter = std.fs.File.stdout().writer(&self.stdoutBuffer);
-        const writer = &stdoutWriter.interface;
-
-        self.terminal.setKittyKeyboard(writer, true, flags) catch {};
-        writer.flush() catch {};
+        var stream = std.io.fixedBufferStream(&self.writeOutBuf);
+        self.terminal.setKittyKeyboard(stream.writer(), true, flags) catch {};
+        self.writeOut(stream.getWritten());
     }
 
     pub fn disableKittyKeyboard(self: *CliRenderer) void {
-        var stdoutWriter = std.fs.File.stdout().writer(&self.stdoutBuffer);
-        const writer = &stdoutWriter.interface;
-
-        self.terminal.setKittyKeyboard(writer, false, 0) catch {};
-        writer.flush() catch {};
+        var stream = std.io.fixedBufferStream(&self.writeOutBuf);
+        self.terminal.setKittyKeyboard(stream.writer(), false, 0) catch {};
+        self.writeOut(stream.getWritten());
     }
 
     pub fn getTerminalCapabilities(self: *CliRenderer) Terminal.Capabilities {
@@ -1142,11 +1166,10 @@ pub const CliRenderer = struct {
 
     pub fn processCapabilityResponse(self: *CliRenderer, response: []const u8) void {
         self.terminal.processCapabilityResponse(response);
-        var stdoutWriter = std.fs.File.stdout().writer(&self.stdoutBuffer);
-        const writer = &stdoutWriter.interface;
+        var stream = std.io.fixedBufferStream(&self.writeOutBuf);
         const useKitty = self.terminal.opts.kitty_keyboard_flags > 0;
-        self.terminal.enableDetectedFeatures(writer, useKitty) catch {};
-        writer.flush() catch {};
+        self.terminal.enableDetectedFeatures(stream.writer(), useKitty) catch {};
+        self.writeOut(stream.getWritten());
     }
 
     pub fn setCursorPosition(self: *CliRenderer, x: u32, y: u32, visible: bool) void {
@@ -1167,6 +1190,12 @@ pub const CliRenderer = struct {
 
     pub fn getKittyKeyboardFlags(self: *CliRenderer) u8 {
         return self.terminal.opts.kitty_keyboard_flags;
+    }
+
+    pub fn setTerminalTitle(self: *CliRenderer, title: []const u8) void {
+        var stream = std.io.fixedBufferStream(&self.writeOutBuf);
+        self.terminal.setTerminalTitle(stream.writer(), title);
+        self.writeOut(stream.getWritten());
     }
 
     fn renderDebugOverlay(self: *CliRenderer) void {
