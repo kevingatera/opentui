@@ -408,6 +408,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private _capabilities: any | null = null
   private _latestPointer: { x: number; y: number } = { x: 0, y: 0 }
   private _hasPointer: boolean = false
+  private _lastPointerModifiers: RawMouseEvent["modifiers"] = { shift: false, alt: false, ctrl: false }
 
   private _currentFocusedRenderable: Renderable | null = null
   private lifecyclePasses: Set<Renderable> = new Set()
@@ -1088,6 +1089,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       this._latestPointer.x = mouseEvent.x
       this._latestPointer.y = mouseEvent.y
       this._hasPointer = true
+      this._lastPointerModifiers = mouseEvent.modifiers
 
       if (this._console.visible) {
         const consoleBounds = this._console.bounds
@@ -1231,6 +1233,52 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     }
 
     return false
+  }
+
+  /**
+   * Recheck hover state after hit grid changes.
+   * Called after render when native code detects the hit grid changed.
+   * Fires out/over events if the element under the cursor changed.
+   */
+  private recheckHoverState(): void {
+    if (this._isDestroyed || !this._hasPointer) return
+    if (this.capturedRenderable) return
+
+    const hitId = this.hitTest(this._latestPointer.x, this._latestPointer.y)
+    const hitRenderable = Renderable.renderablesByNumber.get(hitId)
+    const lastOver = this.lastOverRenderable
+
+    // No change
+    if (lastOver?.num === hitId) {
+      this.lastOverRenderableNum = hitId
+      return
+    }
+
+    const baseEvent: RawMouseEvent = {
+      type: "move",
+      button: 0,
+      x: this._latestPointer.x,
+      y: this._latestPointer.y,
+      modifiers: this._lastPointerModifiers,
+    }
+
+    // Fire out on old element
+    if (lastOver) {
+      const event = new MouseEvent(lastOver, { ...baseEvent, type: "out" })
+      lastOver.processMouseEvent(event)
+    }
+
+    this.lastOverRenderable = hitRenderable
+    this.lastOverRenderableNum = hitId
+
+    // Fire over on new element
+    if (hitRenderable) {
+      const event = new MouseEvent(hitRenderable, {
+        ...baseEvent,
+        type: "over",
+      })
+      hitRenderable.processMouseEvent(event)
+    }
   }
 
   public hitTest(x: number, y: number): number {
@@ -1752,6 +1800,11 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       // If destroy() was requested during this frame, skip native work and scheduling.
       if (!this._isDestroyed) {
         this.renderNative()
+
+        // Check if hit grid changed and recheck hover state if needed
+        if (this._useMouse && this.lib.getHitGridDirty(this.rendererPtr)) {
+          this.recheckHoverState()
+        }
 
         const overallFrameTime = performance.now() - overallStart
 
