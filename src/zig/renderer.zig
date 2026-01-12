@@ -1167,6 +1167,10 @@ pub const CliRenderer = struct {
     pub fn processCapabilityResponse(self: *CliRenderer, response: []const u8) void {
         self.terminal.processCapabilityResponse(response);
         var stream = std.io.fixedBufferStream(&self.writeOutBuf);
+        _ = self.terminal.sendPendingQueries(stream.writer()) catch |err| blk: {
+            logger.warn("Failed to send pending queries: {}", .{err});
+            break :blk false;
+        };
         const useKitty = self.terminal.opts.kitty_keyboard_flags > 0;
         self.terminal.enableDetectedFeatures(stream.writer(), useKitty) catch {};
         self.writeOut(stream.getWritten());
