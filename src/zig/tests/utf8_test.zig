@@ -3633,3 +3633,181 @@ test "findGraphemeInfo: comprehensive multilingual text" {
     const final_computed_width = utf8.calculateTextWidth(text, 4, false, .unicode);
     try testing.expectEqual(expected_width, final_computed_width);
 }
+
+// ============================================================================
+// THAI DIACRITICS AND COMBINING MARKS TESTS
+// ============================================================================
+
+test "Thai: base consonants have width 1" {
+    const consonants = "กขคงจฉชซญฎฏฐดตถทธนบปผฝพฟภมยรลวศษสหอฮ";
+    const width = utf8.calculateTextWidth(consonants, 4, false, .unicode);
+    try testing.expectEqual(@as(u32, 36), width);
+}
+
+test "Thai: spacing vowels have width 1" {
+    const spacing_vowels = "าะแโใไ";
+    const width = utf8.calculateTextWidth(spacing_vowels, 4, false, .unicode);
+    try testing.expectEqual(@as(u32, 6), width);
+}
+
+test "Thai: combining vowels above have width 0" {
+    const base = "ก";
+    const with_sara_i = "กิ";
+    const with_sara_ii = "กี";
+    const with_sara_ue = "กึ";
+    const with_sara_uee = "กื";
+    const with_mai_han_akat = "กั";
+
+    try testing.expectEqual(@as(u32, 1), utf8.calculateTextWidth(base, 4, false, .unicode));
+    try testing.expectEqual(@as(u32, 1), utf8.calculateTextWidth(with_sara_i, 4, false, .unicode));
+    try testing.expectEqual(@as(u32, 1), utf8.calculateTextWidth(with_sara_ii, 4, false, .unicode));
+    try testing.expectEqual(@as(u32, 1), utf8.calculateTextWidth(with_sara_ue, 4, false, .unicode));
+    try testing.expectEqual(@as(u32, 1), utf8.calculateTextWidth(with_sara_uee, 4, false, .unicode));
+    try testing.expectEqual(@as(u32, 1), utf8.calculateTextWidth(with_mai_han_akat, 4, false, .unicode));
+}
+
+test "Thai: combining vowels below have width 0" {
+    const with_sara_u = "กุ";
+    const with_sara_uu = "กู";
+
+    try testing.expectEqual(@as(u32, 1), utf8.calculateTextWidth(with_sara_u, 4, false, .unicode));
+    try testing.expectEqual(@as(u32, 1), utf8.calculateTextWidth(with_sara_uu, 4, false, .unicode));
+}
+
+test "Thai: tone marks have width 0" {
+    const with_mai_ek = "ก่";
+    const with_mai_tho = "ก้";
+    const with_mai_tri = "ก๊";
+    const with_mai_chattawa = "ก๋";
+
+    try testing.expectEqual(@as(u32, 1), utf8.calculateTextWidth(with_mai_ek, 4, false, .unicode));
+    try testing.expectEqual(@as(u32, 1), utf8.calculateTextWidth(with_mai_tho, 4, false, .unicode));
+    try testing.expectEqual(@as(u32, 1), utf8.calculateTextWidth(with_mai_tri, 4, false, .unicode));
+    try testing.expectEqual(@as(u32, 1), utf8.calculateTextWidth(with_mai_chattawa, 4, false, .unicode));
+}
+
+test "Thai: other diacritics have width 0" {
+    const with_maitaikhu = "ก็";
+    const with_thanthakhat = "ก์";
+    const with_nikhahit = "กํ";
+
+    try testing.expectEqual(@as(u32, 1), utf8.calculateTextWidth(with_maitaikhu, 4, false, .unicode));
+    try testing.expectEqual(@as(u32, 1), utf8.calculateTextWidth(with_thanthakhat, 4, false, .unicode));
+    try testing.expectEqual(@as(u32, 1), utf8.calculateTextWidth(with_nikhahit, 4, false, .unicode));
+}
+
+test "Thai: combined vowel and tone mark" {
+    const text = "กี่";
+    try testing.expectEqual(@as(u32, 1), utf8.calculateTextWidth(text, 4, false, .unicode));
+
+    const text2 = "คือ";
+    try testing.expectEqual(@as(u32, 2), utf8.calculateTextWidth(text2, 4, false, .unicode));
+}
+
+test "Thai: word 'ภาษาไทย' (Thai language)" {
+    const text = "ภาษาไทย";
+    try testing.expectEqual(@as(u32, 7), utf8.calculateTextWidth(text, 4, false, .unicode));
+}
+
+test "Thai: word 'อย่าง' with tone mark" {
+    const text = "อย่าง";
+    try testing.expectEqual(@as(u32, 4), utf8.calculateTextWidth(text, 4, false, .unicode));
+}
+
+test "Thai: word 'อธิบาย' with vowel above" {
+    const text = "อธิบาย";
+    try testing.expectEqual(@as(u32, 5), utf8.calculateTextWidth(text, 4, false, .unicode));
+}
+
+test "Thai: full sentence with spaces" {
+    const text = "ภาษาไทย คืออะไร อธิบายมาอย่างละเอียด";
+    try testing.expectEqual(@as(u32, 32), utf8.calculateTextWidth(text, 4, false, .unicode));
+}
+
+test "Thai: wrap by width respects combining marks" {
+    const text = "คือ";
+
+    const result1 = utf8.findWrapPosByWidth(text, 1, 4, false, .unicode);
+    try testing.expectEqual(@as(u32, 6), result1.byte_offset);
+    try testing.expectEqual(@as(u32, 1), result1.columns_used);
+
+    const result2 = utf8.findWrapPosByWidth(text, 2, 4, false, .unicode);
+    try testing.expectEqual(@as(u32, 9), result2.byte_offset);
+    try testing.expectEqual(@as(u32, 2), result2.columns_used);
+}
+
+test "Thai: wrap by width with tone marks" {
+    const text = "ก่อน";
+
+    const result2 = utf8.findWrapPosByWidth(text, 2, 4, false, .unicode);
+    try testing.expectEqual(@as(u32, 2), result2.columns_used);
+
+    const result3 = utf8.findWrapPosByWidth(text, 3, 4, false, .unicode);
+    try testing.expectEqual(@as(u32, 3), result3.columns_used);
+}
+
+test "Thai: grapheme info for combining marks" {
+    const text = "กี่";
+
+    var result: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
+    defer result.deinit(testing.allocator);
+
+    try utf8.findGraphemeInfo(text, 4, false, .unicode, testing.allocator, &result);
+
+    try testing.expectEqual(@as(usize, 1), result.items.len);
+    try testing.expectEqual(@as(u8, 1), result.items[0].width);
+}
+
+test "Thai: grapheme info for word with combining marks" {
+    const text = "คือ";
+
+    var result: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
+    defer result.deinit(testing.allocator);
+
+    try utf8.findGraphemeInfo(text, 4, false, .unicode, testing.allocator, &result);
+
+    try testing.expectEqual(@as(usize, 2), result.items.len);
+    try testing.expectEqual(@as(u8, 1), result.items[0].width);
+    try testing.expectEqual(@as(u8, 1), result.items[1].width);
+}
+
+test "Thai: mixed Thai and ASCII" {
+    const text = "Hello ภาษาไทย World";
+    try testing.expectEqual(@as(u32, 19), utf8.calculateTextWidth(text, 4, false, .unicode));
+}
+
+test "Thai: mixed Thai and emoji" {
+    const text = "ภาษา 🇹🇭 ไทย";
+    try testing.expectEqual(@as(u32, 11), utf8.calculateTextWidth(text, 4, false, .unicode));
+}
+
+test "Thai: คำว่า width should be 3" {
+    const text = "คำว่า";
+    try testing.expectEqual(@as(u32, 3), utf8.calculateTextWidth(text, 4, false, .unicode));
+}
+
+test "Thai: ว่ width should be 1" {
+    const text = "ว่";
+    try testing.expectEqual(@as(u32, 1), utf8.calculateTextWidth(text, 4, false, .unicode));
+}
+
+test "Thai: ว่ wcwidth vs unicode mode comparison" {
+    const text = "ว่";
+    const wcwidth_result = utf8.calculateTextWidth(text, 4, false, .wcwidth);
+    const unicode_result = utf8.calculateTextWidth(text, 4, false, .unicode);
+
+    try testing.expectEqual(@as(u32, 1), wcwidth_result);
+    try testing.expectEqual(@as(u32, 1), unicode_result);
+}
+
+test "Thai: ว่ is a single grapheme cluster" {
+    const text = "ว่";
+
+    var result: std.ArrayListUnmanaged(utf8.GraphemeInfo) = .{};
+    defer result.deinit(testing.allocator);
+
+    try utf8.findGraphemeInfo(text, 4, false, .unicode, testing.allocator, &result);
+
+    try testing.expectEqual(@as(usize, 1), result.items.len);
+    try testing.expectEqual(@as(u8, 1), result.items[0].width);
+}

@@ -1209,11 +1209,10 @@ pub const OptimizedBuffer = struct {
                         special_idx += 1;
                     } else {
                         if (byte_offset >= chunk_bytes.len) break;
-                        // Read the next UTF-8 grapheme properly
                         const cp_len = std.unicode.utf8ByteSequenceLength(chunk_bytes[byte_offset]) catch 1;
                         const next_byte_offset = @min(byte_offset + cp_len, chunk_bytes.len);
                         grapheme_bytes = chunk_bytes[byte_offset..next_byte_offset];
-                        g_width = 1; // Assuming width 1 for non-special characters (ASCII mostly)
+                        g_width = 1;
                         byte_offset = next_byte_offset;
                     }
 

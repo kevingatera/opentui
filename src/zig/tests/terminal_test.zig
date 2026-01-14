@@ -1,6 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 const Terminal = @import("../terminal.zig");
+const utf8 = @import("../utf8.zig");
 
 test "parseXtversion - kitty format" {
     var term = Terminal.init(.{});
@@ -326,4 +327,54 @@ test "isXtversionTmux - detects tmux from xtversion" {
     term.term_info.name_len = 4;
     @memcpy(term.term_info.name[0..4], "tmux");
     try testing.expect(term.isXtversionTmux());
+}
+
+// ============================================================================
+// GRAPHEME CURSOR POSITIONING CAPABILITY TESTS
+// ============================================================================
+
+test "processCapabilityResponse - tmux sets explicit_cursor_positioning" {
+    var term: Terminal = .{};
+
+    term.caps.explicit_cursor_positioning = false;
+    term.caps.unicode = .unicode;
+
+    const response = "\x1bP>|tmux 3.5a\x1b\\";
+    term.processCapabilityResponse(response);
+
+    try testing.expect(term.caps.explicit_cursor_positioning);
+    try testing.expectEqual(utf8.WidthMethod.wcwidth, term.caps.unicode);
+}
+
+test "processCapabilityResponse - alacritty sets explicit_cursor_positioning" {
+    var term: Terminal = .{};
+
+    term.caps.explicit_cursor_positioning = false;
+
+    const response = "\x1bP>|alacritty 0.13.0\x1b\\";
+    term.processCapabilityResponse(response);
+
+    try testing.expect(term.caps.explicit_cursor_positioning);
+}
+
+test "processCapabilityResponse - kitty does not set explicit_cursor_positioning" {
+    var term: Terminal = .{};
+
+    term.caps.explicit_cursor_positioning = false;
+
+    const response = "\x1bP>|kitty(0.40.1)\x1b\\";
+    term.processCapabilityResponse(response);
+
+    try testing.expect(!term.caps.explicit_cursor_positioning);
+}
+
+test "processCapabilityResponse - ghostty does not set explicit_cursor_positioning" {
+    var term: Terminal = .{};
+
+    term.caps.explicit_cursor_positioning = false;
+
+    const response = "\x1bP>|ghostty 1.1.3\x1b\\";
+    term.processCapabilityResponse(response);
+
+    try testing.expect(!term.caps.explicit_cursor_positioning);
 }
