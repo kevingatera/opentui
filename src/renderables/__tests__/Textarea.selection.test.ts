@@ -225,6 +225,7 @@ describe("Textarea - Selection Tests", () => {
         width: 40,
         height: 5,
         selectable: true,
+        scrollMargin: 0,
       })
 
       editor.gotoLine(10)
