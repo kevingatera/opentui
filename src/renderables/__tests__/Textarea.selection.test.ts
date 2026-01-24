@@ -218,7 +218,6 @@ describe("Textarea - Selection Tests", () => {
       buffer.destroy()
     })
 
-    // It's flaky
     it("should handle viewport-aware selection correctly", async () => {
       const { textarea: editor } = await createTextareaRenderable(currentRenderer, renderOnce, {
         initialValue: Array.from({ length: 15 }, (_, i) => `Line ${i}`).join("\n"),
