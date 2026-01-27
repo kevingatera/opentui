@@ -228,12 +228,6 @@ const examples: Example[] = [
     destroy: draggableThreeDemo.destroy,
   },
   {
-    name: "Opacity Demo",
-    description: "Interactive opacity/alpha demonstration with animated boxes",
-    run: opacityExample.run,
-    destroy: opacityExample.destroy,
-  },
-  {
     name: "Static Sprite",
     description: "Static sprite rendering demo",
     run: staticSpriteExample.run,
