@@ -43,6 +43,19 @@ pub const CursorStyle = enum {
     underline,
 };
 
+pub const MousePointerStyle = enum(u8) {
+    default = 0,
+    pointer = 1,
+    text = 2,
+    crosshair = 3,
+    move = 4,
+    not_allowed = 5,
+
+    pub fn toName(self: MousePointerStyle) []const u8 {
+        return if (self == .not_allowed) "not-allowed" else @tagName(self);
+    }
+};
+
 pub const ClipboardTarget = enum {
     clipboard, // "c"
     primary, // "p"
@@ -102,6 +115,7 @@ state: struct {
     color_scheme_updates: bool = false,
     focus_tracking: bool = false,
     modify_other_keys: bool = false,
+    mouse_pointer: MousePointerStyle = .default,
     cursor: struct {
         row: u16 = 0,
         col: u16 = 0,
@@ -128,6 +142,8 @@ pub fn init(opts: Options) Terminal {
 pub fn resetState(self: *Terminal, tty: anytype) !void {
     try tty.writeAll(ansi.ANSI.showCursor);
     try tty.writeAll(ansi.ANSI.reset);
+    try tty.writeAll(ansi.ANSI.resetMousePointer);
+    self.state.mouse_pointer = .default;
 
     if (self.state.kitty_keyboard) {
         try self.setKittyKeyboard(tty, false, 0);
@@ -718,6 +734,14 @@ fn isHyperlinkTerm(value: []const u8) bool {
 
 pub fn getCapabilities(self: *Terminal) Capabilities {
     return self.caps;
+}
+
+pub fn setMousePointerStyle(self: *Terminal, style: MousePointerStyle) void {
+    self.state.mouse_pointer = style;
+}
+
+pub fn getMousePointer(self: *Terminal) MousePointerStyle {
+    return self.state.mouse_pointer;
 }
 
 pub fn setCursorPosition(self: *Terminal, x: u32, y: u32, visible: bool) void {

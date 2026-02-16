@@ -1,8 +1,9 @@
 import { ANSI } from "./ansi"
 import { Renderable, RootRenderable } from "./Renderable"
 import {
-  type CursorStyle,
   DebugOverlayCorner,
+  type CursorStyleOptions,
+  type MousePointerStyle,
   type RenderContext,
   type ThemeMode,
   type ViewportBounds,
@@ -422,6 +423,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private _latestPointer: { x: number; y: number } = { x: 0, y: 0 }
   private _hasPointer: boolean = false
   private _lastPointerModifiers: RawMouseEvent["modifiers"] = { shift: false, alt: false, ctrl: false }
+  private _currentMousePointerStyle: MousePointerStyle | undefined = undefined
 
   private _currentFocusedRenderable: Renderable | null = null
   private lifecyclePasses: Set<Renderable> = new Set()
@@ -1370,6 +1372,10 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       hitRenderable.processMouseEvent(event)
     }
   }
+  public setMousePointer(style: MousePointerStyle): void {
+    this._currentMousePointerStyle = style
+    this.lib.setCursorStyleOptions(this.rendererPtr, { cursor: style })
+  }
 
   public hitTest(x: number, y: number): number {
     return this.lib.checkHit(this.rendererPtr, x, y)
@@ -1549,16 +1555,11 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     lib.setCursorPosition(renderer.rendererPtr, x, y, visible)
   }
 
-  public static setCursorStyle(
-    renderer: CliRenderer,
-    style: CursorStyle,
-    blinking: boolean = false,
-    color?: RGBA,
-  ): void {
+  public static setCursorStyle(renderer: CliRenderer, options: CursorStyleOptions): void {
     const lib = resolveRenderLib()
-    lib.setCursorStyle(renderer.rendererPtr, style, blinking)
-    if (color) {
-      lib.setCursorColor(renderer.rendererPtr, color)
+    lib.setCursorStyleOptions(renderer.rendererPtr, options)
+    if (options.cursor !== undefined) {
+      renderer._currentMousePointerStyle = options.cursor
     }
   }
 
@@ -1571,10 +1572,10 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.lib.setCursorPosition(this.rendererPtr, x, y, visible)
   }
 
-  public setCursorStyle(style: CursorStyle, blinking: boolean = false, color?: RGBA): void {
-    this.lib.setCursorStyle(this.rendererPtr, style, blinking)
-    if (color) {
-      this.lib.setCursorColor(this.rendererPtr, color)
+  public setCursorStyle(options: CursorStyleOptions): void {
+    this.lib.setCursorStyleOptions(this.rendererPtr, options)
+    if (options.cursor !== undefined) {
+      this._currentMousePointerStyle = options.cursor
     }
   }
 
