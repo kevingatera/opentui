@@ -27,6 +27,7 @@ import {
   MeasureResultStruct,
   CursorStateStruct,
   CursorStyleOptionsStruct,
+  GridDrawOptionsStruct,
   NativeSpanFeedOptionsStruct,
   NativeSpanFeedStatsStruct,
   ReserveInfoStruct,
@@ -339,6 +340,10 @@ function getOpenTUILib(libPath?: string) {
     },
     bufferDrawGrayscaleBufferSupersampled: {
       args: ["ptr", "i32", "i32", "ptr", "u32", "u32", "ptr", "ptr"],
+      returns: "void",
+    },
+    bufferDrawGrid: {
+      args: ["ptr", "ptr", "ptr", "ptr", "ptr", "u32", "ptr", "u32", "ptr"],
       returns: "void",
     },
     bufferDrawBox: {
@@ -1468,6 +1473,17 @@ export interface RenderLib {
     fg: RGBA | null,
     bg: RGBA | null,
   ) => void
+  bufferDrawGrid: (
+    buffer: Pointer,
+    borderChars: Uint32Array,
+    borderFg: RGBA,
+    borderBg: RGBA,
+    columnOffsets: Int32Array,
+    columnCount: number,
+    rowOffsets: Int32Array,
+    rowCount: number,
+    options: { drawInner: boolean; drawOuter: boolean },
+  ) => void
   bufferDrawBox: (
     buffer: Pointer,
     x: number,
@@ -2229,6 +2245,35 @@ class FFIRenderLib implements RenderLib {
       srcHeight,
       fg?.buffer ?? null,
       bg?.buffer ?? null,
+    )
+  }
+
+  public bufferDrawGrid(
+    buffer: Pointer,
+    borderChars: Uint32Array,
+    borderFg: RGBA,
+    borderBg: RGBA,
+    columnOffsets: Int32Array,
+    columnCount: number,
+    rowOffsets: Int32Array,
+    rowCount: number,
+    options: { drawInner: boolean; drawOuter: boolean },
+  ): void {
+    const optionsBuffer = GridDrawOptionsStruct.pack({
+      drawInner: options.drawInner,
+      drawOuter: options.drawOuter,
+    })
+
+    this.opentui.symbols.bufferDrawGrid(
+      buffer,
+      borderChars,
+      borderFg.buffer,
+      borderBg.buffer,
+      columnOffsets,
+      columnCount,
+      rowOffsets,
+      rowCount,
+      ptr(optionsBuffer),
     )
   }
 

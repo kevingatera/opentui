@@ -125,6 +125,11 @@ export const CursorStyleOptionsStruct = defineStruct([
   ["cursor", "u8", { default: 255 }],
 ])
 
+export const GridDrawOptionsStruct = defineStruct([
+  ["drawInner", "bool_u8", { default: true }],
+  ["drawOuter", "bool_u8", { default: true }],
+])
+
 export type GrowthPolicy = "grow" | "block"
 
 export type NativeSpanFeedOptions = {
