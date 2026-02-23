@@ -74,10 +74,10 @@ registerEnvVar({
   default: false,
 })
 registerEnvVar({
-  name: "OPENTUI_NO_GRAPHICS",
-  description: "Disable Kitty graphics protocol detection",
+  name: "OPENTUI_GRAPHICS",
+  description: "Enable Kitty graphics protocol detection",
   type: "boolean",
-  default: false,
+  default: true,
 })
 registerEnvVar({
   name: "OPENTUI_FORCE_NOZWJ",
@@ -128,6 +128,10 @@ function getOpenTUILib(libPath?: string) {
     createRenderer: {
       args: ["u32", "u32", "bool", "bool"],
       returns: "ptr",
+    },
+    setTerminalEnvVar: {
+      args: ["ptr", "ptr", "usize", "ptr", "usize"],
+      returns: "bool",
     },
     destroyRenderer: {
       args: ["ptr"],
@@ -1358,6 +1362,7 @@ export type NativeSpanFeedEventHandler = (eventId: number, arg0: Pointer, arg1: 
 
 export interface RenderLib {
   createRenderer: (width: number, height: number, options?: { testing?: boolean; remote?: boolean }) => Pointer | null
+  setTerminalEnvVar: (renderer: Pointer, key: string, value: string) => boolean
   destroyRenderer: (renderer: Pointer) => void
   setUseThread: (renderer: Pointer, useThread: boolean) => void
   setBackgroundColor: (renderer: Pointer, color: RGBA) => void
@@ -1958,6 +1963,12 @@ class FFIRenderLib implements RenderLib {
     const testing = options.testing ?? false
     const remote = options.remote ?? false
     return this.opentui.symbols.createRenderer(width, height, testing, remote)
+  }
+
+  public setTerminalEnvVar(renderer: Pointer, key: string, value: string): boolean {
+    const keyBytes = this.encoder.encode(key)
+    const valueBytes = this.encoder.encode(value)
+    return this.opentui.symbols.setTerminalEnvVar(renderer, keyBytes, keyBytes.length, valueBytes, valueBytes.length)
   }
 
   public destroyRenderer(renderer: Pointer): void {
