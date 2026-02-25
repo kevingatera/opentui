@@ -1032,7 +1032,6 @@ export class TextTableRenderable extends Renderable {
     if (!row) return
 
     for (const cell of row) {
-      if (!cell.textBufferView.hasSelection()) continue
       cell.textBufferView.resetLocalSelection()
     }
   }
