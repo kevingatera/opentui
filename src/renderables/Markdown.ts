@@ -159,6 +159,7 @@ export class MarkdownRenderable extends Renderable {
   }
 
   set content(value: string) {
+    if (this.isDestroyed) return
     if (this._content !== value) {
       this._content = value
       this.updateBlocks()
@@ -195,11 +196,10 @@ export class MarkdownRenderable extends Renderable {
   }
 
   set streaming(value: boolean) {
+    if (this.isDestroyed) return
     if (this._streaming !== value) {
       this._streaming = value
-      // Force a full rebuild on mode transitions to keep table rendering
-      // correct.
-      this.clearCache()
+      this.updateBlocks(true)
     }
   }
 
@@ -836,7 +836,8 @@ export class MarkdownRenderable extends Renderable {
     textRenderable.marginBottom = marginBottom
   }
 
-  private updateBlocks(): void {
+  private updateBlocks(forceTableRefresh: boolean = false): void {
+    if (this.isDestroyed) return
     if (!this._content) {
       this.clearBlockStates()
       this._parseState = null
@@ -878,8 +879,14 @@ export class MarkdownRenderable extends Renderable {
       const hasNextToken = i < lastBlockIndex
       const existing = this._blockStates[blockIndex]
 
+      const shouldForceTableRefresh = forceTableRefresh && token.type === "table"
+
       // Same token object reference means unchanged
       if (existing && existing.token === token) {
+        if (shouldForceTableRefresh) {
+          this.updateBlockRenderable(existing, token, blockIndex, hasNextToken)
+          existing.tokenRaw = token.raw
+        }
         blockIndex++
         continue
       }
@@ -887,6 +894,10 @@ export class MarkdownRenderable extends Renderable {
       // Same content, update reference
       if (existing && existing.tokenRaw === token.raw && existing.token.type === token.type) {
         existing.token = token
+        if (shouldForceTableRefresh) {
+          this.updateBlockRenderable(existing, token, blockIndex, hasNextToken)
+          existing.tokenRaw = token.raw
+        }
         blockIndex++
         continue
       }
