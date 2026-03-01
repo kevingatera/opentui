@@ -4,7 +4,13 @@ import { TextRenderable } from "../Text"
 import { TextTableRenderable } from "../TextTable"
 import { SyntaxStyle } from "../../syntax-style"
 import { RGBA } from "../../lib/RGBA"
-import { createTestRenderer, type MockMouse, type TestRenderer } from "../../testing"
+import {
+  createTestRenderer,
+  type MockMouse,
+  type TestRenderer,
+  MockTreeSitterClient,
+  TestRecorder,
+} from "../../testing"
 import { TextAttributes, type CapturedFrame } from "../../types"
 
 let renderer: TestRenderer
@@ -704,6 +710,99 @@ const x = 1;
   `)
 })
 
+test("code block concealment is disabled by default", async () => {
+  const mockTreeSitterClient = new MockTreeSitterClient()
+  mockTreeSitterClient.setMockResult({
+    highlights: [[0, 1, "conceal", { conceal: "" }]],
+  })
+
+  const md = new MarkdownRenderable(renderer, {
+    id: "markdown-code-default-conceal",
+    content: "```markdown\n# Hidden heading\n```",
+    syntaxStyle,
+    conceal: true,
+    treeSitterClient: mockTreeSitterClient,
+  })
+
+  renderer.root.add(md)
+  await renderOnce()
+  expect(mockTreeSitterClient.isHighlighting()).toBe(true)
+
+  mockTreeSitterClient.resolveAllHighlightOnce()
+  await Bun.sleep(10)
+  await renderOnce()
+
+  const frame = captureFrame()
+  expect(frame).toContain("# Hidden heading")
+})
+
+test("code block concealment can be enabled with concealCode", async () => {
+  const mockTreeSitterClient = new MockTreeSitterClient()
+  mockTreeSitterClient.setMockResult({
+    highlights: [[0, 1, "conceal", { conceal: "" }]],
+  })
+
+  const md = new MarkdownRenderable(renderer, {
+    id: "markdown-code-conceal-enabled",
+    content: "```markdown\n# Hidden heading\n```",
+    syntaxStyle,
+    conceal: true,
+    concealCode: true,
+    treeSitterClient: mockTreeSitterClient,
+  })
+
+  renderer.root.add(md)
+  await renderOnce()
+  expect(mockTreeSitterClient.isHighlighting()).toBe(true)
+
+  mockTreeSitterClient.resolveAllHighlightOnce()
+  await Bun.sleep(10)
+  await renderOnce()
+
+  const frame = captureFrame()
+  expect(frame).not.toContain("# Hidden heading")
+  expect(frame).toContain("Hidden heading")
+})
+
+test("toggling concealCode updates existing code block renderables", async () => {
+  const mockTreeSitterClient = new MockTreeSitterClient()
+  mockTreeSitterClient.setMockResult({
+    highlights: [[0, 1, "conceal", { conceal: "" }]],
+  })
+
+  const md = new MarkdownRenderable(renderer, {
+    id: "markdown-code-conceal-toggle",
+    content: "```markdown\n# Hidden heading\n```",
+    syntaxStyle,
+    conceal: true,
+    concealCode: false,
+    treeSitterClient: mockTreeSitterClient,
+  })
+
+  renderer.root.add(md)
+  await renderOnce()
+  expect(mockTreeSitterClient.isHighlighting()).toBe(true)
+
+  mockTreeSitterClient.resolveAllHighlightOnce()
+  await Bun.sleep(10)
+  await renderOnce()
+
+  const frameBefore = captureFrame()
+  expect(frameBefore).toContain("# Hidden heading")
+
+  md.concealCode = true
+  await renderOnce()
+  expect(mockTreeSitterClient.isHighlighting()).toBe(true)
+
+  mockTreeSitterClient.resolveAllHighlightOnce()
+  await Bun.sleep(10)
+  await renderOnce()
+
+  const frameAfter = captureFrame()
+  expect(frameAfter).not.toContain("# Hidden heading")
+  expect(frameAfter).toContain("Hidden heading")
+})
+
 // Heading tests
 
 test("headings h1 through h3", async () => {
@@ -1280,6 +1379,41 @@ test("streaming mode keeps trailing tokens unstable", async () => {
     .join("\n")
     .trimEnd()
   expect(frame2).toContain("Hello World")
+})
+
+test("streaming code blocks with concealCode=true do not flash unconcealed markdown", async () => {
+  const mockTreeSitterClient = new MockTreeSitterClient()
+  mockTreeSitterClient.setMockResult({
+    highlights: [[0, 1, "conceal", { conceal: "" }]],
+  })
+
+  const recorder = new TestRecorder(renderer)
+  recorder.rec()
+
+  const md = new MarkdownRenderable(renderer, {
+    id: "markdown-streaming-conceal-flicker",
+    content: "# Stream\n\n```markdown\n# Hidden heading\n```",
+    syntaxStyle,
+    conceal: true,
+    concealCode: true,
+    streaming: true,
+    treeSitterClient: mockTreeSitterClient,
+  })
+
+  renderer.root.add(md)
+  await renderOnce()
+
+  expect(mockTreeSitterClient.isHighlighting()).toBe(true)
+
+  mockTreeSitterClient.resolveAllHighlightOnce()
+  await Bun.sleep(10)
+  await renderOnce()
+
+  recorder.stop()
+
+  const frames = recorder.recordedFrames.map((frame) => frame.frame)
+  const unconcealedFrames = frames.filter((frame) => frame.includes("# Hidden heading"))
+  expect(unconcealedFrames.length).toBe(0)
 })
 
 test("non-streaming mode parses all tokens as stable", async () => {
