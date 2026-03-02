@@ -1,9 +1,14 @@
-import { test, expect, beforeEach, afterEach } from "bun:test"
-import { MarkdownRenderable } from "../Markdown"
+import { test, expect, beforeAll, beforeEach, afterEach, afterAll } from "bun:test"
+import { MarkdownRenderable, type MarkdownOptions } from "../Markdown"
+import { CodeRenderable } from "../Code"
 import { TextRenderable } from "../Text"
 import { TextTableRenderable } from "../TextTable"
 import { SyntaxStyle } from "../../syntax-style"
 import { RGBA } from "../../lib/RGBA"
+import { TreeSitterClient } from "../../lib/tree-sitter"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { mkdir } from "node:fs/promises"
 import {
   createTestRenderer,
   type MockMouse,
@@ -18,9 +23,18 @@ let mockMouse: MockMouse
 let renderOnce: () => Promise<void>
 let captureFrame: () => string
 let captureSpans: () => CapturedFrame
+let markdownTreeSitterClient: TreeSitterClient
 
 const syntaxStyle = SyntaxStyle.fromStyles({
   default: { fg: RGBA.fromValues(1, 1, 1, 1) },
+})
+
+beforeAll(async () => {
+  const dataPath = join(tmpdir(), "tree-sitter-markdown-renderable-test-data")
+  await mkdir(dataPath, { recursive: true })
+
+  markdownTreeSitterClient = new TreeSitterClient({ dataPath })
+  await markdownTreeSitterClient.initialize()
 })
 
 beforeEach(async () => {
@@ -38,8 +52,41 @@ afterEach(async () => {
   }
 })
 
+afterAll(async () => {
+  await markdownTreeSitterClient.destroy()
+})
+
+function createMarkdownRenderable(options: MarkdownOptions): MarkdownRenderable {
+  return new MarkdownRenderable(renderer, {
+    treeSitterClient: markdownTreeSitterClient,
+    ...options,
+  })
+}
+
+async function renderMarkdownRenderable(md: MarkdownRenderable, timeoutMs: number = 2000): Promise<void> {
+  const hasPendingMarkdownParagraphHighlights = (): boolean =>
+    md
+      .getChildren()
+      .some((child) => child instanceof CodeRenderable && child.filetype === "markdown" && child.isHighlighting)
+
+  const startedAt = Date.now()
+
+  await renderOnce()
+
+  while (hasPendingMarkdownParagraphHighlights() && Date.now() - startedAt < timeoutMs) {
+    await Bun.sleep(10)
+    await renderOnce()
+  }
+
+  if (hasPendingMarkdownParagraphHighlights()) {
+    throw new Error("Timed out waiting for markdown paragraph highlights")
+  }
+
+  await renderOnce()
+}
+
 async function renderMarkdown(markdown: string, conceal: boolean = true): Promise<string> {
-  const md = new MarkdownRenderable(renderer, {
+  const md = createMarkdownRenderable({
     id: "markdown",
     content: markdown,
     syntaxStyle,
@@ -48,7 +95,7 @@ async function renderMarkdown(markdown: string, conceal: boolean = true): Promis
   })
 
   renderer.root.add(md)
-  await renderOnce()
+  await renderMarkdownRenderable(md)
 
   const lines = captureFrame()
     .split("\n")
@@ -75,7 +122,7 @@ test("basic table alignment", async () => {
 })
 
 test("tableOptions.widthMode configures markdown table layout", async () => {
-  const md = new MarkdownRenderable(renderer, {
+  const md = createMarkdownRenderable({
     id: "markdown-table-width-mode",
     content: "| Name | Age |\n|---|---|\n| Alice | 30 |",
     syntaxStyle,
@@ -86,7 +133,7 @@ test("tableOptions.widthMode configures markdown table layout", async () => {
   })
 
   renderer.root.add(md)
-  await renderOnce()
+  await renderer.idle()
 
   const table = md._blockStates[0]?.renderable as TextTableRenderable
   expect(table).toBeInstanceOf(TextTableRenderable)
@@ -95,14 +142,14 @@ test("tableOptions.widthMode configures markdown table layout", async () => {
 })
 
 test("tableOptions updates existing markdown table renderable", async () => {
-  const md = new MarkdownRenderable(renderer, {
+  const md = createMarkdownRenderable({
     id: "markdown-table-updates",
     content: "| Name | Age |\n|---|---|\n| Alice | 30 |",
     syntaxStyle,
   })
 
   renderer.root.add(md)
-  await renderOnce()
+  await renderer.idle()
 
   const table = md._blockStates[0]?.renderable as TextTableRenderable
   expect(table).toBeInstanceOf(TextTableRenderable)
@@ -117,7 +164,7 @@ test("tableOptions updates existing markdown table renderable", async () => {
     selectable: false,
   }
 
-  await renderOnce()
+  await renderer.idle()
 
   const updatedTable = md._blockStates[0]?.renderable as TextTableRenderable
   expect(updatedTable).toBe(table)
@@ -317,7 +364,6 @@ Some text between.
     └──────┴─┘
 
     Some text between.
-
     ┌────────────┬──┐
     │Table2      │BB│
     ├────────────┼──┤
@@ -569,7 +615,6 @@ This is a paragraph after the table.`
   expect(await renderMarkdown(markdown)).toMatchInlineSnapshot(`
     "
     This is a paragraph before the table.
-
     ┌─────┬───┐
     │Name │Age│
     ├─────┼───┤
@@ -591,22 +636,22 @@ test("selection across markdown table includes table data", async () => {
 
 Outro line below table.`
 
-  const md = new MarkdownRenderable(renderer, {
+  const md = createMarkdownRenderable({
     id: "markdown",
     content: markdown,
     syntaxStyle,
   })
 
   renderer.root.add(md)
-  await renderOnce()
+  await renderMarkdownRenderable(md)
 
-  const topBlock = md._blockStates[0]?.renderable as TextRenderable | undefined
+  const topBlock = md._blockStates[0]?.renderable as CodeRenderable | undefined
   const tableBlock = md._blockStates[1]?.renderable as TextTableRenderable | undefined
-  const bottomBlock = md._blockStates[2]?.renderable as TextRenderable | undefined
+  const bottomBlock = md._blockStates[2]?.renderable as CodeRenderable | undefined
 
-  expect(topBlock).toBeInstanceOf(TextRenderable)
+  expect(topBlock).toBeInstanceOf(CodeRenderable)
   expect(tableBlock).toBeInstanceOf(TextTableRenderable)
-  expect(bottomBlock).toBeInstanceOf(TextRenderable)
+  expect(bottomBlock).toBeInstanceOf(CodeRenderable)
 
   const startX = topBlock!.x + 1
   const startY = topBlock!.y
@@ -614,7 +659,7 @@ Outro line below table.`
   const endY = bottomBlock!.y
 
   await mockMouse.drag(startX, startY, endX, endY)
-  await renderOnce()
+  await renderer.idle()
 
   const selectedText = renderer.getSelection()?.getSelectedText() ?? ""
 
@@ -665,7 +710,6 @@ And here is more text after.`
   expect(await renderMarkdown(markdown)).toMatchInlineSnapshot(`
     "
     Here is some code:
-
     function hello() {
       return "world";
     }
@@ -690,11 +734,9 @@ fn main() {}
   expect(await renderMarkdown(markdown)).toMatchInlineSnapshot(`
     "
     First block:
-
     print("hello")
 
     Second block:
-
     fn main() {}"
   `)
 })
@@ -716,7 +758,7 @@ test("code block concealment is disabled by default", async () => {
     highlights: [[0, 1, "conceal", { conceal: "" }]],
   })
 
-  const md = new MarkdownRenderable(renderer, {
+  const md = createMarkdownRenderable({
     id: "markdown-code-default-conceal",
     content: "```markdown\n# Hidden heading\n```",
     syntaxStyle,
@@ -725,12 +767,12 @@ test("code block concealment is disabled by default", async () => {
   })
 
   renderer.root.add(md)
-  await renderOnce()
+  await renderer.idle()
   expect(mockTreeSitterClient.isHighlighting()).toBe(true)
 
   mockTreeSitterClient.resolveAllHighlightOnce()
   await Bun.sleep(10)
-  await renderOnce()
+  await renderer.idle()
 
   const frame = captureFrame()
   expect(frame).toContain("# Hidden heading")
@@ -742,7 +784,7 @@ test("code block concealment can be enabled with concealCode", async () => {
     highlights: [[0, 1, "conceal", { conceal: "" }]],
   })
 
-  const md = new MarkdownRenderable(renderer, {
+  const md = createMarkdownRenderable({
     id: "markdown-code-conceal-enabled",
     content: "```markdown\n# Hidden heading\n```",
     syntaxStyle,
@@ -752,12 +794,12 @@ test("code block concealment can be enabled with concealCode", async () => {
   })
 
   renderer.root.add(md)
-  await renderOnce()
+  await renderer.idle()
   expect(mockTreeSitterClient.isHighlighting()).toBe(true)
 
   mockTreeSitterClient.resolveAllHighlightOnce()
   await Bun.sleep(10)
-  await renderOnce()
+  await renderer.idle()
 
   const frame = captureFrame()
   expect(frame).not.toContain("# Hidden heading")
@@ -770,7 +812,7 @@ test("toggling concealCode updates existing code block renderables", async () =>
     highlights: [[0, 1, "conceal", { conceal: "" }]],
   })
 
-  const md = new MarkdownRenderable(renderer, {
+  const md = createMarkdownRenderable({
     id: "markdown-code-conceal-toggle",
     content: "```markdown\n# Hidden heading\n```",
     syntaxStyle,
@@ -780,23 +822,24 @@ test("toggling concealCode updates existing code block renderables", async () =>
   })
 
   renderer.root.add(md)
-  await renderOnce()
+  await renderer.idle()
   expect(mockTreeSitterClient.isHighlighting()).toBe(true)
 
   mockTreeSitterClient.resolveAllHighlightOnce()
   await Bun.sleep(10)
-  await renderOnce()
+  await renderer.idle()
 
   const frameBefore = captureFrame()
   expect(frameBefore).toContain("# Hidden heading")
 
   md.concealCode = true
-  await renderOnce()
+  renderer.requestRender()
+  await renderer.idle()
   expect(mockTreeSitterClient.isHighlighting()).toBe(true)
 
   mockTreeSitterClient.resolveAllHighlightOnce()
   await Bun.sleep(10)
-  await renderOnce()
+  await renderer.idle()
 
   const frameAfter = captureFrame()
   expect(frameAfter).not.toContain("# Hidden heading")
@@ -885,7 +928,7 @@ test("simple blockquote", async () => {
   expect(await renderMarkdown(markdown)).toMatchInlineSnapshot(`
     "
     > This is a quote
-    spanning multiple lines"
+    > spanning multiple lines"
   `)
 })
 
@@ -1017,7 +1060,6 @@ Visit [GitHub](https://github.com) for more.
     - inline code support
     - Italic and bold text
 
-
     Code Example
 
     const md = new MarkdownRenderable(ctx, {
@@ -1047,7 +1089,7 @@ test("custom renderNode can override heading rendering", async () => {
     return ""
   }
 
-  const md = new MarkdownRenderable(renderer, {
+  const md = createMarkdownRenderable({
     id: "custom-heading",
     content: `# Custom Heading
 
@@ -1067,7 +1109,7 @@ Regular paragraph.`,
   })
 
   renderer.root.add(md)
-  await renderOnce()
+  await renderMarkdownRenderable(md)
 
   const lines = captureFrame()
     .split("\n")
@@ -1083,7 +1125,7 @@ test("custom renderNode can override code block rendering", async () => {
   const { BoxRenderable } = await import("../Box")
   const { TextRenderable } = await import("../Text")
 
-  const md = new MarkdownRenderable(renderer, {
+  const md = createMarkdownRenderable({
     id: "custom-code",
     content: `\`\`\`js
 const x = 1;
@@ -1109,7 +1151,7 @@ const x = 1;
   })
 
   renderer.root.add(md)
-  await renderOnce()
+  await renderMarkdownRenderable(md)
 
   const lines = captureFrame()
     .split("\n")
@@ -1123,7 +1165,7 @@ const x = 1;
 })
 
 test("custom renderNode returning null uses default", async () => {
-  const md = new MarkdownRenderable(renderer, {
+  const md = createMarkdownRenderable({
     id: "custom-null",
     content: `# Heading
 
@@ -1133,7 +1175,7 @@ Paragraph text.`,
   })
 
   renderer.root.add(md)
-  await renderOnce()
+  await renderMarkdownRenderable(md)
 
   const lines = captureFrame()
     .split("\n")
@@ -1141,6 +1183,7 @@ Paragraph text.`,
   expect("\n" + lines.join("\n").trimEnd()).toMatchInlineSnapshot(`
     "
     Heading
+
 
     Paragraph text."
   `)
@@ -1158,7 +1201,6 @@ console.log(x);`
   expect(await renderMarkdown(markdown)).toMatchInlineSnapshot(`
     "
     Here is some code:
-
     const x = 1;
     console.log(x);"
   `)
@@ -1187,8 +1229,7 @@ test("incomplete link (no closing paren)", async () => {
 
   expect(await renderMarkdown(markdown)).toMatchInlineSnapshot(`
     "
-    Check out [this link](https://example.com (https://example.
-    com)"
+    Check out this link(https://example.com"
   `)
 })
 
@@ -1304,7 +1345,6 @@ const x = 1;
   expect(await renderMarkdown(markdown)).toMatchInlineSnapshot(`
     "
     Text before
-
     const x = 1;"
   `)
 })
@@ -1329,7 +1369,7 @@ test("table at end with trailing blank lines", async () => {
 
 // Incremental parsing tests
 test("incremental update reuses unchanged blocks when appending", async () => {
-  const md = new MarkdownRenderable(renderer, {
+  const md = createMarkdownRenderable({
     id: "markdown",
     content: "# Hello\n\nParagraph 1",
     syntaxStyle,
@@ -1337,14 +1377,14 @@ test("incremental update reuses unchanged blocks when appending", async () => {
   })
 
   renderer.root.add(md)
-  await renderOnce()
+  await renderer.idle()
 
   // Get reference to first block
   const firstBlockBefore = md._blockStates[0]?.renderable
 
   // Append content
   md.content = "# Hello\n\nParagraph 1\n\nParagraph 2"
-  await renderOnce()
+  await renderer.idle()
 
   // First block should be reused (same object reference)
   const firstBlockAfter = md._blockStates[0]?.renderable
@@ -1352,7 +1392,7 @@ test("incremental update reuses unchanged blocks when appending", async () => {
 })
 
 test("streaming mode keeps trailing tokens unstable", async () => {
-  const md = new MarkdownRenderable(renderer, {
+  const md = createMarkdownRenderable({
     id: "markdown",
     content: "# Hello",
     syntaxStyle,
@@ -1360,7 +1400,7 @@ test("streaming mode keeps trailing tokens unstable", async () => {
   })
 
   renderer.root.add(md)
-  await renderOnce()
+  await renderMarkdownRenderable(md)
 
   const frame1 = captureFrame()
     .split("\n")
@@ -1371,7 +1411,7 @@ test("streaming mode keeps trailing tokens unstable", async () => {
 
   // Extend the heading
   md.content = "# Hello World"
-  await renderOnce()
+  await renderMarkdownRenderable(md)
 
   const frame2 = captureFrame()
     .split("\n")
@@ -1390,7 +1430,7 @@ test("streaming code blocks with concealCode=true do not flash unconcealed markd
   const recorder = new TestRecorder(renderer)
   recorder.rec()
 
-  const md = new MarkdownRenderable(renderer, {
+  const md = createMarkdownRenderable({
     id: "markdown-streaming-conceal-flicker",
     content: "# Stream\n\n```markdown\n# Hidden heading\n```",
     syntaxStyle,
@@ -1401,13 +1441,13 @@ test("streaming code blocks with concealCode=true do not flash unconcealed markd
   })
 
   renderer.root.add(md)
-  await renderOnce()
+  await renderer.idle()
 
   expect(mockTreeSitterClient.isHighlighting()).toBe(true)
 
   mockTreeSitterClient.resolveAllHighlightOnce()
   await Bun.sleep(10)
-  await renderOnce()
+  await renderer.idle()
 
   recorder.stop()
 
@@ -1417,7 +1457,7 @@ test("streaming code blocks with concealCode=true do not flash unconcealed markd
 })
 
 test("non-streaming mode parses all tokens as stable", async () => {
-  const md = new MarkdownRenderable(renderer, {
+  const md = createMarkdownRenderable({
     id: "markdown",
     content: "# Hello\n\nPara 1\n\nPara 2",
     syntaxStyle,
@@ -1425,7 +1465,7 @@ test("non-streaming mode parses all tokens as stable", async () => {
   })
 
   renderer.root.add(md)
-  await renderOnce()
+  await renderer.idle()
 
   // Get parse state
   const parseState = md._parseState
@@ -1434,48 +1474,48 @@ test("non-streaming mode parses all tokens as stable", async () => {
 })
 
 test("content update with same text does not rebuild", async () => {
-  const md = new MarkdownRenderable(renderer, {
+  const md = createMarkdownRenderable({
     id: "markdown",
     content: "# Hello",
     syntaxStyle,
   })
 
   renderer.root.add(md)
-  await renderOnce()
+  await renderer.idle()
 
   const blockBefore = md._blockStates[0]?.renderable
 
   // Set same content
   md.content = "# Hello"
-  await renderOnce()
+  await renderer.idle()
 
   const blockAfter = md._blockStates[0]?.renderable
   expect(blockAfter).toBe(blockBefore)
 })
 
 test("block type change creates new renderable", async () => {
-  const md = new MarkdownRenderable(renderer, {
+  const md = createMarkdownRenderable({
     id: "markdown",
     content: "# Hello",
     syntaxStyle,
   })
 
   renderer.root.add(md)
-  await renderOnce()
+  await renderer.idle()
 
   const blockBefore = md._blockStates[0]?.renderable
 
   // Change from heading to paragraph
   md.content = "Hello"
-  await renderOnce()
+  await renderer.idle()
 
   const blockAfter = md._blockStates[0]?.renderable
-  // Should be different renderable since type changed
-  expect(blockAfter).not.toBe(blockBefore)
+  // Non-special markdown blocks are merged and reused as one markdown code renderable
+  expect(blockAfter).toBe(blockBefore)
 })
 
 test("streaming property can be toggled", async () => {
-  const md = new MarkdownRenderable(renderer, {
+  const md = createMarkdownRenderable({
     id: "markdown",
     content: "# Hello",
     syntaxStyle,
@@ -1483,7 +1523,7 @@ test("streaming property can be toggled", async () => {
   })
 
   renderer.root.add(md)
-  await renderOnce()
+  await renderMarkdownRenderable(md)
 
   expect(md.streaming).toBe(false)
   const blockBefore = md._blockStates[0]?.renderable
@@ -1491,7 +1531,7 @@ test("streaming property can be toggled", async () => {
   md.streaming = true
   expect(md.streaming).toBe(true)
 
-  await renderOnce()
+  await renderMarkdownRenderable(md)
 
   const blockAfter = md._blockStates[0]?.renderable
   expect(blockAfter).toBe(blockBefore)
@@ -1505,19 +1545,19 @@ test("streaming property can be toggled", async () => {
 })
 
 test("clearCache forces full rebuild", async () => {
-  const md = new MarkdownRenderable(renderer, {
+  const md = createMarkdownRenderable({
     id: "markdown",
     content: "# Hello\n\nWorld",
     syntaxStyle,
   })
 
   renderer.root.add(md)
-  await renderOnce()
+  await renderer.idle()
 
   const parseStateBefore = md._parseState
 
   md.clearCache()
-  await renderOnce()
+  await renderer.idle()
 
   const parseStateAfter = md._parseState
   // Parse state should be different (was cleared and rebuilt)
@@ -1525,7 +1565,7 @@ test("clearCache forces full rebuild", async () => {
 })
 
 test("streaming->non-streaming transition updates table to show final row", async () => {
-  const md = new MarkdownRenderable(renderer, {
+  const md = createMarkdownRenderable({
     id: "markdown",
     content: "| Value |\n|---|\n| first |\n| second |",
     syntaxStyle,
@@ -1559,7 +1599,7 @@ test("streaming->non-streaming transition updates table to show final row", asyn
 })
 
 test("stream end mid-table finalizes full table snapshot", async () => {
-  const md = new MarkdownRenderable(renderer, {
+  const md = createMarkdownRenderable({
     id: "markdown",
     content: "",
     syntaxStyle,
@@ -1610,7 +1650,7 @@ test("stream end mid-table finalizes full table snapshot", async () => {
 })
 
 test("ignores content updates after markdown renderable is destroyed during streaming", async () => {
-  const md = new MarkdownRenderable(renderer, {
+  const md = createMarkdownRenderable({
     id: "markdown",
     content: "",
     syntaxStyle,
@@ -1634,7 +1674,7 @@ test("ignores content updates after markdown renderable is destroyed during stre
 })
 
 test("non-streaming->streaming transition updates table to hide trailing row", async () => {
-  const md = new MarkdownRenderable(renderer, {
+  const md = createMarkdownRenderable({
     id: "markdown",
     content: "| Value |\n|---|\n| first |\n| second |",
     syntaxStyle,
@@ -1668,7 +1708,7 @@ test("non-streaming->streaming transition updates table to hide trailing row", a
 })
 
 test("table only rebuilds when complete row count changes during streaming", async () => {
-  const md = new MarkdownRenderable(renderer, {
+  const md = createMarkdownRenderable({
     id: "markdown",
     content: "| A |\n|---|\n| 1 |",
     syntaxStyle,
@@ -1676,28 +1716,28 @@ test("table only rebuilds when complete row count changes during streaming", asy
   })
 
   renderer.root.add(md)
-  await renderOnce()
+  await renderer.idle()
 
   // During streaming with 1 row, we show 0 complete rows (last row is incomplete)
   const tableBefore = md._blockStates[0]?.renderable
 
   // Change cell content but same row count - should NOT rebuild
   md.content = "| B |\n|---|\n| 2 |"
-  await renderOnce()
+  await renderer.idle()
 
   const tableAfterSameRows = md._blockStates[0]?.renderable
   expect(tableAfterSameRows).toBe(tableBefore)
 
   // Add second row - now we have 1 complete row, should rebuild
   md.content = "| B |\n|---|\n| 2 |\n| 3 |"
-  await renderOnce()
+  await renderer.idle()
 
   const tableAfterNewRow = md._blockStates[0]?.renderable
   expect(tableAfterNewRow).not.toBe(tableBefore)
 })
 
 test("table shows all rows when streaming is false", async () => {
-  const md = new MarkdownRenderable(renderer, {
+  const md = createMarkdownRenderable({
     id: "markdown",
     content: "| A |\n|---|\n| 1 |",
     syntaxStyle,
@@ -1705,7 +1745,7 @@ test("table shows all rows when streaming is false", async () => {
   })
 
   renderer.root.add(md)
-  await renderOnce()
+  await renderer.idle()
 
   // Non-streaming should show all rows including the last
   const frame = captureFrame()
@@ -1716,7 +1756,7 @@ test("table shows all rows when streaming is false", async () => {
 })
 
 test("table updates content when not streaming", async () => {
-  const md = new MarkdownRenderable(renderer, {
+  const md = createMarkdownRenderable({
     id: "markdown",
     content: "| A |\n|---|\n| 1 |",
     syntaxStyle,
@@ -1724,14 +1764,14 @@ test("table updates content when not streaming", async () => {
   })
 
   renderer.root.add(md)
-  await renderOnce()
+  await renderer.idle()
 
   const frame1 = captureFrame()
   expect(frame1).toContain("1")
 
   // Change cell content - should update immediately when not streaming
   md.content = "| A |\n|---|\n| 2 |"
-  await renderOnce()
+  await renderer.idle()
 
   const frame2 = captureFrame()
   expect(frame2).toContain("2")
@@ -1739,7 +1779,7 @@ test("table updates content when not streaming", async () => {
 })
 
 test("table keeps unchanged cell chunks stable across updates", async () => {
-  const md = new MarkdownRenderable(renderer, {
+  const md = createMarkdownRenderable({
     id: "markdown",
     content: "| A | B |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |",
     syntaxStyle,
@@ -1747,7 +1787,7 @@ test("table keeps unchanged cell chunks stable across updates", async () => {
   })
 
   renderer.root.add(md)
-  await renderOnce()
+  await renderer.idle()
 
   const table = md._blockStates[0]?.renderable as TextTableRenderable
   expect(table).toBeInstanceOf(TextTableRenderable)
@@ -1758,7 +1798,7 @@ test("table keeps unchanged cell chunks stable across updates", async () => {
   const changedCellBefore = table.content[2]?.[0]
 
   md.content = "| A | B |\n|---|---|\n| 1 | 2 |\n| 33 | 4 |"
-  await renderOnce()
+  await renderer.idle()
 
   const tableAfter = md._blockStates[0]?.renderable as TextTableRenderable
   expect(tableAfter).toBe(table)
@@ -1769,7 +1809,7 @@ test("table keeps unchanged cell chunks stable across updates", async () => {
 })
 
 test("streaming table ignores unstable trailing row updates", async () => {
-  const md = new MarkdownRenderable(renderer, {
+  const md = createMarkdownRenderable({
     id: "markdown",
     content: "| A |\n|---|\n| 1 |\n| 2 |",
     syntaxStyle,
@@ -1777,13 +1817,13 @@ test("streaming table ignores unstable trailing row updates", async () => {
   })
 
   renderer.root.add(md)
-  await renderOnce()
+  await renderer.idle()
 
   const table = md._blockStates[0]?.renderable as TextTableRenderable
   const contentBefore = table.content
 
   md.content = "| A |\n|---|\n| 1 |\n| 200 |"
-  await renderOnce()
+  await renderer.idle()
 
   const tableAfter = md._blockStates[0]?.renderable as TextTableRenderable
   expect(tableAfter).toBe(table)
@@ -1791,7 +1831,7 @@ test("streaming table ignores unstable trailing row updates", async () => {
 })
 
 test("streaming table with incomplete first row falls back to raw text and updates", async () => {
-  const md = new MarkdownRenderable(renderer, {
+  const md = createMarkdownRenderable({
     id: "markdown",
     content: "| A |\n|---|\n|",
     syntaxStyle,
@@ -1799,7 +1839,7 @@ test("streaming table with incomplete first row falls back to raw text and updat
   })
 
   renderer.root.add(md)
-  await renderOnce()
+  await renderMarkdownRenderable(md)
 
   // With streaming=true and 1 data row, rowsToRender drops last row -> length 0
   // Should show raw fallback text
@@ -1816,7 +1856,7 @@ test("streaming table with incomplete first row falls back to raw text and updat
 
   // Now append more characters to the incomplete row
   md.content = "| A |\n|---|\n| 1"
-  await renderOnce()
+  await renderMarkdownRenderable(md)
 
   const frame2 = captureFrame()
     .split("\n")
@@ -1830,7 +1870,7 @@ test("streaming table with incomplete first row falls back to raw text and updat
 
   // Complete the row by adding closing pipe - still only 1 row, so still 0 complete rows
   md.content = "| A |\n|---|\n| 1 |"
-  await renderOnce()
+  await renderMarkdownRenderable(md)
 
   const frame3 = captureFrame()
     .split("\n")
@@ -1844,7 +1884,7 @@ test("streaming table with incomplete first row falls back to raw text and updat
 
   // Add second row - now we have 1 complete row (first row), should render as table
   md.content = "| A |\n|---|\n| 1 |\n| 2 |"
-  await renderOnce()
+  await renderMarkdownRenderable(md)
 
   const frame4 = captureFrame()
     .split("\n")
@@ -1859,7 +1899,7 @@ test("streaming table with incomplete first row falls back to raw text and updat
 
   // Complete the second row - now we have 2 rows, so 1 complete row still (drops last)
   md.content = "| A |\n|---|\n| 1 |\n| 2 |"
-  await renderOnce()
+  await renderMarkdownRenderable(md)
 
   const frame5 = captureFrame()
     .split("\n")
@@ -1873,7 +1913,7 @@ test("streaming table with incomplete first row falls back to raw text and updat
 
   // Add third row - now we have 2 complete rows to show
   md.content = "| A |\n|---|\n| 1 |\n| 2 |\n| 3 |"
-  await renderOnce()
+  await renderMarkdownRenderable(md)
 
   const frame6 = captureFrame()
     .split("\n")
@@ -1888,7 +1928,7 @@ test("streaming table with incomplete first row falls back to raw text and updat
 })
 
 test("streaming table transitions cleanly from raw fallback to proper table", async () => {
-  const md = new MarkdownRenderable(renderer, {
+  const md = createMarkdownRenderable({
     id: "markdown",
     content: "| Header |",
     syntaxStyle,
@@ -1896,7 +1936,7 @@ test("streaming table transitions cleanly from raw fallback to proper table", as
   })
 
   renderer.root.add(md)
-  await renderOnce()
+  await renderMarkdownRenderable(md)
 
   // Just header, no delimiter yet - raw fallback
   let frame = captureFrame()
@@ -1908,7 +1948,7 @@ test("streaming table transitions cleanly from raw fallback to proper table", as
 
   // Add delimiter
   md.content = "| Header |\n|---|"
-  await renderOnce()
+  await renderMarkdownRenderable(md)
 
   frame = captureFrame()
     .split("\n")
@@ -1920,7 +1960,7 @@ test("streaming table transitions cleanly from raw fallback to proper table", as
 
   // Start first data row
   md.content = "| Header |\n|---|\n| D"
-  await renderOnce()
+  await renderMarkdownRenderable(md)
 
   frame = captureFrame()
     .split("\n")
@@ -1932,7 +1972,7 @@ test("streaming table transitions cleanly from raw fallback to proper table", as
 
   // Complete first row - still only 1 row total, so 0 complete (drops last)
   md.content = "| Header |\n|---|\n| Data1 |"
-  await renderOnce()
+  await renderMarkdownRenderable(md)
 
   frame = captureFrame()
     .split("\n")
@@ -1944,7 +1984,7 @@ test("streaming table transitions cleanly from raw fallback to proper table", as
 
   // Add start of second row
   md.content = "| Header |\n|---|\n| Data1 |\n| D"
-  await renderOnce()
+  await renderMarkdownRenderable(md)
 
   frame = captureFrame()
     .split("\n")
@@ -1960,7 +2000,7 @@ test("streaming table transitions cleanly from raw fallback to proper table", as
 })
 
 test("streaming table can transition back to raw fallback when rows are removed", async () => {
-  const md = new MarkdownRenderable(renderer, {
+  const md = createMarkdownRenderable({
     id: "markdown",
     content: "| A |\n|---|\n| 1 |\n| 2 |",
     syntaxStyle,
@@ -1968,7 +2008,7 @@ test("streaming table can transition back to raw fallback when rows are removed"
   })
 
   renderer.root.add(md)
-  await renderOnce()
+  await renderMarkdownRenderable(md)
 
   // With 2 rows, we have 1 complete row - should render as table
   let frame = captureFrame()
@@ -1980,7 +2020,7 @@ test("streaming table can transition back to raw fallback when rows are removed"
 
   // Remove second row - back to 1 row, so 0 complete rows
   md.content = "| A |\n|---|\n| 1 |"
-  await renderOnce()
+  await renderMarkdownRenderable(md)
 
   frame = captureFrame()
     .split("\n")
@@ -1994,7 +2034,7 @@ test("streaming table can transition back to raw fallback when rows are removed"
 })
 
 test("conceal change updates rendered content", async () => {
-  const md = new MarkdownRenderable(renderer, {
+  const md = createMarkdownRenderable({
     id: "markdown",
     content: "# Hello **bold**",
     syntaxStyle,
@@ -2002,14 +2042,15 @@ test("conceal change updates rendered content", async () => {
   })
 
   renderer.root.add(md)
-  await renderOnce()
+  await renderMarkdownRenderable(md)
 
   const frame1 = captureFrame()
   expect(frame1).not.toContain("**")
   expect(frame1).not.toContain("#")
 
   md.conceal = false
-  await renderOnce()
+  renderer.requestRender()
+  await renderMarkdownRenderable(md)
 
   const frame2 = captureFrame()
   expect(frame2).toContain("**")
@@ -2055,7 +2096,7 @@ Here's how to use it:
 \`\`\`typescript
 import { MarkdownRenderable } from "@opentui/core"
 
-const md = new MarkdownRenderable(renderer, {
+const md = createMarkdownRenderable({
   content: "# Hello World",
   syntaxStyle: mySyntaxStyle,
   conceal: true, // Hide formatting markers
@@ -2114,7 +2155,7 @@ The table alignment uses:
 *Press \`?\` for keybindings*
 `
 
-  const md = new MarkdownRenderable(renderer, {
+  const md = createMarkdownRenderable({
     id: "markdown",
     content,
     syntaxStyle: theme1,
@@ -2122,7 +2163,7 @@ The table alignment uses:
   })
 
   renderer.root.add(md)
-  await renderOnce()
+  await renderMarkdownRenderable(md)
 
   const findSpanContaining = (frame: CapturedFrame, text: string) => {
     for (const line of frame.lines) {
@@ -2142,7 +2183,8 @@ The table alignment uses:
 
   // Switch theme
   md.syntaxStyle = theme2
-  await renderOnce()
+  renderer.requestRender()
+  await renderMarkdownRenderable(md)
 
   const frame2 = captureSpans()
   const headingSpan2 = findSpanContaining(frame2, "OpenTUI Markdown Demo")
@@ -2153,10 +2195,10 @@ The table alignment uses:
   expect(headingSpan2!.attributes & TextAttributes.BOLD).toBeTruthy()
 })
 
-// OSC 8 link metadata tests
+// Paragraph rendering tests
 
-test("link chunks include link metadata for OSC 8 hyperlinks (conceal=true)", async () => {
-  const md = new MarkdownRenderable(renderer, {
+test("paragraph links are rendered with markdown conceal behavior", async () => {
+  const md = createMarkdownRenderable({
     id: "markdown",
     content: "Check [Google](https://google.com) out",
     syntaxStyle,
@@ -2164,65 +2206,78 @@ test("link chunks include link metadata for OSC 8 hyperlinks (conceal=true)", as
   })
 
   renderer.root.add(md)
-  await renderOnce()
+  await renderMarkdownRenderable(md)
 
-  const textRenderable = md._blockStates[0]?.renderable as TextRenderable
-  const chunks = textRenderable.content.chunks
-  const linkChunks = chunks.filter((c) => c.link?.url === "https://google.com")
+  const paragraphChildren = md.getChildren()
+  expect(paragraphChildren.length).toBe(1)
+  expect(paragraphChildren[0]).toBeInstanceOf(CodeRenderable)
+  expect(paragraphChildren[0]).not.toBeInstanceOf(TextRenderable)
 
-  expect(linkChunks.length).toBeGreaterThan(0)
-  expect(linkChunks.some((c) => c.text === "Google")).toBe(true)
-  expect(linkChunks.some((c) => c.text === "https://google.com")).toBe(true)
+  const frame = captureFrame()
+  expect(frame).toContain("Google")
+  expect(frame).toContain("https://google.com")
+  expect(frame).not.toContain("[Google](https://google.com)")
 })
 
-test("link chunks include link metadata (conceal=false)", async () => {
-  const md = new MarkdownRenderable(renderer, {
+test("paragraph initial render does not flash raw markdown markers", async () => {
+  const recorder = new TestRecorder(renderer)
+  recorder.rec()
+
+  const md = createMarkdownRenderable({
     id: "markdown",
-    content: "Check [Google](https://google.com) out",
-    syntaxStyle,
-    conceal: false,
-  })
-
-  renderer.root.add(md)
-  await renderOnce()
-
-  const textRenderable = md._blockStates[0]?.renderable as TextRenderable
-  const chunks = textRenderable.content.chunks
-  const linkChunks = chunks.filter((c) => c.link?.url === "https://google.com")
-
-  expect(linkChunks.length).toBeGreaterThan(0)
-  expect(linkChunks.some((c) => c.text === "Google")).toBe(true)
-  expect(linkChunks.some((c) => c.text === "https://google.com")).toBe(true)
-})
-
-test("image chunks include link metadata", async () => {
-  const md = new MarkdownRenderable(renderer, {
-    id: "markdown",
-    content: "![alt](https://example.com/img.png)",
+    content: "This has **bold** text.",
     syntaxStyle,
     conceal: true,
   })
 
   renderer.root.add(md)
-  await renderOnce()
+  await renderMarkdownRenderable(md)
+  recorder.stop()
 
-  const textRenderable = md._blockStates[0]?.renderable as TextRenderable
-  const chunks = textRenderable.content.chunks
-  const linkChunks = chunks.filter((c) => c.link?.url === "https://example.com/img.png")
-  expect(linkChunks.length).toBeGreaterThan(0)
+  const paragraphChildren = md.getChildren()
+  expect(paragraphChildren.length).toBe(1)
+  expect(paragraphChildren[0]).toBeInstanceOf(CodeRenderable)
+  expect(paragraphChildren[0]).not.toBeInstanceOf(TextRenderable)
+
+  const rawMarkdownFrames = recorder.recordedFrames.filter((recorded) => recorded.frame.includes("**bold**"))
+  expect(rawMarkdownFrames.length).toBe(0)
+
+  const finalFrame = captureFrame()
+  expect(finalFrame).toContain("This has bold text.")
 })
 
-test("non-link text does not have link metadata", async () => {
-  const md = new MarkdownRenderable(renderer, {
+test("paragraph updates do not flash raw markdown markers", async () => {
+  const md = createMarkdownRenderable({
     id: "markdown",
-    content: "No links here, just **bold** text.",
+    content: "**First** value",
     syntaxStyle,
+    conceal: true,
   })
 
   renderer.root.add(md)
-  await renderOnce()
+  await renderMarkdownRenderable(md)
 
-  const textRenderable = md._blockStates[0]?.renderable as TextRenderable
-  const chunks = textRenderable.content.chunks
-  expect(chunks.every((c) => !c.link)).toBe(true)
+  const paragraphChildrenBefore = md.getChildren()
+  expect(paragraphChildrenBefore.length).toBe(1)
+  expect(paragraphChildrenBefore[0]).toBeInstanceOf(CodeRenderable)
+  expect(paragraphChildrenBefore[0]).not.toBeInstanceOf(TextRenderable)
+
+  const recorder = new TestRecorder(renderer)
+  recorder.rec()
+
+  md.content = "**Second** value"
+  await renderMarkdownRenderable(md)
+  recorder.stop()
+
+  const paragraphChildrenAfter = md.getChildren()
+  expect(paragraphChildrenAfter.length).toBe(1)
+  expect(paragraphChildrenAfter[0]).toBeInstanceOf(CodeRenderable)
+  expect(paragraphChildrenAfter[0]).not.toBeInstanceOf(TextRenderable)
+
+  const rawMarkdownFrames = recorder.recordedFrames.filter((recorded) => recorded.frame.includes("**Second**"))
+  expect(rawMarkdownFrames.length).toBe(0)
+
+  const finalFrame = captureFrame()
+  expect(finalFrame).toContain("Second value")
+  expect(finalFrame).not.toContain("**Second**")
 })
