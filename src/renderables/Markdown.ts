@@ -70,7 +70,16 @@ export interface MarkdownOptions extends RenderableOptions<MarkdownRenderable> {
   treeSitterClient?: TreeSitterClient
   /**
    * Enable streaming mode for incremental content updates.
-   * When true, trailing tokens are kept unstable to handle incomplete content.
+   *
+   * Semantics:
+   * - The trailing markdown block stays unstable while streaming is enabled.
+   * - Tables render all rows produced by the markdown parser (including trailing rows).
+   * - Incomplete table rows are normalized by the parser and rendered with empty cells
+   *   where data is missing.
+   *
+   * Expectations:
+   * - Keep this true while chunks are still being appended.
+   * - Set this to false once streaming is complete to finalize trailing token parsing.
    */
   streaming?: boolean
   /**
@@ -540,7 +549,7 @@ export class MarkdownRenderable extends Renderable {
   }
 
   private getTableRowsToRender(table: Tokens.Table): Tokens.TableCell[][] {
-    return this._streaming && table.rows.length > 0 ? table.rows.slice(0, -1) : table.rows
+    return table.rows
   }
 
   private hashString(value: string, seed: number): number {
