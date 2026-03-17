@@ -5,6 +5,7 @@ import {
   TextRenderable,
   BoxRenderable,
   OptimizedBuffer,
+  type KeyEvent,
   type MouseEvent,
   t,
   bold,
@@ -16,12 +17,43 @@ import { setupCommonDemoKeys } from "./lib/standalone-keys.js"
 
 let nextZIndex = 101
 let draggableBoxes: DraggableTransparentBox[] = []
+let keyListener: ((key: KeyEvent) => void) | null = null
+
+const THEMES = {
+  dark: {
+    backgroundColor: "#0A0E14",
+    headerAccent: "#00D4AA",
+    headerMuted: "#A8A8B2",
+    textUnderAlpha: "#FFB84D",
+    moreTextUnder: "#7B68EE",
+    boxLabelColor: RGBA.fromInts(255, 255, 255, 220),
+  },
+  bright: {
+    backgroundColor: "#F6F1E5",
+    headerAccent: "#0F766E",
+    headerMuted: "#4B5563",
+    textUnderAlpha: "#B45309",
+    moreTextUnder: "#6D28D9",
+    boxLabelColor: RGBA.fromInts(17, 24, 39, 220),
+  },
+} as const
+
+type ThemeName = keyof typeof THEMES
+
+function getHeaderText(themeName: ThemeName) {
+  const theme = THEMES[themeName]
+  const backgroundLabel = themeName === "dark" ? "dark bg" : "bright bg"
+
+  return t`${bold(underline(fg(theme.headerAccent)("Interactive Alpha Transparency & Blending Demo - Drag the boxes!")))}
+${fg(theme.headerMuted)(`Drag boxes with the mouse • Press B to toggle background (${backgroundLabel})`)}`
+}
 
 class DraggableTransparentBox extends BoxRenderable {
   private isDragging = false
   private dragOffsetX = 0
   private dragOffsetY = 0
   private alphaPercentage: number
+  private labelColor: RGBA
 
   constructor(
     ctx: RenderContext,
@@ -44,6 +76,11 @@ class DraggableTransparentBox extends BoxRenderable {
       top: y,
     })
     this.alphaPercentage = Math.round(bg.a * 100)
+    this.labelColor = THEMES.dark.boxLabelColor
+  }
+
+  public setLabelColor(color: RGBA): void {
+    this.labelColor = color
   }
 
   protected renderSelf(buffer: OptimizedBuffer): void {
@@ -53,7 +90,7 @@ class DraggableTransparentBox extends BoxRenderable {
     const centerX = this.x + Math.floor(this.width / 2 - alphaText.length / 2)
     const centerY = this.y + Math.floor(this.height / 2)
 
-    buffer.drawText(alphaText, centerX, centerY, RGBA.fromInts(255, 255, 255, 220))
+    buffer.drawText(alphaText, centerX, centerY, this.labelColor)
   }
 
   protected onMouseEvent(event: MouseEvent): void {
@@ -90,7 +127,9 @@ class DraggableTransparentBox extends BoxRenderable {
 
 export function run(renderer: CliRenderer): void {
   renderer.start()
-  renderer.setBackgroundColor("#0A0E14")
+
+  let currentTheme: ThemeName = "dark"
+  renderer.setBackgroundColor(THEMES[currentTheme].backgroundColor)
 
   const parentContainer = new BoxRenderable(renderer, {
     id: "parent-container",
@@ -98,12 +137,9 @@ export function run(renderer: CliRenderer): void {
   })
   renderer.root.add(parentContainer)
 
-  const headerText = t`${bold(underline(fg("#00D4AA")("Interactive Alpha Transparency & Blending Demo - Drag the boxes!")))}
-${fg("#A8A8B2")("Click and drag any transparent box to move it around • Watch how transparency layers blend")}`
-
   const headerDisplay = new TextRenderable(renderer, {
     id: "header-text",
-    content: headerText,
+    content: getHeaderText(currentTheme),
     width: 85,
     height: 3,
     position: "absolute",
@@ -120,7 +156,7 @@ ${fg("#A8A8B2")("Click and drag any transparent box to move it around • Watch 
     position: "absolute",
     left: 10,
     top: 6,
-    fg: "#FFB84D",
+    fg: THEMES[currentTheme].textUnderAlpha,
     attributes: TextAttributes.BOLD,
     zIndex: 4,
     selectable: false,
@@ -133,7 +169,7 @@ ${fg("#A8A8B2")("Click and drag any transparent box to move it around • Watch 
     position: "absolute",
     left: 15,
     top: 10,
-    fg: "#7B68EE",
+    fg: THEMES[currentTheme].moreTextUnder,
     attributes: TextAttributes.BOLD,
     zIndex: 1,
   })
@@ -216,10 +252,45 @@ ${fg("#A8A8B2")("Click and drag any transparent box to move it around • Watch 
   )
   parentContainer.add(alphaOverlay)
   draggableBoxes.push(alphaOverlay)
+
+  const applyTheme = (themeName: ThemeName): void => {
+    currentTheme = themeName
+
+    const theme = THEMES[themeName]
+    renderer.setBackgroundColor(theme.backgroundColor)
+    headerDisplay.content = getHeaderText(themeName)
+    textUnderAlpha.fg = theme.textUnderAlpha
+    moreTextUnder.fg = theme.moreTextUnder
+
+    for (const box of draggableBoxes) {
+      box.setLabelColor(theme.boxLabelColor)
+    }
+  }
+
+  applyTheme(currentTheme)
+
+  if (keyListener) {
+    renderer.keyInput.off("keypress", keyListener)
+  }
+
+  keyListener = (key: KeyEvent) => {
+    if (key.name !== "b") {
+      return
+    }
+
+    applyTheme(currentTheme === "dark" ? "bright" : "dark")
+  }
+
+  renderer.keyInput.on("keypress", keyListener)
 }
 
 export function destroy(renderer: CliRenderer): void {
   renderer.clearFrameCallbacks()
+
+  if (keyListener) {
+    renderer.keyInput.off("keypress", keyListener)
+    keyListener = null
+  }
 
   for (const box of draggableBoxes) {
     renderer.root.remove(box.id)
