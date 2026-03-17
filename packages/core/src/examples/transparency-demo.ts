@@ -19,6 +19,7 @@ let nextZIndex = 101
 let draggableBoxes: DraggableTransparentBox[] = []
 let keyListener: ((key: KeyEvent) => void) | null = null
 let themeModeListener: ((mode: ThemeMode) => void) | null = null
+let demoRunVersion = 0
 
 const DEFAULT_THEME_MODE: ThemeMode = "dark"
 
@@ -55,13 +56,13 @@ const THEMES = {
 type ThemeName = keyof typeof THEMES
 const THEME_ORDER: ThemeName[] = ["dark", "light", "transparent"]
 
-function getTransparentBackgroundColor(themeMode: ThemeMode): RGBA {
+function getTransparentFallbackBackgroundColor(themeMode: ThemeMode): RGBA {
   return themeMode === "light" ? RGBA.fromInts(255, 255, 255, 0) : RGBA.fromInts(0, 0, 0, 0)
 }
 
 function getThemeBackgroundColor(themeName: ThemeName, themeMode: ThemeMode): string | RGBA {
   if (themeName === "transparent") {
-    return getTransparentBackgroundColor(themeMode)
+    return getTransparentFallbackBackgroundColor(themeMode)
   }
 
   return THEMES[themeName].backgroundColor
@@ -154,8 +155,11 @@ class DraggableTransparentBox extends BoxRenderable {
 export function run(renderer: CliRenderer): void {
   renderer.start()
 
+  const currentRunVersion = ++demoRunVersion
   let currentTheme: ThemeName = "dark"
   let currentThemeMode: ThemeMode = renderer.themeMode ?? DEFAULT_THEME_MODE
+  let transparentBackgroundColor = getTransparentFallbackBackgroundColor(currentThemeMode)
+  let transparentPaletteRequestVersion = 0
   renderer.setBackgroundColor(getThemeBackgroundColor(currentTheme, currentThemeMode))
 
   const parentContainer = new BoxRenderable(renderer, {
@@ -284,13 +288,47 @@ export function run(renderer: CliRenderer): void {
     currentTheme = themeName
 
     const theme = THEMES[themeName]
-    renderer.setBackgroundColor(getThemeBackgroundColor(themeName, currentThemeMode))
+    renderer.setBackgroundColor(themeName === "transparent" ? transparentBackgroundColor : theme.backgroundColor)
     headerDisplay.content = getHeaderText(themeName)
     textUnderAlpha.fg = theme.textUnderAlpha
     moreTextUnder.fg = theme.moreTextUnder
 
     for (const box of draggableBoxes) {
       box.setLabelColor(theme.boxLabelColor)
+    }
+
+    if (themeName === "transparent") {
+      void updateTransparentBackgroundColor()
+    }
+  }
+
+  const updateTransparentBackgroundColor = async (): Promise<void> => {
+    const requestVersion = ++transparentPaletteRequestVersion
+    transparentBackgroundColor = getTransparentFallbackBackgroundColor(currentThemeMode)
+
+    if (currentTheme === "transparent") {
+      renderer.setBackgroundColor(transparentBackgroundColor)
+    }
+
+    try {
+      const palette = await renderer.getPalette()
+
+      if (currentRunVersion !== demoRunVersion || requestVersion !== transparentPaletteRequestVersion) {
+        return
+      }
+
+      if (palette.defaultBackground) {
+        transparentBackgroundColor = RGBA.fromHex(palette.defaultBackground)
+        transparentBackgroundColor.a = 0
+      }
+    } catch {
+      if (currentRunVersion !== demoRunVersion || requestVersion !== transparentPaletteRequestVersion) {
+        return
+      }
+    }
+
+    if (currentTheme === "transparent") {
+      renderer.setBackgroundColor(transparentBackgroundColor)
     }
   }
 
@@ -318,9 +356,10 @@ export function run(renderer: CliRenderer): void {
 
   themeModeListener = (mode: ThemeMode) => {
     currentThemeMode = mode
+    renderer.clearPaletteCache()
 
     if (currentTheme === "transparent") {
-      renderer.setBackgroundColor(getThemeBackgroundColor(currentTheme, currentThemeMode))
+      void updateTransparentBackgroundColor()
     }
   }
 
@@ -328,6 +367,7 @@ export function run(renderer: CliRenderer): void {
 }
 
 export function destroy(renderer: CliRenderer): void {
+  demoRunVersion += 1
   renderer.clearFrameCallbacks()
 
   if (keyListener) {
