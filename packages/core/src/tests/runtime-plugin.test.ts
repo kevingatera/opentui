@@ -69,22 +69,20 @@ describe("runtime plugin", () => {
     const coreTestingResolution = await resolveSpecifier(resolveHandlers, "@opentui/core/testing")
 
     expect(coreResolution).toEqual({ path: runtimeModuleIdForSpecifier("@opentui/core") })
-    expect(core3dResolution).toEqual({ path: runtimeModuleIdForSpecifier("@opentui/core/3d") })
+    expect(core3dResolution).toBeUndefined()
     expect(coreTestingResolution).toEqual({ path: runtimeModuleIdForSpecifier("@opentui/core/testing") })
 
-    if (!coreResolution || !core3dResolution || !coreTestingResolution) {
+    if (!coreResolution || !coreTestingResolution) {
       throw new Error("Expected core runtime module resolutions")
     }
 
     const coreModuleFactory = modules.get(coreResolution.path)
-    const core3dModuleFactory = modules.get(core3dResolution.path)
     const coreTestingModuleFactory = modules.get(coreTestingResolution.path)
 
     expect(coreModuleFactory).toBeDefined()
-    expect(core3dModuleFactory).toBeDefined()
     expect(coreTestingModuleFactory).toBeDefined()
 
-    if (!coreModuleFactory || !core3dModuleFactory || !coreTestingModuleFactory) {
+    if (!coreModuleFactory || !coreTestingModuleFactory) {
       throw new Error("Expected core runtime module factories")
     }
 
@@ -100,6 +98,37 @@ describe("runtime plugin", () => {
 
     expect(coreTestingModule.loader).toBe("object")
     expect(typeof coreTestingModule.exports.createTestRenderer).toBe("function")
+  })
+
+  it("registers @opentui/core/3d only when added explicitly", async () => {
+    const { build, resolveHandlers, modules } = createMockBuild()
+
+    createRuntimePlugin({
+      additional: {
+        "@opentui/core/3d": { ThreeRenderable: "three-value" },
+      },
+    }).setup(build as any)
+
+    const core3dResolution = await resolveSpecifier(resolveHandlers, "@opentui/core/3d")
+
+    expect(core3dResolution).toEqual({ path: runtimeModuleIdForSpecifier("@opentui/core/3d") })
+
+    if (!core3dResolution) {
+      throw new Error("Expected @opentui/core/3d runtime module resolution")
+    }
+
+    const core3dModuleFactory = modules.get(core3dResolution.path)
+
+    expect(core3dModuleFactory).toBeDefined()
+
+    if (!core3dModuleFactory) {
+      throw new Error("Expected @opentui/core/3d runtime module factory")
+    }
+
+    expect(await core3dModuleFactory()).toEqual({
+      exports: { ThreeRenderable: "three-value" },
+      loader: "object",
+    })
   })
 
   it("registers additional runtime modules with sync and async loaders", async () => {

@@ -11,14 +11,12 @@ export interface CreateRuntimePluginOptions {
 }
 
 const CORE_RUNTIME_SPECIFIER = "@opentui/core"
-const CORE_3D_RUNTIME_SPECIFIER = "@opentui/core/3d"
 const CORE_TESTING_RUNTIME_SPECIFIER = "@opentui/core/testing"
 const RUNTIME_MODULE_PREFIX = "opentui:runtime-module:"
 const MAX_RUNTIME_RESOLVE_PARENTS = 64
 
 const DEFAULT_CORE_RUNTIME_MODULE_SPECIFIERS = [
   CORE_RUNTIME_SPECIFIER,
-  CORE_3D_RUNTIME_SPECIFIER,
   CORE_TESTING_RUNTIME_SPECIFIER,
 ] as const
 
@@ -26,10 +24,6 @@ const DEFAULT_CORE_RUNTIME_MODULE_SPECIFIER_SET = new Set<string>(DEFAULT_CORE_R
 
 export const isCoreRuntimeModuleSpecifier = (specifier: string): boolean => {
   return DEFAULT_CORE_RUNTIME_MODULE_SPECIFIER_SET.has(specifier)
-}
-
-const loadCore3dRuntimeModule = async (): Promise<RuntimeModuleExports> => {
-  return (await import("./3d")) as RuntimeModuleExports
 }
 
 const loadCoreTestingRuntimeModule = async (): Promise<RuntimeModuleExports> => {
@@ -189,7 +183,6 @@ const rewriteRuntimeSpecifiers = (code: string, runtimeModuleIdsBySpecifier: Map
 export function createRuntimePlugin(input: CreateRuntimePluginOptions = {}): BunPlugin {
   const runtimeModules = new Map<string, RuntimeModuleEntry>()
   runtimeModules.set(CORE_RUNTIME_SPECIFIER, input.core ?? (coreRuntime as RuntimeModuleExports))
-  runtimeModules.set(CORE_3D_RUNTIME_SPECIFIER, loadCore3dRuntimeModule)
   runtimeModules.set(CORE_TESTING_RUNTIME_SPECIFIER, loadCoreTestingRuntimeModule)
 
   for (const [specifier, moduleEntry] of Object.entries(input.additional ?? {})) {
