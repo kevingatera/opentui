@@ -75,6 +75,8 @@ const runtimeLoaderForPath = (path: string): "js" | "ts" | "jsx" | "tsx" | null 
   return null
 }
 
+const runtimeSourceFilter = /^(?!.*(?:\/|\\)node_modules(?:\/|\\)).*\.(?:[cm]?js|[cm]?ts|jsx|tsx)$/
+
 const rewriteRuntimeSpecifiers = (code: string, runtimeModuleIdsBySpecifier: Map<string, string>): string => {
   let transformedCode = code
 
@@ -124,10 +126,10 @@ export function createRuntimePlugin(input: CreateRuntimePluginOptions = {}): Bun
         build.onResolve({ filter: exactSpecifierFilter(specifier) }, () => ({ path: moduleId }))
       }
 
-      build.onLoad({ filter: /\.(?:[cm]?js|[cm]?ts|jsx|tsx)$/ }, async (args) => {
+      build.onLoad({ filter: runtimeSourceFilter }, async (args) => {
         const loader = runtimeLoaderForPath(args.path)
         if (!loader) {
-          return undefined
+          throw new Error(`Unable to determine runtime loader for path: ${args.path}`)
         }
 
         const file = Bun.file(args.path)
