@@ -1,7 +1,7 @@
 import { dirname, isAbsolute, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
-export const DEFAULT_PLUGIN_ENTRY = ".plugin/index.tsx"
+const defaultPluginEntry = ".plugin/index.tsx"
 
 type ResolveExternalPluginCandidatesInput = {
   cwd: string
@@ -10,7 +10,7 @@ type ResolveExternalPluginCandidatesInput = {
   envPath?: string
 }
 
-export function normalizeExternalPluginPath(input: string, cwd: string): string {
+function normalizeExternalPluginPath(input: string, cwd: string): string {
   if (input.startsWith("file://")) {
     return fileURLToPath(input)
   }
@@ -31,12 +31,12 @@ export function resolveExternalPluginCandidates(input: ResolveExternalPluginCand
     paths.add(normalizeExternalPluginPath(input.envPath.trim(), input.cwd))
   }
 
-  paths.add(resolve(input.cwd, DEFAULT_PLUGIN_ENTRY))
-  paths.add(join(execDir, DEFAULT_PLUGIN_ENTRY))
-  paths.add(resolve(execDir, "..", DEFAULT_PLUGIN_ENTRY))
-  paths.add(resolve(moduleDir, "..", DEFAULT_PLUGIN_ENTRY))
-  paths.add(resolve(input.cwd, "packages", "solid", "examples", DEFAULT_PLUGIN_ENTRY))
-  paths.add(resolve(execDir, "..", "..", DEFAULT_PLUGIN_ENTRY))
+  paths.add(resolve(input.cwd, defaultPluginEntry))
+  paths.add(join(execDir, defaultPluginEntry))
+  paths.add(resolve(execDir, "..", defaultPluginEntry))
+  paths.add(resolve(moduleDir, "..", defaultPluginEntry))
+  paths.add(resolve(input.cwd, "packages", "solid", "examples", defaultPluginEntry))
+  paths.add(resolve(execDir, "..", "..", defaultPluginEntry))
 
   return [...paths]
 }
