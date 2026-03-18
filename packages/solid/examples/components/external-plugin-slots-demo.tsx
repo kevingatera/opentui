@@ -19,6 +19,8 @@ const DEFAULT_PLUGIN_ENTRY = ".plugin/index.tsx"
 const EXTERNAL_PLUGIN_PATH_ENV = "OPENTUI_SOLID_EXTERNAL_PLUGIN_PATH"
 const EXTERNAL_PLUGIN_PACKAGE_JSON = "package.json"
 const MAX_INSTALL_OUTPUT_LENGTH = 1200
+const BUN_INSTALL_COMMAND = ["install", "--no-save"]
+const BUN_BE_BUN_ENV = "BUN_BE_BUN"
 
 const moduleDir = dirname(fileURLToPath(import.meta.url))
 const installedPluginDependencyDirs = new Set<string>()
@@ -97,8 +99,12 @@ function ensureExternalPluginDependencies(pluginEntryPath: string): void {
     return
   }
 
-  const install = Bun.spawnSync(["bun", "install", "--no-save"], {
+  const install = Bun.spawnSync([process.execPath, ...BUN_INSTALL_COMMAND], {
     cwd: pluginDir,
+    env: {
+      ...process.env,
+      [BUN_BE_BUN_ENV]: "1",
+    },
     stdout: "pipe",
     stderr: "pipe",
   })
