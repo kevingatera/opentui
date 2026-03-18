@@ -187,4 +187,28 @@ describe("runtime plugin", () => {
     expect(result.exitCode).toBe(0)
     expect(stdout).toContain("core=core-value;coreTesting=true;sync=sync-value;async=async-value")
   })
+
+  it("resolves bare imports from external runtime roots", () => {
+    const fixturePath = join(import.meta.dir, "runtime-plugin-resolve-roots.fixture.ts")
+    const result = Bun.spawnSync([process.execPath, fixturePath], {
+      cwd: join(import.meta.dir, "..", ".."),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: process.env,
+    })
+
+    const stdout = result.stdout.toString().trim()
+    const stderr = result.stderr.toString().trim()
+
+    if (stdout) {
+      console.debug(`[runtime-plugin-resolve-roots.fixture] stdout:\n${stdout}`)
+    }
+
+    if (stderr) {
+      console.debug(`[runtime-plugin-resolve-roots.fixture] stderr:\n${stderr}`)
+    }
+
+    expect(result.exitCode).toBe(0)
+    expect(stdout).toContain("marker=resolved-from-external-root")
+  })
 })

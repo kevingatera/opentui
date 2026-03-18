@@ -1,4 +1,7 @@
 import { type BunPlugin } from "bun"
+import { existsSync } from "node:fs"
+import { dirname, join } from "node:path"
+import { pathToFileURL } from "node:url"
 import * as coreRuntime from "./index"
 
 export type RuntimeModuleExports = Record<string, unknown>
@@ -14,6 +17,8 @@ const CORE_RUNTIME_SPECIFIER = "@opentui/core"
 const CORE_3D_RUNTIME_SPECIFIER = "@opentui/core/3d"
 const CORE_TESTING_RUNTIME_SPECIFIER = "@opentui/core/testing"
 const RUNTIME_MODULE_PREFIX = "opentui:runtime-module:"
+const PACKAGE_JSON_FILENAME = "package.json"
+const RUNTIME_RESOLVE_PROBE_FILE = "__opentui_runtime_resolve__.ts"
 
 const DEFAULT_CORE_RUNTIME_MODULE_SPECIFIERS = [
   CORE_RUNTIME_SPECIFIER,
@@ -77,20 +82,145 @@ const runtimeLoaderForPath = (path: string): "js" | "ts" | "jsx" | "tsx" | null 
 
 const runtimeSourceFilter = /^(?!.*(?:\/|\\)node_modules(?:\/|\\)).*\.(?:[cm]?js|[cm]?ts|jsx|tsx)$/
 
-const rewriteRuntimeSpecifiers = (code: string, runtimeModuleIdsBySpecifier: Map<string, string>): string => {
+const packageRootCacheByDirectory = new Map<string, string | null>()
+
+const resolveImportSpecifierPatterns = [
+  /(from\s+["'])([^"']+)(["'])/g,
+  /(import\s+["'])([^"']+)(["'])/g,
+  /(import\s*\(\s*["'])([^"']+)(["']\s*\))/g,
+  /(require\s*\(\s*["'])([^"']+)(["']\s*\))/g,
+] as const
+
+const isBareSpecifier = (specifier: string): boolean => {
+  if (specifier.startsWith(".") || specifier.startsWith("/") || specifier.startsWith("\\")) {
+    return false
+  }
+
+  if (
+    specifier.startsWith("node:") ||
+    specifier.startsWith("bun:") ||
+    specifier.startsWith("http:") ||
+    specifier.startsWith("https:") ||
+    specifier.startsWith("file:") ||
+    specifier.startsWith("data:")
+  ) {
+    return false
+  }
+
+  if (specifier.startsWith(RUNTIME_MODULE_PREFIX)) {
+    return false
+  }
+
+  return true
+}
+
+const toImportSpecifier = (path: string): string => {
+  if (/^[a-zA-Z]:[\\/]/.test(path)) {
+    return pathToFileURL(path).href
+  }
+
+  return path
+}
+
+const findNearestPackageRoot = (path: string): string | null => {
+  let currentDirectory = dirname(path)
+  const traversedDirectories: string[] = []
+
+  while (true) {
+    const cachedResult = packageRootCacheByDirectory.get(currentDirectory)
+    if (cachedResult !== undefined) {
+      for (const traversedDirectory of traversedDirectories) {
+        packageRootCacheByDirectory.set(traversedDirectory, cachedResult)
+      }
+
+      return cachedResult
+    }
+
+    traversedDirectories.push(currentDirectory)
+
+    if (existsSync(join(currentDirectory, PACKAGE_JSON_FILENAME))) {
+      for (const traversedDirectory of traversedDirectories) {
+        packageRootCacheByDirectory.set(traversedDirectory, currentDirectory)
+      }
+
+      return currentDirectory
+    }
+
+    const parentDirectory = dirname(currentDirectory)
+    if (parentDirectory === currentDirectory) {
+      for (const traversedDirectory of traversedDirectories) {
+        packageRootCacheByDirectory.set(traversedDirectory, null)
+      }
+
+      return null
+    }
+
+    currentDirectory = parentDirectory
+  }
+}
+
+const registerResolveRoot = (resolveRootsByRecency: string[], resolveRoot: string): void => {
+  const existingIndex = resolveRootsByRecency.indexOf(resolveRoot)
+  if (existingIndex >= 0) {
+    resolveRootsByRecency.splice(existingIndex, 1)
+  }
+
+  resolveRootsByRecency.push(resolveRoot)
+}
+
+const rewriteImportSpecifiers = (code: string, resolveReplacement: (specifier: string) => string | null): string => {
   let transformedCode = code
 
-  for (const [specifier, moduleId] of runtimeModuleIdsBySpecifier.entries()) {
-    const escapedSpecifier = escapeRegExp(specifier)
+  for (const pattern of resolveImportSpecifierPatterns) {
+    transformedCode = transformedCode.replace(pattern, (fullMatch, prefix, specifier, suffix) => {
+      const replacement = resolveReplacement(specifier)
+      if (!replacement || replacement === specifier) {
+        return fullMatch
+      }
 
-    transformedCode = transformedCode
-      .replace(new RegExp(`(from\\s+["'])${escapedSpecifier}(["'])`, "g"), `$1${moduleId}$2`)
-      .replace(new RegExp(`(import\\s+["'])${escapedSpecifier}(["'])`, "g"), `$1${moduleId}$2`)
-      .replace(new RegExp(`(import\\s*\\(\\s*["'])${escapedSpecifier}(["']\\s*\\))`, "g"), `$1${moduleId}$2`)
-      .replace(new RegExp(`(require\\s*\\(\\s*["'])${escapedSpecifier}(["']\\s*\\))`, "g"), `$1${moduleId}$2`)
+      return `${prefix}${replacement}${suffix}`
+    })
   }
 
   return transformedCode
+}
+
+const rewriteImportsFromResolveRoots = (code: string, resolveRootsByRecency: string[]): string => {
+  if (resolveRootsByRecency.length === 0) {
+    return code
+  }
+
+  const resolveFromRoots = (specifier: string): string | null => {
+    if (!isBareSpecifier(specifier)) {
+      return null
+    }
+
+    for (let index = resolveRootsByRecency.length - 1; index >= 0; index -= 1) {
+      const resolveRoot = resolveRootsByRecency[index]
+
+      try {
+        const resolvedPath = Bun.resolveSync(specifier, join(resolveRoot, RUNTIME_RESOLVE_PROBE_FILE))
+        if (resolvedPath === specifier || resolvedPath.startsWith("node:") || resolvedPath.startsWith("bun:")) {
+          continue
+        }
+
+        return toImportSpecifier(resolvedPath)
+      } catch {
+        continue
+      }
+    }
+
+    return null
+  }
+
+  return rewriteImportSpecifiers(code, resolveFromRoots)
+}
+
+const rewriteRuntimeSpecifiers = (code: string, runtimeModuleIdsBySpecifier: Map<string, string>): string => {
+  return rewriteImportSpecifiers(code, (specifier) => {
+    const runtimeModuleId = runtimeModuleIdsBySpecifier.get(specifier)
+    return runtimeModuleId ?? null
+  })
 }
 
 export function createRuntimePlugin(input: CreateRuntimePluginOptions = {}): BunPlugin {
@@ -111,6 +241,8 @@ export function createRuntimePlugin(input: CreateRuntimePluginOptions = {}): Bun
   return {
     name: "bun-plugin-opentui-runtime-modules",
     setup: (build) => {
+      const resolveRootsByRecency: string[] = []
+
       for (const [specifier, moduleEntry] of runtimeModules.entries()) {
         const moduleId = runtimeModuleIdsBySpecifier.get(specifier)
 
@@ -134,7 +266,16 @@ export function createRuntimePlugin(input: CreateRuntimePluginOptions = {}): Bun
 
         const file = Bun.file(args.path)
         const contents = await file.text()
-        const transformedContents = rewriteRuntimeSpecifiers(contents, runtimeModuleIdsBySpecifier)
+        const runtimeRewrittenContents = rewriteRuntimeSpecifiers(contents, runtimeModuleIdsBySpecifier)
+
+        if (runtimeRewrittenContents !== contents) {
+          const resolveRoot = findNearestPackageRoot(args.path)
+          if (resolveRoot) {
+            registerResolveRoot(resolveRootsByRecency, resolveRoot)
+          }
+        }
+
+        const transformedContents = rewriteImportsFromResolveRoots(runtimeRewrittenContents, resolveRootsByRecency)
 
         return {
           contents: transformedContents,
