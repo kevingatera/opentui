@@ -5,7 +5,8 @@ import { setTimeout as sleep } from "node:timers/promises"
 
 import { expect, test } from "bun:test"
 
-import { FileLock, FileLockError, type FileLockWaitTick } from "../FileLock"
+import { FileLock, FileLockError, type FileLockTryAcquireWithTimeoutOptions, type FileLockWaitTick } from "../FileLock"
+import { ManualClock } from "../testing/manual-clock"
 import { resolveRenderLib } from "../zig"
 
 const fixturePath = join(import.meta.dir, "file-lock.fixture.ts")
@@ -73,6 +74,12 @@ async function waitForReady(path: string, timeout = 2_000): Promise<void> {
   }
 
   throw new Error(`Timed out waiting for ready marker: ${path}`)
+}
+
+async function advanceManualClock(clock: ManualClock, ms: number): Promise<void> {
+  await Promise.resolve()
+  clock.advance(ms)
+  await Promise.resolve()
 }
 
 test("FileLock.tryAcquire creates missing parent directories and files by default", () => {
@@ -424,23 +431,28 @@ test("FileLock.tryAcquireWithTimeout returns null after the timeout expires", as
   const readyPath = join(dir, "holder.ready")
   const holder = spawnFixture("hold", lockPath, readyPath, "1000")
   const ticks: FileLockWaitTick[] = []
+  const clock = new ManualClock()
 
   try {
     await waitForReady(readyPath)
 
-    const lock = await FileLock.tryAcquireWithTimeout(lockPath, {
+    const lockPromise = FileLock.tryAcquireWithTimeout(lockPath, {
       timeoutMs: 120,
+      clock,
       waitTick: (tick) => {
         ticks.push(tick)
       },
-    })
+    } as FileLockTryAcquireWithTimeoutOptions)
+
+    await advanceManualClock(clock, 50)
+    await advanceManualClock(clock, 50)
+    await advanceManualClock(clock, 20)
+
+    const lock = await lockPromise
 
     expect(lock).toBeNull()
-    expect(ticks.length).toBeGreaterThanOrEqual(2)
-    expect(ticks[0]?.delay).toBe(50)
-    expect(ticks[1]?.delay).toBe(50)
-    expect(ticks[ticks.length - 1]?.waited).toBeLessThanOrEqual(120)
-    expect(ticks[ticks.length - 1]?.waited).toBeGreaterThan(100)
+    expect(ticks.map((tick) => tick.delay)).toEqual([50, 50, 20])
+    expect(ticks.map((tick) => tick.waited)).toEqual([50, 100, 120])
   } finally {
     holder.kill()
     await holder.exited.catch(() => undefined)

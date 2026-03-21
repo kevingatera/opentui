@@ -1,8 +1,8 @@
 import { resolve } from "node:path"
-import { setTimeout as sleep } from "node:timers/promises"
 import type { Pointer } from "bun:ffi"
 
 import { FileLockError, type FileLockOp } from "./FileLockError"
+import { type Clock, SystemClock } from "./lib/clock"
 import { resolveRenderLib } from "./zig"
 
 export { FileLockError } from "./FileLockError"
@@ -26,6 +26,44 @@ export interface FileLockTryAcquireWithTimeoutOptions {
   tickTime?: (attempt: number) => number
   waitTick?: (input: FileLockWaitTick) => void | Promise<void>
   signal?: AbortSignal
+}
+
+type FileLockTryAcquireWithTimeoutInternalOptions = FileLockTryAcquireWithTimeoutOptions & { clock?: Clock }
+
+const SYSTEM_CLOCK = new SystemClock()
+
+function abortReason(signal: AbortSignal): unknown {
+  return signal.reason ?? new DOMException("Aborted", "AbortError")
+}
+
+function waitForDelay(clock: Clock, delay: number, signal?: AbortSignal): Promise<void> {
+  if (delay <= 0) {
+    return Promise.resolve()
+  }
+
+  if (!signal) {
+    return new Promise<void>((resolve) => {
+      clock.setTimeout(resolve, delay)
+    })
+  }
+
+  if (signal.aborted) {
+    return Promise.reject(abortReason(signal))
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      clock.clearTimeout(timer)
+      reject(abortReason(signal))
+    }
+
+    const timer = clock.setTimeout(() => {
+      signal.removeEventListener("abort", onAbort)
+      resolve()
+    }, delay)
+
+    signal.addEventListener("abort", onAbort, { once: true })
+  })
 }
 
 function normalizePath(path: string): string {
@@ -80,7 +118,7 @@ export class FileLock {
     const lock = FileLock.open(path, options)
 
     try {
-      if (!(await lock.tryAcquireWithTimeout(options))) {
+      if (!(await lock.tryAcquireWithTimeout(options as FileLockTryAcquireWithTimeoutInternalOptions))) {
         lock.close()
         return null
       }
@@ -149,20 +187,21 @@ export class FileLock {
     }
 
     const tickTime = options.tickTime ?? (() => 50)
-    const startedAt = Date.now()
+    const clock = (options as FileLockTryAcquireWithTimeoutInternalOptions).clock ?? SYSTEM_CLOCK
+    const startedAt = clock.now()
     let attempt = 0
     let waited = 0
 
     while (true) {
       if (options.signal?.aborted) {
-        throw options.signal.reason ?? new DOMException("Aborted", "AbortError")
+        throw abortReason(options.signal)
       }
 
       if (this.tryAcquire()) {
         return true
       }
 
-      const elapsed = Date.now() - startedAt
+      const elapsed = clock.now() - startedAt
 
       if (options.timeoutMs !== undefined && elapsed >= options.timeoutMs) {
         return false
@@ -186,16 +225,7 @@ export class FileLock {
 
       waited += delay
       await options.waitTick?.({ file: this.path, attempt, delay, waited })
-
-      try {
-        await sleep(delay, undefined, options.signal ? { signal: options.signal } : undefined)
-      } catch (error) {
-        if (options.signal?.aborted) {
-          throw options.signal.reason ?? error
-        }
-
-        throw error
-      }
+      await waitForDelay(clock, delay, options.signal)
     }
   }
 
