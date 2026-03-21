@@ -45,7 +45,7 @@ import type {
   FileLockCreateResult,
 } from "./zig-structs.js"
 import { isBunfsPath } from "./lib/bunfs.js"
-import { FileLockError, FileLockErrorCode } from "./FileLockError.js"
+import { FileLockError } from "./FileLockError.js"
 
 const module = await import(`@opentui/core-${process.platform}-${process.arch}/index.ts`)
 let targetLibPath = module.default
@@ -122,33 +122,22 @@ function toNumber(value: number | bigint): number {
   return typeof value === "bigint" ? Number(value) : value
 }
 
-enum FileLockStatus {
-  Ok = 0,
-  Busy = 1,
-  InvalidHandle = 2,
-  InvalidPath = 3,
-  AccessDenied = 4,
-  FileNotFound = 5,
-  LocksNotSupported = 6,
-  SystemResources = 7,
-  OutOfMemory = 8,
-  Unexpected = 9,
-  Closing = 10,
-}
+const FILE_LOCK_OK = 0
+const FILE_LOCK_BUSY = 1
 
-const FILE_LOCK_ERROR_CODE_BY_STATUS = {
-  [FileLockStatus.Ok]: FileLockErrorCode.Unexpected,
-  [FileLockStatus.Busy]: FileLockErrorCode.Unexpected,
-  [FileLockStatus.InvalidHandle]: FileLockErrorCode.InvalidHandle,
-  [FileLockStatus.InvalidPath]: FileLockErrorCode.InvalidPath,
-  [FileLockStatus.AccessDenied]: FileLockErrorCode.AccessDenied,
-  [FileLockStatus.FileNotFound]: FileLockErrorCode.FileNotFound,
-  [FileLockStatus.LocksNotSupported]: FileLockErrorCode.LocksNotSupported,
-  [FileLockStatus.SystemResources]: FileLockErrorCode.SystemResources,
-  [FileLockStatus.OutOfMemory]: FileLockErrorCode.OutOfMemory,
-  [FileLockStatus.Unexpected]: FileLockErrorCode.Unexpected,
-  [FileLockStatus.Closing]: FileLockErrorCode.Closing,
-} as const
+const FILE_LOCK_ERROR_CODE_BY_STATUS = [
+  undefined,
+  undefined,
+  "invalid_handle",
+  "invalid_path",
+  "access_denied",
+  "file_not_found",
+  "locks_not_supported",
+  "system_resources",
+  "out_of_memory",
+  "unexpected",
+  "closing",
+] as const
 
 function getOpenTUILib(libPath?: string) {
   const resolvedLibPath = libPath || targetLibPath
@@ -3120,11 +3109,11 @@ class FFIRenderLib implements RenderLib {
     this.opentui.symbols.createFileLock(ptr(pathBuffer), pathBuffer.length, ptr(resultBuffer))
     const result = FileLockCreateResultStruct.unpack(resultBuffer) as FileLockCreateResult
 
-    if (result.status !== FileLockStatus.Ok) {
+    if (result.status !== FILE_LOCK_OK) {
       throw new FileLockError({
         path,
         op: "create",
-        code: FILE_LOCK_ERROR_CODE_BY_STATUS[result.status as FileLockStatus] ?? FileLockErrorCode.Unexpected,
+        code: FILE_LOCK_ERROR_CODE_BY_STATUS[result.status] ?? "unexpected",
       })
     }
 
@@ -3134,11 +3123,11 @@ class FFIRenderLib implements RenderLib {
   public destroyFileLock(lock: number): void {
     const status = this.opentui.symbols.destroyFileLock(lock)
 
-    if (status !== FileLockStatus.Ok) {
+    if (status !== FILE_LOCK_OK) {
       throw new FileLockError({
         path: `handle:${lock}`,
         op: "close",
-        code: FILE_LOCK_ERROR_CODE_BY_STATUS[status as FileLockStatus] ?? FileLockErrorCode.Unexpected,
+        code: FILE_LOCK_ERROR_CODE_BY_STATUS[status] ?? "unexpected",
       })
     }
   }
@@ -3146,24 +3135,24 @@ class FFIRenderLib implements RenderLib {
   public fileLockTryAcquire(lock: number): boolean {
     const status = this.opentui.symbols.fileLockTryAcquire(lock)
 
-    if (status === FileLockStatus.Ok) return true
-    if (status === FileLockStatus.Busy) return false
+    if (status === FILE_LOCK_OK) return true
+    if (status === FILE_LOCK_BUSY) return false
 
     throw new FileLockError({
       path: `handle:${lock}`,
       op: "tryAcquire",
-      code: FILE_LOCK_ERROR_CODE_BY_STATUS[status as FileLockStatus] ?? FileLockErrorCode.Unexpected,
+      code: FILE_LOCK_ERROR_CODE_BY_STATUS[status] ?? "unexpected",
     })
   }
 
   public fileLockRelease(lock: number): void {
     const status = this.opentui.symbols.fileLockRelease(lock)
 
-    if (status !== FileLockStatus.Ok) {
+    if (status !== FILE_LOCK_OK) {
       throw new FileLockError({
         path: `handle:${lock}`,
         op: "release",
-        code: FILE_LOCK_ERROR_CODE_BY_STATUS[status as FileLockStatus] ?? FileLockErrorCode.Unexpected,
+        code: FILE_LOCK_ERROR_CODE_BY_STATUS[status] ?? "unexpected",
       })
     }
   }

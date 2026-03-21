@@ -2,10 +2,10 @@ import { closeSync, existsSync, mkdirSync, openSync } from "node:fs"
 import { dirname, resolve } from "node:path"
 import { setTimeout as sleep } from "node:timers/promises"
 
-import { FileLockError, FileLockErrorCode, type FileLockOp } from "./FileLockError"
+import { FileLockError, type FileLockOp } from "./FileLockError"
 import { resolveRenderLib } from "./zig"
 
-export { FileLockError, FileLockErrorCode } from "./FileLockError"
+export { FileLockError } from "./FileLockError"
 
 export interface FileLockOpenOptions {
   createIfMissing?: boolean
@@ -112,7 +112,7 @@ export class FileLock {
         throw new FileLockError({
           path: this.path,
           op: "create",
-          code: FileLockErrorCode.InvalidPath,
+          code: "invalid_path",
           message: `create failed for ${this.path}: FileLock path must be a string`,
         })
       }
@@ -121,7 +121,7 @@ export class FileLock {
         throw new FileLockError({
           path,
           op: "create",
-          code: FileLockErrorCode.InvalidPath,
+          code: "invalid_path",
           message: `create failed for ${path}: FileLock path must not be empty`,
         })
       }
@@ -137,7 +137,7 @@ export class FileLock {
           throw new FileLockError({
             path: this.path,
             op: "create",
-            code: FileLockErrorCode.FileNotFound,
+            code: "file_not_found",
             message: `create failed for ${this.path}: Lock file does not exist: ${this.path}`,
           })
         }
@@ -149,6 +149,16 @@ export class FileLock {
     } catch (error) {
       if (error instanceof FileLockError) {
         throw error
+      }
+
+      if (error && typeof error === "object" && "code" in error) {
+        if (error.code === "ENOENT" || error.code === "ENOTDIR") {
+          throw new FileLockError({ path: this.path, op: "create", code: "file_not_found", cause: error })
+        }
+
+        if (error.code === "EACCES" || error.code === "EPERM") {
+          throw new FileLockError({ path: this.path, op: "create", code: "access_denied", cause: error })
+        }
       }
 
       throw new FileLockError({ path: this.path, op: "create", cause: error })
@@ -199,7 +209,7 @@ export class FileLock {
       throw new FileLockError({
         path: this.path,
         op: "tryAcquireWithTimeout",
-        code: FileLockErrorCode.InvalidArgument,
+        code: "invalid_argument",
         message: `tryAcquireWithTimeout failed for ${this.path}: FileLock timeoutMs must be a finite, non-negative number`,
       })
     }
@@ -232,7 +242,7 @@ export class FileLock {
         throw new FileLockError({
           path: this.path,
           op: "tryAcquireWithTimeout",
-          code: FileLockErrorCode.InvalidArgument,
+          code: "invalid_argument",
           message: `tryAcquireWithTimeout failed for ${this.path}: FileLock tickTime must return a finite, non-negative number`,
         })
       }
@@ -301,7 +311,7 @@ export class FileLock {
     }
 
     throw new FileLockError({
-      code: FileLockErrorCode.Closed,
+      code: "closed",
       path: this.path,
       op,
       message: `FileLock is closed: ${this.path}`,

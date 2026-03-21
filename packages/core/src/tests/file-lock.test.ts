@@ -5,7 +5,7 @@ import { setTimeout as sleep } from "node:timers/promises"
 
 import { expect, test } from "bun:test"
 
-import { FileLock, FileLockError, FileLockErrorCode, type FileLockWaitTick } from "../FileLock"
+import { FileLock, FileLockError, type FileLockWaitTick } from "../FileLock"
 import { resolveRenderLib } from "../zig"
 
 const fixturePath = join(import.meta.dir, "file-lock.fixture.ts")
@@ -121,7 +121,7 @@ test("FileLock respects createParentPath: false when the parent directory is mis
     }
 
     expect(error).toBeInstanceOf(FileLockError)
-    expect((error as FileLockError).code).toBe(FileLockErrorCode.FileNotFound)
+    expect((error as FileLockError).code).toBe("file_not_found")
     expect(existsSync(join(dir, "missing"))).toBe(false)
     expect(existsSync(path)).toBe(false)
   } finally {
@@ -145,7 +145,7 @@ test("FileLock respects createIfMissing: false when the lock file is missing", (
     }
 
     expect(error).toBeInstanceOf(FileLockError)
-    expect((error as FileLockError).code).toBe(FileLockErrorCode.FileNotFound)
+    expect((error as FileLockError).code).toBe("file_not_found")
     expect(existsSync(path)).toBe(false)
   } finally {
     rmSync(dir, { recursive: true, force: true })
@@ -162,7 +162,7 @@ test("FileLock exposes invalid_path for invalid create inputs", () => {
   }
 
   expect(error).toBeInstanceOf(FileLockError)
-  expect((error as FileLockError).code).toBe(FileLockErrorCode.InvalidPath)
+  expect((error as FileLockError).code).toBe("invalid_path")
 })
 
 test("FileLock strict create options succeed when the lock file already exists", () => {
@@ -210,7 +210,7 @@ test("FileLock.close is idempotent and closed locks throw on reuse", async () =>
     }
 
     expect(error).toBeInstanceOf(FileLockError)
-    expect((error as FileLockError).code).toBe(FileLockErrorCode.Closed)
+    expect((error as FileLockError).code).toBe("closed")
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -233,7 +233,7 @@ test("FileLock.tryAcquireWithTimeout exposes invalid_argument for invalid option
     }
 
     expect(timeoutError).toBeInstanceOf(FileLockError)
-    expect((timeoutError as FileLockError).code).toBe(FileLockErrorCode.InvalidArgument)
+    expect((timeoutError as FileLockError).code).toBe("invalid_argument")
 
     await waitForReady(readyPath)
 
@@ -246,7 +246,7 @@ test("FileLock.tryAcquireWithTimeout exposes invalid_argument for invalid option
     }
 
     expect(tickTimeError).toBeInstanceOf(FileLockError)
-    expect((tickTimeError as FileLockError).code).toBe(FileLockErrorCode.InvalidArgument)
+    expect((tickTimeError as FileLockError).code).toBe("invalid_argument")
   } finally {
     holder.kill()
     await holder.exited.catch(() => undefined)
@@ -267,7 +267,7 @@ test("resolveRenderLib file lock wrappers expose stable native error codes", () 
   }
 
   expect(createError).toBeInstanceOf(Error)
-  expect((createError as { code?: string }).code).toBe(FileLockErrorCode.InvalidPath)
+  expect((createError as { code?: string }).code).toBe("invalid_path")
 
   let destroyError: unknown
 
@@ -278,7 +278,7 @@ test("resolveRenderLib file lock wrappers expose stable native error codes", () 
   }
 
   expect(destroyError).toBeInstanceOf(Error)
-  expect((destroyError as { code?: string }).code).toBe(FileLockErrorCode.InvalidHandle)
+  expect((destroyError as { code?: string }).code).toBe("invalid_handle")
 })
 
 test("FileLock.release unlocks the file and lets the same instance acquire again", () => {
