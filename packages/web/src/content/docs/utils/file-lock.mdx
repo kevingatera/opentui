@@ -1,0 +1,87 @@
+---
+title: FileLock
+description: Advisory file locks for coordinating local filesystem access
+order: 1
+---
+
+# FileLock
+
+`FileLock` provides advisory OS-backed file locks from `@opentui/core` for coordinating access to local files across processes. Use a dedicated `.lock` file for single-writer sections such as cache updates, generated artifacts, or shared state on disk.
+
+The lock file itself can remain on disk after `release()` or `close()`. The file path is the coordination point; the held lock lives in the OS.
+
+## Basic usage
+
+```typescript
+import { FileLock } from "@opentui/core"
+
+const lock = await FileLock.tryAcquireWithTimeout("./.cache/parser.lock", {
+  timeoutMs: 5_000,
+  tickTime: (attempt) => Math.min(attempt * 25, 250),
+})
+
+if (!lock) {
+  throw new Error("Timed out waiting for parser.lock")
+}
+
+try {
+  // update shared state
+} finally {
+  lock.close()
+}
+```
+
+Paths are resolved against `process.cwd()` before the native lock is created.
+
+## Static API
+
+| Method                                           | Description                                                                                                              |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `FileLock.open(path, options?)`                  | Open a lock handle without acquiring it. Call `tryAcquire()` or `tryAcquireWithTimeout()` later.                         |
+| `FileLock.tryAcquire(path, options?)`            | Create a handle and try once. Returns `null` when another process already holds the lock.                                |
+| `FileLock.tryAcquireWithTimeout(path, options?)` | Create a handle and poll `tryAcquire()` asynchronously until acquired, timed out, or aborted. Returns `null` on timeout. |
+
+## Create options
+
+| Option             | Default | Description                                                     |
+| ------------------ | ------- | --------------------------------------------------------------- |
+| `createIfMissing`  | `true`  | Create the lock file if it does not exist.                      |
+| `createParentPath` | `true`  | Create missing parent directories before opening the lock file. |
+
+Set either flag to `false` when you want a missing file or directory to fail with `FileLockError` instead of being created automatically.
+
+## Timeout options
+
+| Option              | Default    | Description                                                                          |
+| ------------------- | ---------- | ------------------------------------------------------------------------------------ |
+| `timeoutMs`         | -          | Maximum total wait time. Omit to wait until acquired or aborted.                     |
+| `tickTime(attempt)` | `() => 50` | Return the next delay in milliseconds before retrying.                               |
+| `waitTick(info)`    | -          | Optional hook called before each wait with `{ file, attempt, delay, waited }`.       |
+| `signal`            | -          | `AbortSignal` used to cancel waiting. Rejection uses `signal.reason` when available. |
+
+`tryAcquireWithTimeout()` is non-blocking at the JavaScript layer. Contention is handled by repeated `tryAcquire()` calls plus async delays, not by a native blocking wait.
+
+## Instance API
+
+| Member               | Description                                                                                             |
+| -------------------- | ------------------------------------------------------------------------------------------------------- |
+| `path`               | Normalized absolute path used for the lock file.                                                        |
+| `acquired`           | `true` when this handle currently holds the lock.                                                       |
+| `tryAcquire()`       | Try once. Returns `true` if acquired and `false` if busy. Returns `true` immediately when already held. |
+| `release()`          | Unlock the file but keep the handle open so it can be acquired again later. No-op if not held.          |
+| `close()`            | Release the lock if needed and destroy the native handle. Idempotent.                                   |
+| `[Symbol.dispose]()` | Alias for `close()`.                                                                                    |
+
+After `close()`, acquisition methods throw `FileLockError` with `code: "closed"`.
+
+## Errors
+
+Operations throw `FileLockError` with stable `code`, `path`, `op`, and `cause` fields.
+
+Common codes are `invalid_path`, `invalid_argument`, `file_not_found`, `access_denied`, `locks_not_supported`, `system_resources`, `out_of_memory`, and `unexpected`.
+
+## Notes
+
+- `FileLock` is an advisory OS file lock, not a distributed lock service.
+- Support depends on the platform and filesystem. Local filesystems are the intended target; some network or special filesystems may ignore or reject locks.
+- If the owning process exits, the OS releases the lock, but the `.lock` file itself can remain on disk.

@@ -113,6 +113,13 @@ const isActive = (path: string) => currentPath === path || currentPath === `${pa
             </div>
 
             <div class="sidebar-section">
+              <div class="sidebar-title">Utils</div>
+              <ul class="sidebar-links">
+                <li><a href="/docs/utils/file-lock" class:list={{ active: isActive("/docs/utils/file-lock") }}>FileLock</a></li>
+              </ul>
+            </div>
+
+            <div class="sidebar-section">
               <div class="sidebar-title">Reference</div>
               <ul class="sidebar-links">
                 <li><a href="/docs/reference/env-vars" class:list={{ active: isActive("/docs/reference/env-vars") }}>Environment variables</a></li>
