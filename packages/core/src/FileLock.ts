@@ -2,7 +2,7 @@ import { closeSync, existsSync, mkdirSync, openSync } from "node:fs"
 import { dirname, resolve } from "node:path"
 import { setTimeout as sleep } from "node:timers/promises"
 
-import { resolveRenderLib } from "./zig"
+import { resolveRenderLib, type FileLockNativeErrorCode } from "./zig"
 
 type FileLockOp = "create" | "tryAcquire" | "tryAcquireWithTimeout" | "release" | "close"
 
@@ -27,14 +27,21 @@ export interface FileLockTryAcquireWithTimeoutOptions {
   signal?: AbortSignal
 }
 
+export type FileLockErrorCode = FileLockNativeErrorCode | "closed" | "invalid_argument"
+
 export class FileLockError extends Error {
+  public readonly code: FileLockErrorCode
   public readonly path: string
   public readonly op: FileLockOp
   public override readonly cause?: unknown
 
-  public constructor(message: string, options: { path: string; op: FileLockOp; cause?: unknown }) {
+  public constructor(
+    message: string,
+    options: { path: string; op: FileLockOp; code: FileLockErrorCode; cause?: unknown },
+  ) {
     super(message)
     this.name = "FileLockError"
+    this.code = options.code
     this.path = options.path
     this.op = options.op
     this.cause = options.cause
@@ -45,6 +52,46 @@ function wrapError(path: string, op: FileLockOp, error: unknown): FileLockError 
   if (error instanceof FileLockError) return error
 
   let message = "unknown error"
+  let code: FileLockErrorCode = "unexpected"
+
+  if (error && typeof error === "object" && "code" in error && typeof error.code === "string") {
+    switch (error.code) {
+      case "invalid_handle":
+      case "invalid_path":
+      case "access_denied":
+      case "file_not_found":
+      case "locks_not_supported":
+      case "system_resources":
+      case "out_of_memory":
+      case "unexpected":
+      case "closing":
+        code = error.code
+        break
+      case "EACCES":
+      case "EPERM":
+        code = "access_denied"
+        break
+      case "ENOENT":
+      case "ENOTDIR":
+        code = "file_not_found"
+        break
+      case "EMFILE":
+      case "ENFILE":
+        code = "system_resources"
+        break
+      case "ENOMEM":
+        code = "out_of_memory"
+        break
+      case "EINVAL":
+      case "ENAMETOOLONG":
+        code = "invalid_path"
+        break
+      case "ERR_INVALID_ARG_TYPE":
+      case "ERR_OUT_OF_RANGE":
+        code = "invalid_argument"
+        break
+    }
+  }
 
   if (error instanceof Error && error.message) {
     message = error.message
@@ -52,7 +99,21 @@ function wrapError(path: string, op: FileLockOp, error: unknown): FileLockError 
     message = error
   }
 
+  if (code === "unexpected") {
+    if (message === "FileLock path must be a string" || message === "FileLock path must not be empty") {
+      code = "invalid_path"
+    } else if (
+      message === "FileLock timeoutMs must be a finite, non-negative number" ||
+      message === "FileLock tickTime must return a finite, non-negative number"
+    ) {
+      code = "invalid_argument"
+    } else if (message.startsWith("Lock file does not exist: ")) {
+      code = "file_not_found"
+    }
+  }
+
   return new FileLockError(`${op} failed for ${path}: ${message}`, {
+    code,
     path,
     op,
     cause: error,
@@ -88,6 +149,7 @@ export class FileLock {
               : "unknown error"
 
         throw new FileLockError(`${wrapped.message}; cleanup failed: ${cleanupMessage}`, {
+          code: wrapped.code,
           path: lock.path,
           op: "tryAcquire",
           cause: closeError,
@@ -129,17 +191,19 @@ export class FileLock {
   private closed = false
 
   private constructor(path: string, options: FileLockOpenOptions = {}) {
-    if (typeof path !== "string") {
-      throw new TypeError("FileLock path must be a string")
-    }
-
-    if (!path.trim()) {
-      throw new Error("FileLock path must not be empty")
-    }
-
-    this.path = resolve(path)
+    this.path = typeof path === "string" ? path : String(path)
 
     try {
+      if (typeof path !== "string") {
+        throw new TypeError("FileLock path must be a string")
+      }
+
+      if (!path.trim()) {
+        throw new Error("FileLock path must not be empty")
+      }
+
+      this.path = resolve(path)
+
       if (options.createParentPath !== false) {
         mkdirSync(dirname(this.path), { recursive: true })
       }
@@ -195,7 +259,11 @@ export class FileLock {
       options.timeoutMs !== undefined &&
       (typeof options.timeoutMs !== "number" || !Number.isFinite(options.timeoutMs) || options.timeoutMs < 0)
     ) {
-      throw new TypeError("FileLock timeoutMs must be a finite, non-negative number")
+      throw wrapError(
+        this.path,
+        "tryAcquireWithTimeout",
+        new TypeError("FileLock timeoutMs must be a finite, non-negative number"),
+      )
     }
 
     const tickTime = options.tickTime ?? (() => 50)
@@ -223,7 +291,11 @@ export class FileLock {
       const nextDelay = tickTime(attempt)
 
       if (typeof nextDelay !== "number" || !Number.isFinite(nextDelay) || nextDelay < 0) {
-        throw new TypeError("FileLock tickTime must return a finite, non-negative number")
+        throw wrapError(
+          this.path,
+          "tryAcquireWithTimeout",
+          new TypeError("FileLock tickTime must return a finite, non-negative number"),
+        )
       }
 
       const delay =
@@ -282,6 +354,7 @@ export class FileLock {
     }
 
     throw new FileLockError(`FileLock is closed: ${this.path}`, {
+      code: "closed",
       path: this.path,
       op,
     })

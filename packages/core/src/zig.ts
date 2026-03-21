@@ -124,30 +124,41 @@ function toNumber(value: number | bigint): number {
 const FILE_LOCK_OK = 0
 const FILE_LOCK_BUSY = 1
 
-function fileLockStatus(status: number): string {
-  switch (status) {
-    case 0:
-      return "ok"
-    case 1:
-      return "busy"
-    case 2:
-      return "invalid_handle"
-    case 3:
-      return "invalid_path"
-    case 4:
-      return "access_denied"
-    case 5:
-      return "file_not_found"
-    case 6:
-      return "locks_not_supported"
-    case 7:
-      return "system_resources"
-    case 8:
-      return "out_of_memory"
-    case 10:
-      return "closing"
-    default:
-      return "unexpected"
+const FILE_LOCK_STATUS_BY_ID = {
+  0: "ok",
+  1: "busy",
+  2: "invalid_handle",
+  3: "invalid_path",
+  4: "access_denied",
+  5: "file_not_found",
+  6: "locks_not_supported",
+  7: "system_resources",
+  8: "out_of_memory",
+  9: "unexpected",
+  10: "closing",
+} as const
+
+type FileLockStatusId = keyof typeof FILE_LOCK_STATUS_BY_ID
+type FileLockStatus = (typeof FILE_LOCK_STATUS_BY_ID)[FileLockStatusId]
+export type FileLockNativeErrorCode = Exclude<FileLockStatus, "ok" | "busy">
+
+function fileLockStatus(status: number): FileLockStatus {
+  if (Object.prototype.hasOwnProperty.call(FILE_LOCK_STATUS_BY_ID, status)) {
+    return FILE_LOCK_STATUS_BY_ID[status as FileLockStatusId]
+  }
+
+  return "unexpected"
+}
+
+class FileLockNativeError extends Error {
+  public readonly code: FileLockNativeErrorCode
+
+  public constructor(op: string, path: string, status: number) {
+    const code = fileLockStatus(status)
+
+    super(`${op} failed for ${path}: ${code}`)
+    this.name = "FileLockNativeError"
+    this.code = code === "ok" || code === "busy" ? "unexpected" : code
   }
 }
 
@@ -3115,9 +3126,8 @@ class FFIRenderLib implements RenderLib {
     }
   }
 
-  private createFileLockError(op: string, path: string, status: number): Error {
-    const reason = fileLockStatus(status)
-    return new Error(`${op} failed for ${path}: ${reason}`)
+  private createFileLockError(op: string, path: string, status: number): FileLockNativeError {
+    return new FileLockNativeError(op, path, status)
   }
 
   public createFileLock(path: string): number {

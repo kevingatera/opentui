@@ -6,6 +6,7 @@ import { setTimeout as sleep } from "node:timers/promises"
 import { expect, test } from "bun:test"
 
 import { FileLock, FileLockError, type FileLockWaitTick } from "../FileLock"
+import { resolveRenderLib } from "../zig"
 
 const fixturePath = join(import.meta.dir, "file-lock.fixture.ts")
 const fixtureCwd = join(import.meta.dir, "..", "..")
@@ -111,7 +112,16 @@ test("FileLock respects createParentPath: false when the parent directory is mis
   const path = join(dir, "missing", "shared.lock")
 
   try {
-    expect(() => FileLock.tryAcquire(path, { createParentPath: false })).toThrow(FileLockError)
+    let error: unknown
+
+    try {
+      FileLock.tryAcquire(path, { createParentPath: false })
+    } catch (caught) {
+      error = caught
+    }
+
+    expect(error).toBeInstanceOf(FileLockError)
+    expect((error as FileLockError).code).toBe("file_not_found")
     expect(existsSync(join(dir, "missing"))).toBe(false)
     expect(existsSync(path)).toBe(false)
   } finally {
@@ -126,11 +136,33 @@ test("FileLock respects createIfMissing: false when the lock file is missing", (
   try {
     mkdirSync(join(dir, "locks"), { recursive: true })
 
-    expect(() => FileLock.tryAcquire(path, { createIfMissing: false })).toThrow(FileLockError)
+    let error: unknown
+
+    try {
+      FileLock.tryAcquire(path, { createIfMissing: false })
+    } catch (caught) {
+      error = caught
+    }
+
+    expect(error).toBeInstanceOf(FileLockError)
+    expect((error as FileLockError).code).toBe("file_not_found")
     expect(existsSync(path)).toBe(false)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test("FileLock exposes invalid_path for invalid create inputs", () => {
+  let error: unknown
+
+  try {
+    FileLock.open("")
+  } catch (caught) {
+    error = caught
+  }
+
+  expect(error).toBeInstanceOf(FileLockError)
+  expect((error as FileLockError).code).toBe("invalid_path")
 })
 
 test("FileLock strict create options succeed when the lock file already exists", () => {
@@ -178,9 +210,75 @@ test("FileLock.close is idempotent and closed locks throw on reuse", async () =>
     }
 
     expect(error).toBeInstanceOf(FileLockError)
+    expect((error as FileLockError).code).toBe("closed")
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test("FileLock.tryAcquireWithTimeout exposes invalid_argument for invalid options", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "opentui-file-lock-"))
+  const path = join(dir, "shared.lock")
+  const readyPath = join(dir, "holder.ready")
+  const lock = FileLock.open(path)
+  const holder = spawnFixture("hold", path, readyPath, "1000")
+
+  try {
+    let timeoutError: unknown
+
+    try {
+      await lock.tryAcquireWithTimeout({ timeoutMs: -1 })
+    } catch (caught) {
+      timeoutError = caught
+    }
+
+    expect(timeoutError).toBeInstanceOf(FileLockError)
+    expect((timeoutError as FileLockError).code).toBe("invalid_argument")
+
+    await waitForReady(readyPath)
+
+    let tickTimeError: unknown
+
+    try {
+      await FileLock.tryAcquireWithTimeout(path, { tickTime: () => -1 })
+    } catch (caught) {
+      tickTimeError = caught
+    }
+
+    expect(tickTimeError).toBeInstanceOf(FileLockError)
+    expect((tickTimeError as FileLockError).code).toBe("invalid_argument")
+  } finally {
+    holder.kill()
+    await holder.exited.catch(() => undefined)
+    lock.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("resolveRenderLib file lock wrappers expose stable native error codes", () => {
+  const lib = resolveRenderLib()
+
+  let createError: unknown
+
+  try {
+    lib.createFileLock("shared.lock")
+  } catch (caught) {
+    createError = caught
+  }
+
+  expect(createError).toBeInstanceOf(Error)
+  expect((createError as { code?: string }).code).toBe("invalid_path")
+
+  let destroyError: unknown
+
+  try {
+    lib.destroyFileLock(999)
+  } catch (caught) {
+    destroyError = caught
+  }
+
+  expect(destroyError).toBeInstanceOf(Error)
+  expect((destroyError as { code?: string }).code).toBe("invalid_handle")
 })
 
 test("FileLock.release unlocks the file and lets the same instance acquire again", () => {
