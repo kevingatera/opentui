@@ -19,6 +19,15 @@ function spawnFixture(...args: string[]) {
   })
 }
 
+function spawnFixtureWithOutput(...args: string[]) {
+  return Bun.spawn([process.execPath, fixturePath, ...args], {
+    cwd: fixtureCwd,
+    env: process.env,
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+}
+
 function runFixture(...args: string[]) {
   const result = Bun.spawnSync([process.execPath, fixturePath, ...args], {
     cwd: fixtureCwd,
@@ -35,6 +44,23 @@ function runFixture(...args: string[]) {
   }
 
   return stdout ? JSON.parse(stdout) : null
+}
+
+async function readFixtureResult<T>(fixture: ReturnType<typeof spawnFixtureWithOutput>, args: string[]): Promise<T> {
+  const [stdout, stderr, exitCode] = await Promise.all([
+    fixture.stdout ? new Response(fixture.stdout).text() : Promise.resolve(""),
+    fixture.stderr ? new Response(fixture.stderr).text() : Promise.resolve(""),
+    fixture.exited,
+  ])
+
+  const trimmedStdout = stdout.trim()
+  const trimmedStderr = stderr.trim()
+
+  if (exitCode !== 0) {
+    throw new Error(`Fixture failed (${args.join(" ")}): ${trimmedStderr || trimmedStdout || "unknown error"}`)
+  }
+
+  return JSON.parse(trimmedStdout) as T
 }
 
 async function waitForReady(path: string, timeout = 2_000): Promise<void> {
@@ -152,6 +178,96 @@ test("FileLock.close is idempotent and closed locks throw on reuse", async () =>
     }
 
     expect(error).toBeInstanceOf(FileLockError)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("FileLock.release unlocks the file and lets the same instance acquire again", () => {
+  const dir = mkdtempSync(join(tmpdir(), "opentui-file-lock-"))
+  const path = join(dir, "shared.lock")
+  const lock = FileLock.tryAcquire(path)
+
+  if (!lock) {
+    throw new Error("Expected to acquire the lock")
+  }
+
+  try {
+    expect(lock.acquired).toBe(true)
+
+    lock.release()
+    expect(lock.acquired).toBe(false)
+    expect(runFixture("try", path)).toEqual({ acquired: true })
+    expect(lock.tryAcquire()).toBe(true)
+    expect(lock.acquired).toBe(true)
+  } finally {
+    lock.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("FileLock.release is a no-op when the lock is not held", () => {
+  const dir = mkdtempSync(join(tmpdir(), "opentui-file-lock-"))
+  const path = join(dir, "shared.lock")
+  const lock = FileLock.open(path)
+
+  try {
+    lock.release()
+    expect(lock.acquired).toBe(false)
+
+    expect(lock.tryAcquire()).toBe(true)
+    lock.release()
+    lock.release()
+
+    expect(lock.acquired).toBe(false)
+    expect(runFixture("try", path)).toEqual({ acquired: true })
+  } finally {
+    lock.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("FileLock repeated tryAcquire and tryAcquireWithTimeout on the same instance return immediately", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "opentui-file-lock-"))
+  const path = join(dir, "shared.lock")
+  const lock = FileLock.tryAcquire(path)
+  const ticks: FileLockWaitTick[] = []
+
+  if (!lock) {
+    throw new Error("Expected to acquire the lock")
+  }
+
+  try {
+    expect(lock.tryAcquire()).toBe(true)
+    expect(
+      await lock.tryAcquireWithTimeout({
+        timeoutMs: 100,
+        waitTick: (tick) => {
+          ticks.push(tick)
+        },
+      }),
+    ).toBe(true)
+    expect(ticks).toEqual([])
+  } finally {
+    lock.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("FileLock Symbol.dispose releases and closes the lock", () => {
+  const dir = mkdtempSync(join(tmpdir(), "opentui-file-lock-"))
+  const path = join(dir, "shared.lock")
+  const lock = FileLock.tryAcquire(path)
+
+  if (!lock) {
+    throw new Error("Expected to acquire the lock")
+  }
+
+  try {
+    lock[Symbol.dispose]()
+
+    expect(runFixture("try", path)).toEqual({ acquired: true })
+    expect(() => lock.tryAcquire()).toThrow(FileLockError)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -326,6 +442,39 @@ test("FileLock is released when the owning process exits", async () => {
   } finally {
     holder.kill()
     await holder.exited.catch(() => undefined)
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("FileLock serializes repeated multi-process contention without overlap", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "opentui-file-lock-"))
+  const lockPath = join(dir, "shared.lock")
+
+  try {
+    for (let round = 0; round < 3; round += 1) {
+      const fixtures = Array.from({ length: 4 }, (_, index) => {
+        const args = ["contend", lockPath, `${round}-${index}`, "30", "2000", "10"]
+        return {
+          args,
+          process: spawnFixtureWithOutput(...args),
+        }
+      })
+
+      const results = await Promise.all(
+        fixtures.map(({ process, args }) =>
+          readFixtureResult<{ worker: string; acquiredAt: number; releasedAt: number }>(process, args),
+        ),
+      )
+
+      expect(new Set(results.map((result) => result.worker)).size).toBe(4)
+
+      const ordered = [...results].sort((a, b) => a.acquiredAt - b.acquiredAt)
+
+      for (let index = 1; index < ordered.length; index += 1) {
+        expect(ordered[index]?.acquiredAt).toBeGreaterThanOrEqual(ordered[index - 1]!.releasedAt)
+      }
+    }
+  } finally {
     rmSync(dir, { recursive: true, force: true })
   }
 })

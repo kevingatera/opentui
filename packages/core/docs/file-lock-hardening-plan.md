@@ -6,9 +6,9 @@ This plan is based on the review of the `system-locks` branch relative to `main`
 
 Goals for the remaining follow-up work:
 
-- close the known completeness and reliability gaps
 - make error handling exhaustive and programmatic
-- expand the tests so they cover the real behaviour of the feature
+- make the native create path strict and explicit
+- finish the docs around the current public contract
 - leave the implementation in a state that is ready for later cross-platform CI verification
 
 Explicit constraints for this work:
@@ -36,88 +36,16 @@ Current behaviour summary:
 - `FileLock.open(path, options?)`, `FileLock.tryAcquire(path, options?)`, and `FileLock.tryAcquireWithTimeout(path, options?)` normalize the path, create missing parent directories and lock files by default, and support strict opt-out via `createParentPath: false` and `createIfMissing: false`
 - there is no blocking acquire API in TypeScript or Zig; all lock contention handling goes through immediate `tryAcquire()` plus asynchronous retry logic in `FileLock.ts`
 - `FileLock.tryAcquireWithTimeout()` retries without blocking the event loop, supports `timeoutMs`, `tickTime`, `waitTick`, and `signal`, defaults `tickTime` to `() => 50`, and returns `null` on timeout
-- the native layer currently uses `std.fs.File.tryLock(.exclusive)` for lock attempts
+- the TypeScript behavioural suite now covers friendly defaults, strict opt-outs, timeout waiting, aborts, lifecycle semantics, `Symbol.dispose`, and repeated multi-process contention
+- the native test suite now covers invalid handles, destroy semantics, and repeated create/tryAcquire/release/destroy cycles
 - the native `open()` path still implicitly creates the file if it does not exist, so the remaining native follow-up should make that path strict existing-file-only
-- TypeScript status decoding in `packages/core/src/zig.ts` is not exhaustive; status `9` (`unexpected`) is still not handled explicitly from a single source of truth
-- TypeScript tests now cover friendly defaults, strict opt-outs, timeout waiting, aborts, and a few lifecycle/contention cases, but not the full lifecycle/stress matrix yet
+- TypeScript status decoding in `packages/core/src/zig.ts` is still not exhaustive from a single source of truth; status `9` (`unexpected`) is still handled ad hoc
 
-## Key Insights That Drive This Plan
+## Remaining Work
 
-1. Path preparation and retry orchestration belong in `packages/core/src/FileLock.ts`, not in the FFI surface.
+### 1. Public error model in `packages/core/src/FileLock.ts`
 
-   `FileLock.ts` is the public API and the only current caller of `createFileLock()`. The ergonomic setup and async retry loop are now there, and the remaining work should preserve that split so the native create ABI can stay small and strict.
-
-2. There should be no fully blocking acquire path anywhere in the stack.
-
-   Immediate native `tryLock()` plus asynchronous JavaScript retry is sufficient for the current API needs and avoids blocking the main thread while a lock is contended.
-
-3. The remaining native work is about strictness and exhaustiveness, not waiting semantics.
-
-   The native layer should stay immediate-only for lock attempts. The follow-up there is to make create strict existing-file-only and keep status mapping exhaustive and stable.
-
-4. Behavioural locking semantics should continue to be tested at the process level.
-
-   The TypeScript test layer is the right place to verify real cross-process locking because it can spawn independent processes that contend on the same path. Zig tests should focus on native statuses and lifecycle guarantees exposed by the native API, not mutex internals or ref counts.
-
-## Desired End State
-
-The public API should settle on these semantics:
-
-```ts
-type FileLockTryAcquireWithTimeoutOptions = FileLockOpenOptions & {
-  timeoutMs?: number
-  tickTime?: (attempt: number) => number // default () => 50
-  signal?: AbortSignal
-  waitTick?: (tick: { file: string; attempt: number; delay: number; waited: number }) => void | Promise<void>
-}
-```
-
-Public surface:
-
-- `FileLock.open(path, options?)`
-- `FileLock.tryAcquire(path, options?)`
-- `FileLock.tryAcquireWithTimeout(path, options?)`
-- `lock.tryAcquire()` remains immediate and non-blocking
-- `lock.tryAcquireWithTimeout(options?)` retries asynchronously and non-blockingly on the existing handle
-
-Default behaviour:
-
-- if parent directories are missing, create them
-- if the lock file is missing, create it
-- then open the native lock handle
-- then try-acquire immediately or retry asynchronously as requested
-
-Strict opt-out behaviour:
-
-- `createParentPath: false` means missing parent directories remain an error
-- `createIfMissing: false` means missing lock file remains an error
-
-Timeout behaviour:
-
-- `tryAcquire()` remains immediate and returns `false` on contention
-- `tryAcquireWithTimeout({ timeoutMs })` retries asynchronously up to the requested bound and returns `null` / `false` on timeout
-- `tryAcquireWithTimeout()` defaults to a constant `tickTime` of `() => 50`
-- callers can provide `tickTime` when they want custom pacing such as exponential backoff
-- `tryAcquireWithTimeout()` without `timeoutMs` may keep retrying until success or abort, but it must never block the main thread
-- `signal` aborts waiting and rethrows the abort reason
-
-Error surface:
-
-- every native status is handled explicitly
-- public errors expose a stable `code` in addition to message, `path`, `op`, and `cause`
-- cleanup failures do not erase the original error
-
-Lifecycle behaviour:
-
-- `close()` stays idempotent
-- same-instance repeated `tryAcquire()` / `tryAcquireWithTimeout()` behaviour should be explicitly documented and tested
-- `release()` behaviour should be explicitly documented and tested instead of remaining an implicit side effect
-
-## Detailed Implementation Plan
-
-### 1. Remaining public API work in `packages/core/src/FileLock.ts`
-
-The non-blocking retry path now lives in `FileLock.ts` and should stay there. The remaining work in this file is:
+The remaining work in the public TypeScript layer is about the error surface, not lock-waiting semantics:
 
 - extend `FileLockError` with a stable `code` field
 - keep `path`, `op`, and `cause`
@@ -129,9 +57,10 @@ The non-blocking retry path now lives in `FileLock.ts` and should stay there. Th
   - `unexpected`
 - use a small TS-only code such as `closed` only when the failure comes from API misuse before any native call happens
 - update cleanup so a `close()` failure augments the original failure instead of replacing it
-- document and test the chosen behaviour of repeated `tryAcquire()` / `tryAcquireWithTimeout()` and `release()` on the same instance
 
-### 2. Remaining native work in `packages/core/src/zig/file-lock.zig`
+Once that lands, add/adjust tests so the stable `code` field is asserted directly instead of relying on message text.
+
+### 2. Native create strictness in `packages/core/src/zig/file-lock.zig`
 
 Make native create strict and explicit:
 
@@ -139,15 +68,9 @@ Make native create strict and explicit:
 - after this change, native `open()` should only open an existing absolute file
 - the public TypeScript layer remains responsible for the friendly default behaviour
 
-Other native details:
+### 3. FFI status cleanup in `packages/core/src/zig.ts`
 
-- keep `FileLock.tryAcquire()` immediate
-- keep `statusFromError()` exhaustive
-- preserve the existing machine-stable integer status codes
-
-### 3. FFI cleanup in `packages/core/src/zig.ts`
-
-Keep native create ABI small:
+Keep the native create ABI small:
 
 - keep `createFileLock(pathPtr, pathLen, outPtr)` as-is
 - no create-options struct is needed while path preparation stays in `FileLock.ts`
@@ -157,43 +80,15 @@ Make status handling exhaustive in `packages/core/src/zig.ts`:
 - replace the current ad-hoc `switch` in `fileLockStatus()` with a single status table or exhaustive constant map
 - explicitly include every current status, including the currently missing `unexpected`
 - keep a single source of truth for these status names to avoid future drift
-
-Wrapper behaviour in `zig.ts`:
-
-- `createFileLock()` keeps its current ABI and error flow
-- `fileLockTryAcquire()` keeps returning `false` only for `busy` and throws for all other statuses
 - surface stable public error codes instead of relying on message parsing alone
 
-### 4. Behavioural tests in `packages/core/src/tests/file-lock.test.ts`
+### 4. Native tests that should land with the strict-open change
 
-Keep the TypeScript suite black-box and process-based.
-
-The friendly-default, strict-opt-out, timeout, and abort cases are now covered. The remaining additions are:
-
-- release then re-acquire on the same instance
-- explicit contract test for repeated `tryAcquire()` / `tryAcquireWithTimeout()` on the same instance
-- explicit contract test for `release()`
-- `Symbol.dispose` releases/cleans up correctly
-- repeated contention/stress coverage with multiple subprocesses contending for the same lock path
-
-Keep the contention tests behavioural:
-
-- continue using subprocesses and real filesystem paths
-- do not mock the native layer
-- do not assert handle ids, internal registry state, or retry counts
-
-### 5. Native tests in `packages/core/src/zig/tests/file-lock_test.zig`
-
-Add native coverage for the remaining semantics without asserting internals.
-
-Recommended cases:
+When native create becomes strict, add the matching native coverage:
 
 - strict create behaviour: native create fails with `file_not_found` when the public layer has not pre-created the file
-- invalid handles still return `invalid_handle`
-- destroy still removes the handle
-- repeated create/tryAcquire/release/destroy cycles complete cleanly
 
-### 6. Documentation updates
+### 5. Documentation updates
 
 Add or update docs in `packages/core/README.md` and/or `packages/core/docs`.
 
@@ -215,12 +110,10 @@ The docs should set expectations clearly for local filesystems and make it obvio
 
 - add stable `FileLockError.code`
 - improve cleanup error preservation
-- document/test explicit lifecycle semantics
 
 `packages/core/src/zig/file-lock.zig`
 
 - make native `open()` strict existing-file-only
-- keep try-acquire immediate and exhaustive on errors
 
 `packages/core/src/zig.ts`
 
@@ -231,19 +124,9 @@ The docs should set expectations clearly for local filesystems and make it obvio
 
 - no change expected unless implementation later chooses richer result structs
 
-`packages/core/src/tests/file-lock.test.ts`
-
-- add lifecycle tests
-- add stress/flake-resistance tests
-
-`packages/core/src/tests/file-lock.fixture.ts`
-
-- add only the fixture modes needed by the remaining tests
-
 `packages/core/src/zig/tests/file-lock_test.zig`
 
-- add strict-create coverage
-- add repeated lifecycle coverage
+- add strict-create coverage once native `open()` becomes strict
 
 `packages/core/README.md` and/or `packages/core/docs/*`
 
@@ -253,11 +136,10 @@ The docs should set expectations clearly for local filesystems and make it obvio
 
 1. Make native create strict in `packages/core/src/zig/file-lock.zig`.
 2. Clean up exhaustive status/error handling in `packages/core/src/zig.ts`.
-3. Finish the public error model and lifecycle contract in `packages/core/src/FileLock.ts`.
-4. Expand the remaining TypeScript behavioural tests and fixture.
-5. Expand the remaining Zig native tests.
-6. Update docs.
-7. Run local verification only.
+3. Finish the public error model in `packages/core/src/FileLock.ts`.
+4. Add the strict-create native test.
+5. Update docs.
+6. Run local verification only.
 
 ## Local Verification Plan
 
@@ -272,7 +154,7 @@ Recommended commands:
 To reduce flake risk before handing off for the later CI run:
 
 - repeat the behavioural contention tests multiple times locally
-- repeat the native file-lock tests multiple times locally if any timing-sensitive coverage is added later
+- repeat the native file-lock tests multiple times locally after the strict-open change lands
 
 This plan intentionally does not include CI workflow changes or CI execution. Final cross-platform verification across Linux, macOS, and Windows will happen later after the implementation is complete.
 
@@ -280,12 +162,8 @@ This plan intentionally does not include CI workflow changes or CI execution. Fi
 
 This follow-up is complete when all of the following are true:
 
-- there is no blocking acquire API or native blocking acquire path
-- the public API creates parent directories and lock files by default
-- callers can opt out of either behaviour explicitly
-- `tryAcquireWithTimeout()` handles waiting without blocking the main thread
+- native `open()` is strict existing-file-only
 - status handling is exhaustive, including `unexpected`
 - public errors expose stable machine-readable codes
-- tests cover lifecycle and contention behaviour beyond the current timeout/abort coverage
-- the behavioural tests remain black-box and do not assert internals
+- cleanup failures preserve the original failure instead of hiding it
 - the docs describe the real public contract clearly

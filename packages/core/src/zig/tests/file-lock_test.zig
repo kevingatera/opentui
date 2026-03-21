@@ -63,3 +63,25 @@ test "Registry destroy removes the handle" {
     try testing.expectEqual(raw.Status.ok, registry.destroy(result.id));
     try testing.expectEqual(raw.Status.invalid_handle, registry.tryAcquire(result.id));
 }
+
+test "Registry repeated create tryAcquire release destroy cycles complete cleanly" {
+    const tmpdir = std.testing.tmpDir(.{});
+    var tmp = tmpdir;
+    defer tmp.cleanup();
+
+    var registry = raw.Registry.init(testing.allocator);
+    defer registry.deinit();
+
+    const file_path = try lockPath(&tmp);
+    defer testing.allocator.free(file_path);
+
+    for (0..32) |_| {
+        const result = registry.create(file_path);
+
+        try testing.expect(result.id != 0);
+        try testing.expectEqual(@as(i32, @intFromEnum(raw.Status.ok)), result.status);
+        try testing.expectEqual(raw.Status.ok, registry.tryAcquire(result.id));
+        try testing.expectEqual(raw.Status.ok, registry.release(result.id));
+        try testing.expectEqual(raw.Status.ok, registry.destroy(result.id));
+    }
+}
