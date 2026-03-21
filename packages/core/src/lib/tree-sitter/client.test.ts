@@ -1,3 +1,17 @@
+/*
+ * NOTE: This suite is a known trigger for Bun worker teardown crashes in CI.
+ * The tests themselves pass, then Bun can segfault during cleanup while
+ * terminating the TreeSitter worker. In this repo, each TreeSitterClient starts
+ * a Worker in its constructor and destroy() terminates it, and this file creates
+ * and destroys many short-lived clients across the suite.
+ *
+ * Related Bun issues / PR:
+ * - Worker stability tracking: https://github.com/oven-sh/bun/issues/15964
+ * - Linux worker segfault during shutdown: https://github.com/oven-sh/bun/issues/17672
+ * - Segfault in jsWorkerPrototypeFunction_terminate: https://github.com/oven-sh/bun/issues/23392
+ * - Upstream worker shutdown fix: https://github.com/oven-sh/bun/pull/27960
+ */
+
 import { test, expect, beforeEach, afterEach, beforeAll, describe } from "bun:test"
 import { TreeSitterClient } from "./client.js"
 import { tmpdir } from "os"
