@@ -45,6 +45,7 @@ import type {
   FileLockCreateResult,
 } from "./zig-structs.js"
 import { isBunfsPath } from "./lib/bunfs.js"
+import { FileLockError, FileLockErrorCode } from "./FileLockError.js"
 
 const module = await import(`@opentui/core-${process.platform}-${process.arch}/index.ts`)
 let targetLibPath = module.default
@@ -121,46 +122,33 @@ function toNumber(value: number | bigint): number {
   return typeof value === "bigint" ? Number(value) : value
 }
 
-const FILE_LOCK_OK = 0
-const FILE_LOCK_BUSY = 1
+enum FileLockStatus {
+  Ok = 0,
+  Busy = 1,
+  InvalidHandle = 2,
+  InvalidPath = 3,
+  AccessDenied = 4,
+  FileNotFound = 5,
+  LocksNotSupported = 6,
+  SystemResources = 7,
+  OutOfMemory = 8,
+  Unexpected = 9,
+  Closing = 10,
+}
 
-const FILE_LOCK_STATUS_BY_ID = {
-  0: "ok",
-  1: "busy",
-  2: "invalid_handle",
-  3: "invalid_path",
-  4: "access_denied",
-  5: "file_not_found",
-  6: "locks_not_supported",
-  7: "system_resources",
-  8: "out_of_memory",
-  9: "unexpected",
-  10: "closing",
+const FILE_LOCK_ERROR_CODE_BY_STATUS = {
+  [FileLockStatus.Ok]: FileLockErrorCode.Unexpected,
+  [FileLockStatus.Busy]: FileLockErrorCode.Unexpected,
+  [FileLockStatus.InvalidHandle]: FileLockErrorCode.InvalidHandle,
+  [FileLockStatus.InvalidPath]: FileLockErrorCode.InvalidPath,
+  [FileLockStatus.AccessDenied]: FileLockErrorCode.AccessDenied,
+  [FileLockStatus.FileNotFound]: FileLockErrorCode.FileNotFound,
+  [FileLockStatus.LocksNotSupported]: FileLockErrorCode.LocksNotSupported,
+  [FileLockStatus.SystemResources]: FileLockErrorCode.SystemResources,
+  [FileLockStatus.OutOfMemory]: FileLockErrorCode.OutOfMemory,
+  [FileLockStatus.Unexpected]: FileLockErrorCode.Unexpected,
+  [FileLockStatus.Closing]: FileLockErrorCode.Closing,
 } as const
-
-type FileLockStatusId = keyof typeof FILE_LOCK_STATUS_BY_ID
-type FileLockStatus = (typeof FILE_LOCK_STATUS_BY_ID)[FileLockStatusId]
-export type FileLockNativeErrorCode = Exclude<FileLockStatus, "ok" | "busy">
-
-function fileLockStatus(status: number): FileLockStatus {
-  if (Object.prototype.hasOwnProperty.call(FILE_LOCK_STATUS_BY_ID, status)) {
-    return FILE_LOCK_STATUS_BY_ID[status as FileLockStatusId]
-  }
-
-  return "unexpected"
-}
-
-class FileLockNativeError extends Error {
-  public readonly code: FileLockNativeErrorCode
-
-  public constructor(op: string, path: string, status: number) {
-    const code = fileLockStatus(status)
-
-    super(`${op} failed for ${path}: ${code}`)
-    this.name = "FileLockNativeError"
-    this.code = code === "ok" || code === "busy" ? "unexpected" : code
-  }
-}
 
 function getOpenTUILib(libPath?: string) {
   const resolvedLibPath = libPath || targetLibPath
@@ -3126,18 +3114,18 @@ class FFIRenderLib implements RenderLib {
     }
   }
 
-  private createFileLockError(op: string, path: string, status: number): FileLockNativeError {
-    return new FileLockNativeError(op, path, status)
-  }
-
   public createFileLock(path: string): number {
     const pathBuffer = this.encoder.encode(path)
     const resultBuffer = new ArrayBuffer(FileLockCreateResultStruct.size)
     this.opentui.symbols.createFileLock(ptr(pathBuffer), pathBuffer.length, ptr(resultBuffer))
     const result = FileLockCreateResultStruct.unpack(resultBuffer) as FileLockCreateResult
 
-    if (result.status !== FILE_LOCK_OK) {
-      throw this.createFileLockError("createFileLock", path, result.status)
+    if (result.status !== FileLockStatus.Ok) {
+      throw new FileLockError({
+        path,
+        op: "create",
+        code: FILE_LOCK_ERROR_CODE_BY_STATUS[result.status as FileLockStatus] ?? FileLockErrorCode.Unexpected,
+      })
     }
 
     return toNumber(result.id)
@@ -3146,25 +3134,37 @@ class FFIRenderLib implements RenderLib {
   public destroyFileLock(lock: number): void {
     const status = this.opentui.symbols.destroyFileLock(lock)
 
-    if (status !== FILE_LOCK_OK) {
-      throw this.createFileLockError("destroyFileLock", `handle:${lock}`, status)
+    if (status !== FileLockStatus.Ok) {
+      throw new FileLockError({
+        path: `handle:${lock}`,
+        op: "close",
+        code: FILE_LOCK_ERROR_CODE_BY_STATUS[status as FileLockStatus] ?? FileLockErrorCode.Unexpected,
+      })
     }
   }
 
   public fileLockTryAcquire(lock: number): boolean {
     const status = this.opentui.symbols.fileLockTryAcquire(lock)
 
-    if (status === FILE_LOCK_OK) return true
-    if (status === FILE_LOCK_BUSY) return false
+    if (status === FileLockStatus.Ok) return true
+    if (status === FileLockStatus.Busy) return false
 
-    throw this.createFileLockError("fileLockTryAcquire", `handle:${lock}`, status)
+    throw new FileLockError({
+      path: `handle:${lock}`,
+      op: "tryAcquire",
+      code: FILE_LOCK_ERROR_CODE_BY_STATUS[status as FileLockStatus] ?? FileLockErrorCode.Unexpected,
+    })
   }
 
   public fileLockRelease(lock: number): void {
     const status = this.opentui.symbols.fileLockRelease(lock)
 
-    if (status !== FILE_LOCK_OK) {
-      throw this.createFileLockError("fileLockRelease", `handle:${lock}`, status)
+    if (status !== FileLockStatus.Ok) {
+      throw new FileLockError({
+        path: `handle:${lock}`,
+        op: "release",
+        code: FILE_LOCK_ERROR_CODE_BY_STATUS[status as FileLockStatus] ?? FileLockErrorCode.Unexpected,
+      })
     }
   }
 
