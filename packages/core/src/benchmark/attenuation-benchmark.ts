@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 
 import { performance } from "node:perf_hooks"
-import { OptimizedBuffer } from "../buffer"
-import { VignetteEffect } from "../post/effects"
+import { OptimizedBuffer } from "../buffer.js"
+import { VignetteEffect } from "../post/effects.js"
 
 type Scenario = { width: number; height: number }
 type ScenarioResult = {
