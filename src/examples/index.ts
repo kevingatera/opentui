@@ -197,12 +197,6 @@ const examples: Example[] = [
     destroy: linkDemo.destroy,
   },
   {
-    name: "Extmarks Demo",
-    description: "Virtual extmarks - text ranges that cursor jumps over, like inline tags and links",
-    run: extmarksDemo.run,
-    destroy: extmarksDemo.destroy,
-  },
-  {
     name: "Opacity Demo",
     description: "Box opacity and transparency effects with animated opacity transitions",
     run: opacityExample.run,
