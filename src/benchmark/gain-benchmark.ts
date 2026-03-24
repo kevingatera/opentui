@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 
 import { performance } from "node:perf_hooks"
-import { OptimizedBuffer } from "../buffer"
-import { applyGain } from "../post/filters"
+import { OptimizedBuffer } from "../buffer.js"
+import { applyGain } from "../post/filters.js"
 
 type Scenario = { width: number; height: number }
 type ScenarioResult = {

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { performance } from "node:perf_hooks"
-import { OptimizedBuffer } from "../buffer"
+import { OptimizedBuffer } from "../buffer.js"
 
 type Scenario = { width: number; height: number; mode: "uniform" | "mask25" | "mask100" }
 type ScenarioResult = {
