@@ -30,6 +30,7 @@ import {
   type TerminalColors,
   type GetPaletteOptions,
 } from "./lib/terminal-palette.js"
+import { calculateRenderGeometry } from "./lib/render-geometry.js"
 import {
   isCapabilityResponse,
   isPixelResolutionResponse,
@@ -253,6 +254,29 @@ function resolveModes(config: CliRendererConfig): {
   }
 }
 
+class ExternalOutputQueue {
+  private chunks: string[] = []
+
+  get size(): number {
+    return this.chunks.length
+  }
+
+  write(text: string): void {
+    if (text.length === 0) return
+    this.chunks.push(text)
+  }
+
+  claim(): string {
+    if (this.chunks.length === 0) {
+      return ""
+    }
+
+    const output = this.chunks.join("")
+    this.chunks = []
+    return output
+  }
+}
+
 const DEFAULT_FORWARDED_ENV_KEYS = [
   "TMUX",
   "TERM",
@@ -428,10 +452,10 @@ export async function createCliRenderer(config: CliRendererConfig = {}): Promise
 
   const width = stdout.columns || 80
   const height = stdout.rows || 24
-  const renderHeight = screenMode === "split-footer" ? footerHeight : height
+  const geometry = calculateRenderGeometry(screenMode, width, height, footerHeight)
 
   const ziglib = resolveRenderLib()
-  const rendererPtr = ziglib.createRenderer(width, renderHeight, {
+  const rendererPtr = ziglib.createRenderer(geometry.renderWidth, geometry.renderHeight, {
     remote: config.remote ?? false,
     testing: config.testing ?? false,
   })
@@ -589,12 +613,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private _terminalHeight: number = 0
   private _terminalIsSetup: boolean = false
 
+  private externalOutputQueue = new ExternalOutputQueue()
   private realStdoutWrite: (chunk: any, encoding?: any, callback?: any) => boolean
-  private captureCallback: () => void = () => {
-    if (this._splitHeight > 0) {
-      this.requestRender()
-    }
-  }
 
   private _useConsole: boolean = true
   private sigwinchHandler: () => void = (() => {
@@ -637,9 +657,10 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
   private dumpOutputCache(optionalMessage: string = ""): void {
     const cachedLogs = this.console.getCachedLogs()
-    const capturedOutput = capture.claimOutput()
+    const capturedConsoleOutput = capture.claimOutput()
+    const capturedExternalOutput = this.externalOutputQueue.claim()
 
-    if (capturedOutput.length > 0 || cachedLogs.length > 0) {
+    if (capturedConsoleOutput.length > 0 || capturedExternalOutput.length > 0 || cachedLogs.length > 0) {
       this.realStdoutWrite.call(this.stdout, optionalMessage)
     }
 
@@ -648,9 +669,14 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       this.realStdoutWrite.call(this.stdout, cachedLogs)
     }
 
-    if (capturedOutput.length > 0) {
-      this.realStdoutWrite.call(this.stdout, "\nCaptured output:\n")
-      this.realStdoutWrite.call(this.stdout, capturedOutput + "\n")
+    if (capturedConsoleOutput.length > 0) {
+      this.realStdoutWrite.call(this.stdout, "\nCaptured console output:\n")
+      this.realStdoutWrite.call(this.stdout, capturedConsoleOutput + "\n")
+    }
+
+    if (capturedExternalOutput.length > 0) {
+      this.realStdoutWrite.call(this.stdout, "\nCaptured external output:\n")
+      this.realStdoutWrite.call(this.stdout, capturedExternalOutput + "\n")
     }
 
     this.realStdoutWrite.call(this.stdout, ANSI.reset)
@@ -692,13 +718,22 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.lib = lib
     this._terminalWidth = stdout.columns ?? width
     this._terminalHeight = stdout.rows ?? height
-    this.width = width
-    this.height = height
     this._useThread = config.useThread === undefined ? false : config.useThread
     const { screenMode, footerHeight, externalOutputMode } = resolveModes(config)
 
+    const initialGeometry = calculateRenderGeometry(
+      screenMode,
+      this._terminalWidth,
+      this._terminalHeight,
+      footerHeight,
+    )
+
+    this.width = initialGeometry.renderWidth
+    this.height = initialGeometry.renderHeight
+    this._splitHeight = initialGeometry.effectiveFooterHeight
+    this.renderOffset = initialGeometry.renderOffset
+
     this._footerHeight = footerHeight
-    this._screenMode = screenMode
 
     this.rendererPtr = rendererPtr
 
@@ -1131,6 +1166,15 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       throw new Error('externalOutputMode "capture-stdout" requires screenMode "split-footer"')
     }
 
+    const previousMode = this._externalOutputMode
+    if (previousMode === mode) {
+      return
+    }
+
+    if (previousMode === "capture-stdout" && mode === "passthrough" && this._splitHeight > 0) {
+      this.flushStdoutCache(this._splitHeight)
+    }
+
     this._externalOutputMode = mode
     this.stdout.write = mode === "capture-stdout" ? this.interceptStdoutWrite : this.realStdoutWrite
   }
@@ -1165,15 +1209,21 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   }
 
   private interceptStdoutWrite = (chunk: any, encoding?: any, callback?: any): boolean => {
-    const text = chunk.toString()
+    const resolvedCallback = typeof encoding === "function" ? encoding : callback
+    const resolvedEncoding = typeof encoding === "string" ? encoding : undefined
+    const text = typeof chunk === "string" ? chunk : (chunk?.toString(resolvedEncoding) ?? "")
 
-    capture.write("stdout", text)
-    if (this._splitHeight > 0) {
+    if (
+      this._externalOutputMode === "capture-stdout" &&
+      this._screenMode === "split-footer" &&
+      this._splitHeight > 0
+    ) {
+      this.externalOutputQueue.write(text)
       this.requestRender()
     }
 
-    if (typeof callback === "function") {
-      process.nextTick(callback)
+    if (typeof resolvedCallback === "function") {
+      process.nextTick(resolvedCallback)
     }
 
     return true
@@ -1182,7 +1232,13 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private applyScreenMode(screenMode: ScreenMode, emitResize: boolean = true, requestRender: boolean = true): void {
     const prevScreenMode = this._screenMode
     const prevSplitHeight = this._splitHeight
-    const nextSplitHeight = screenMode === "split-footer" ? this._footerHeight : 0
+    const nextGeometry = calculateRenderGeometry(
+      screenMode,
+      this._terminalWidth,
+      this._terminalHeight,
+      this._footerHeight,
+    )
+    const nextSplitHeight = nextGeometry.effectiveFooterHeight
 
     if (prevScreenMode === screenMode && prevSplitHeight === nextSplitHeight) {
       return
@@ -1213,17 +1269,11 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       }
     }
 
-    if (prevSplitHeight === 0 && nextSplitHeight > 0) {
-      capture.on("write", this.captureCallback)
-    } else if (prevSplitHeight > 0 && nextSplitHeight === 0) {
-      capture.off("write", this.captureCallback)
-    }
-
     this._screenMode = screenMode
     this._splitHeight = nextSplitHeight
-    this.renderOffset = nextSplitHeight > 0 ? this._terminalHeight - nextSplitHeight : 0
-    this.width = this._terminalWidth
-    this.height = nextSplitHeight > 0 ? nextSplitHeight : this._terminalHeight
+    this.renderOffset = nextGeometry.renderOffset
+    this.width = nextGeometry.renderWidth
+    this.height = nextGeometry.renderHeight
 
     this.lib.setRenderOffset(this.rendererPtr, this.renderOffset)
     this.lib.resizeRenderer(this.rendererPtr, this.width, this.height)
@@ -1253,9 +1303,9 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
   // TODO: Move this to native
   private flushStdoutCache(space: number, force: boolean = false): boolean {
-    if (capture.size === 0 && !force) return false
+    if (this.externalOutputQueue.size === 0 && !force) return false
 
-    const output = capture.claimOutput()
+    const output = this.externalOutputQueue.claim()
 
     const rendererStartLine = this._terminalHeight - this._splitHeight
     const flush = ANSI.moveCursorAndClear(rendererStartLine, 1)
@@ -1856,6 +1906,12 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private processResize(width: number, height: number): void {
     if (width === this._terminalWidth && height === this._terminalHeight) return
 
+    const previousGeometry = calculateRenderGeometry(
+      this._screenMode,
+      this._terminalWidth,
+      this._terminalHeight,
+      this._footerHeight,
+    )
     const prevWidth = this._terminalWidth
 
     this._terminalWidth = width
@@ -1865,22 +1921,31 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.setCapturedRenderable(undefined)
     this.stdinParser?.resetMouseState()
 
-    if (this._splitHeight > 0) {
+    const nextGeometry = calculateRenderGeometry(
+      this._screenMode,
+      this._terminalWidth,
+      this._terminalHeight,
+      this._footerHeight,
+    )
+    const splitFooterActive = this._screenMode === "split-footer"
+
+    if (splitFooterActive) {
       // TODO: Handle resizing split mode properly
-      if (width < prevWidth) {
-        const start = this._terminalHeight - this._splitHeight * 2
+      if (width < prevWidth && previousGeometry.effectiveFooterHeight > 0) {
+        const start = this._terminalHeight - previousGeometry.effectiveFooterHeight * 2
         const flush = ANSI.moveCursorAndClear(start, 1)
         this.writeOut(flush)
       }
-      this.renderOffset = height - this._splitHeight
-      this.width = width
-      this.height = this._splitHeight
+
       this.currentRenderBuffer.clear(this.backgroundColor)
-      this.lib.setRenderOffset(this.rendererPtr, this.renderOffset)
-    } else {
-      this.width = width
-      this.height = height
     }
+
+    this._splitHeight = nextGeometry.effectiveFooterHeight
+    this.renderOffset = nextGeometry.renderOffset
+    this.width = nextGeometry.renderWidth
+    this.height = nextGeometry.renderHeight
+
+    this.lib.setRenderOffset(this.rendererPtr, this.renderOffset)
 
     this.lib.resizeRenderer(this.rendererPtr, this.width, this.height)
     this.nextRenderBuffer = this.lib.getNextBuffer(this.rendererPtr)
@@ -2186,7 +2251,6 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     process.removeListener("unhandledRejection", this.handleError)
     process.removeListener("warning", this.warningHandler)
     process.removeListener("beforeExit", this.exitHandler)
-    capture.removeListener("write", this.captureCallback)
     this.removeExitListeners()
 
     if (this.resizeTimeoutId !== null) {
