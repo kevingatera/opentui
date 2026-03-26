@@ -1031,7 +1031,7 @@ test "renderer - renderSplitFooter writes append before footer repaint in one ou
     );
     defer cli_renderer.destroy();
 
-    cli_renderer.setRenderOffset(2);
+    _ = cli_renderer.resetSplitScrollback(2, 2);
 
     const next_buffer = cli_renderer.getNextBuffer();
     const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
@@ -1039,7 +1039,7 @@ test "renderer - renderSplitFooter writes append before footer repaint in one ou
     try next_buffer.drawText("FOOT", 0, 0, fg, bg, 0);
 
     const appended = "append-line\n";
-    cli_renderer.renderSplitFooter(appended, 2, 2, 0, true);
+    _ = cli_renderer.renderSplitFooter(appended, 2, true);
 
     const output = cli_renderer.getLastOutputForTest();
     const append_index = std.mem.indexOf(u8, output, appended);
@@ -1093,7 +1093,7 @@ test "renderer - renderSplitFooter settling phase moves footer downward" {
     );
     defer cli_renderer.destroy();
 
-    cli_renderer.setRenderOffset(0);
+    _ = cli_renderer.resetSplitScrollback(0, 3);
 
     const next_buffer = cli_renderer.getNextBuffer();
     const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
@@ -1101,7 +1101,7 @@ test "renderer - renderSplitFooter settling phase moves footer downward" {
     try next_buffer.drawText("FOOT", 0, 0, fg, bg, 0);
 
     const appended = "settle\n";
-    cli_renderer.renderSplitFooter(appended, 3, 2, 0, true);
+    _ = cli_renderer.renderSplitFooter(appended, 3, true);
 
     const output = cli_renderer.getLastOutputForTest();
     const settling_clear_index = std.mem.indexOf(u8, output, "\x1b[1;1H\x1b[J");
@@ -1113,10 +1113,11 @@ test "renderer - renderSplitFooter settling phase moves footer downward" {
     try std.testing.expectEqual(@as(u32, 2), cli_renderer.renderOffset);
     try std.testing.expect(settling_clear_index != null);
     try std.testing.expect(append_index != null);
-    try std.testing.expect(scroll_region_reset_index == null);
+    try std.testing.expect(scroll_region_reset_index != null);
     try std.testing.expect(footer_clear_index != null);
     try std.testing.expect(sync_index != null);
     try std.testing.expect(settling_clear_index.? < append_index.?);
+    try std.testing.expect(append_index.? < scroll_region_reset_index.?);
     try std.testing.expect(append_index.? < footer_clear_index.?);
     try std.testing.expect(footer_clear_index.? < sync_index.?);
 }

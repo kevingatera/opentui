@@ -158,9 +158,13 @@ function getOpenTUILib(libPath?: string) {
       args: ["ptr", "u32"],
       returns: "void",
     },
-    setSplitOutputColumn: {
+    resetSplitScrollback: {
+      args: ["ptr", "u32", "u32"],
+      returns: "u32",
+    },
+    syncSplitScrollback: {
       args: ["ptr", "u32"],
-      returns: "void",
+      returns: "u32",
     },
     updateStats: {
       args: ["ptr", "f64", "u32", "f64"],
@@ -175,8 +179,8 @@ function getOpenTUILib(libPath?: string) {
       returns: "void",
     },
     renderSplitFooter: {
-      args: ["ptr", "ptr", "usize", "u32", "u32", "u32", "bool"],
-      returns: "void",
+      args: ["ptr", "ptr", "usize", "u32", "bool"],
+      returns: "u32",
     },
     getNextBuffer: {
       args: ["ptr"],
@@ -1393,18 +1397,12 @@ export interface RenderLib {
   setUseThread: (renderer: Pointer, useThread: boolean) => void
   setBackgroundColor: (renderer: Pointer, color: RGBA) => void
   setRenderOffset: (renderer: Pointer, offset: number) => void
-  setSplitOutputColumn: (renderer: Pointer, column: number) => void
+  resetSplitScrollback: (renderer: Pointer, seedRows: number, pinnedRenderOffset: number) => number
+  syncSplitScrollback: (renderer: Pointer, pinnedRenderOffset: number) => number
   updateStats: (renderer: Pointer, time: number, fps: number, frameCallbackTime: number) => void
   updateMemoryStats: (renderer: Pointer, heapUsed: number, heapTotal: number, arrayBuffers: number) => void
   render: (renderer: Pointer, force: boolean) => void
-  renderSplitFooter: (
-    renderer: Pointer,
-    output: Uint8Array,
-    pinnedRenderOffset: number,
-    nextRenderOffset: number,
-    nextOutputColumn: number,
-    force: boolean,
-  ) => void
+  renderSplitFooter: (renderer: Pointer, output: Uint8Array, pinnedRenderOffset: number, force: boolean) => number
   getNextBuffer: (renderer: Pointer) => OptimizedBuffer
   getCurrentBuffer: (renderer: Pointer) => OptimizedBuffer
   createOptimizedBuffer: (
@@ -2046,8 +2044,12 @@ class FFIRenderLib implements RenderLib {
     this.opentui.symbols.setRenderOffset(renderer, offset)
   }
 
-  public setSplitOutputColumn(renderer: Pointer, column: number): void {
-    this.opentui.symbols.setSplitOutputColumn(renderer, column)
+  public resetSplitScrollback(renderer: Pointer, seedRows: number, pinnedRenderOffset: number): number {
+    return this.opentui.symbols.resetSplitScrollback(renderer, seedRows, pinnedRenderOffset)
+  }
+
+  public syncSplitScrollback(renderer: Pointer, pinnedRenderOffset: number): number {
+    return this.opentui.symbols.syncSplitScrollback(renderer, pinnedRenderOffset)
   }
 
   public updateStats(renderer: Pointer, time: number, fps: number, frameCallbackTime: number) {
@@ -2441,22 +2443,13 @@ class FFIRenderLib implements RenderLib {
     this.opentui.symbols.render(renderer, force)
   }
 
-  public renderSplitFooter(
-    renderer: Pointer,
-    output: Uint8Array,
-    pinnedRenderOffset: number,
-    nextRenderOffset: number,
-    nextOutputColumn: number,
-    force: boolean,
-  ): void {
+  public renderSplitFooter(renderer: Pointer, output: Uint8Array, pinnedRenderOffset: number, force: boolean): number {
     const outputForPointer = output.length === 0 ? this.emptyOutputBuffer : output
-    this.opentui.symbols.renderSplitFooter(
+    return this.opentui.symbols.renderSplitFooter(
       renderer,
       ptr(outputForPointer),
       output.length,
       pinnedRenderOffset,
-      nextRenderOffset,
-      nextOutputColumn,
       force,
     )
   }

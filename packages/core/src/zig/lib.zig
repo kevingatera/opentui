@@ -221,8 +221,12 @@ export fn setRenderOffset(rendererPtr: *renderer.CliRenderer, offset: u32) void 
     rendererPtr.setRenderOffset(offset);
 }
 
-export fn setSplitOutputColumn(rendererPtr: *renderer.CliRenderer, column: u32) void {
-    rendererPtr.setSplitOutputColumn(column);
+export fn resetSplitScrollback(rendererPtr: *renderer.CliRenderer, seedRows: u32, pinnedRenderOffset: u32) u32 {
+    return rendererPtr.resetSplitScrollback(seedRows, pinnedRenderOffset);
+}
+
+export fn syncSplitScrollback(rendererPtr: *renderer.CliRenderer, pinnedRenderOffset: u32) u32 {
+    return rendererPtr.syncSplitScrollback(pinnedRenderOffset);
 }
 
 export fn updateStats(rendererPtr: *renderer.CliRenderer, time: f64, fps: u32, frameCallbackTime: f64) void {
@@ -277,12 +281,10 @@ export fn renderSplitFooter(
     outputPtr: [*]const u8,
     outputLen: usize,
     pinnedRenderOffset: u32,
-    nextRenderOffset: u32,
-    nextOutputColumn: u32,
     force: bool,
-) void {
+) u32 {
     const output = outputPtr[0..outputLen];
-    rendererPtr.renderSplitFooter(output, pinnedRenderOffset, nextRenderOffset, nextOutputColumn, force);
+    return rendererPtr.renderSplitFooter(output, pinnedRenderOffset, force);
 }
 
 export fn createOptimizedBuffer(width: u32, height: u32, respectAlpha: bool, widthMethod: u8, idPtr: [*]const u8, idLen: usize) ?*buffer.OptimizedBuffer {

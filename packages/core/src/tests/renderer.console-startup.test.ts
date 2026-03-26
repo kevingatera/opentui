@@ -312,13 +312,12 @@ test("CliRenderer split-footer passes captured output bytes through unchanged to
   const outputBytes = splitCommitSpy.mock.calls[0]?.[1] as Uint8Array
   const decodedOutput = new TextDecoder().decode(outputBytes)
   expect(decodedOutput).toBe("line-1\nline-2\n")
-  expect(splitCommitSpy.mock.calls[0]?.[3]).toBe(3)
-  expect(splitCommitSpy.mock.calls[0]?.[4]).toBe(0)
+  expect((renderer as any).renderOffset).toBe(3)
 
   splitCommitSpy.mockRestore()
 })
 
-test("CliRenderer split-footer publisher tracks wrapped tail state across commits", async () => {
+test("CliRenderer split-footer native scrollback tracks wrapped tail state across commits", async () => {
   const result = await createTestRenderer({
     width: 4,
     height: 6,
@@ -334,13 +333,11 @@ test("CliRenderer split-footer publisher tracks wrapped tail state across commit
   await result.renderOnce()
 
   expect((renderer as any).renderOffset).toBe(1)
-  expect((renderer as any).splitOutputColumn).toBe(4)
 
   ;(renderer as any).stdout.write("e")
   await result.renderOnce()
 
   expect((renderer as any).renderOffset).toBe(2)
-  expect((renderer as any).splitOutputColumn).toBe(1)
 })
 
 test("CliRenderer flushes captured output when leaving split-footer for alternate-screen", async () => {

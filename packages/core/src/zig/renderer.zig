@@ -4,6 +4,7 @@ const ansi = @import("ansi.zig");
 const buf = @import("buffer.zig");
 const gp = @import("grapheme.zig");
 const link = @import("link.zig");
+const split_scrollback = @import("split-scrollback.zig");
 const Terminal = @import("terminal.zig");
 const logger = @import("logger.zig");
 
@@ -109,7 +110,7 @@ pub const CliRenderer = struct {
     renderInProgress: bool = false,
     currentOutputBuffer: []u8 = &[_]u8{},
     currentOutputLen: usize = 0,
-    splitOutputColumn: u32 = 0,
+    splitScrollback: split_scrollback.SplitScrollback = .{},
 
     // Hit grid for mouse event dispatch.
     //
@@ -518,8 +519,15 @@ pub const CliRenderer = struct {
         self.renderOffset = offset;
     }
 
-    pub fn setSplitOutputColumn(self: *CliRenderer, column: u32) void {
-        self.splitOutputColumn = column;
+    pub fn resetSplitScrollback(self: *CliRenderer, seed_rows: u32, pinned_render_offset: u32) u32 {
+        self.splitScrollback.reset(seed_rows);
+        self.renderOffset = self.splitScrollback.renderOffset(pinned_render_offset);
+        return self.renderOffset;
+    }
+
+    pub fn syncSplitScrollback(self: *CliRenderer, pinned_render_offset: u32) u32 {
+        self.renderOffset = self.splitScrollback.renderOffset(pinned_render_offset);
+        return self.renderOffset;
     }
 
     fn resetActiveOutputBuffer() void {
@@ -584,10 +592,8 @@ pub const CliRenderer = struct {
         self: *CliRenderer,
         output: []const u8,
         pinned_render_offset: u32,
-        next_render_offset: u32,
-        next_output_column: u32,
         force: bool,
-    ) void {
+    ) u32 {
         const now = std.time.microTimestamp();
         const deltaTimeMs = @as(f64, @floatFromInt(now - self.lastRenderTime));
         const deltaTime = deltaTimeMs / 1000.0; // Convert to seconds
@@ -595,9 +601,11 @@ pub const CliRenderer = struct {
         self.lastRenderTime = now;
         self.renderDebugOverlay();
 
-        self.prepareSplitFooterFrame(output, pinned_render_offset, next_render_offset, next_output_column, force);
+        self.prepareSplitFooterFrame(output, pinned_render_offset, force);
 
         self.finalizeRender(deltaTime);
+
+        return self.renderOffset;
     }
 
     fn finalizeRender(self: *CliRenderer, deltaTime: f64) void {
@@ -650,18 +658,23 @@ pub const CliRenderer = struct {
     }
 
     // prepareSplitFooterFrame keeps split-footer append + repaint atomic while
-    // the scrollback publisher computes placement metadata in TypeScript.
+    // native SplitScrollback owns the publish cursor and footer placement.
     fn prepareSplitFooterFrame(
         self: *CliRenderer,
         output: []const u8,
         pinned_render_offset: u32,
-        next_render_offset: u32,
-        next_output_column: u32,
         force: bool,
     ) void {
         resetActiveOutputBuffer();
 
         const previousRenderOffset = self.renderOffset;
+        const previousOutputColumn = self.splitScrollback.tail_column;
+
+        if (output.len > 0) {
+            self.splitScrollback.publishTextBridge(output, self.width, self.terminal.getCapabilities().unicode);
+        }
+
+        const next_render_offset = self.splitScrollback.renderOffset(pinned_render_offset);
         const previousFooterTopLine: u32 = @max(previousRenderOffset + 1, @as(u32, 1));
         const targetFooterTopLine: u32 = @max(next_render_offset + 1, @as(u32, 1));
 
@@ -674,19 +687,18 @@ pub const CliRenderer = struct {
                 ansi.ANSI.moveToOutput(writer, 1, previousFooterTopLine) catch {};
                 writer.writeAll(ansi.ANSI.eraseBelowCursor) catch {};
 
-                if (pinned_render_offset > 0 and next_render_offset >= pinned_render_offset) {
+                if (pinned_render_offset > 0) {
                     writer.print("\x1b[1;{d}r", .{pinned_render_offset}) catch {};
-                    moveToSplitOutputCursor(writer, previousRenderOffset, self.splitOutputColumn, self.width);
+                    moveToSplitOutputCursor(writer, previousRenderOffset, previousOutputColumn, self.width);
                     writer.writeAll(output) catch {};
                     writer.writeAll("\x1b[r") catch {};
                 } else {
-                    moveToSplitOutputCursor(writer, previousRenderOffset, self.splitOutputColumn, self.width);
+                    moveToSplitOutputCursor(writer, previousRenderOffset, previousOutputColumn, self.width);
                     writer.writeAll(output) catch {};
                 }
             }
 
             self.renderOffset = next_render_offset;
-            self.splitOutputColumn = next_output_column;
 
             // Reclaim footer area at the target top and place cursor there so the
             // following frame paint starts from a known clean footer surface.
@@ -695,7 +707,6 @@ pub const CliRenderer = struct {
             ansi.ANSI.moveToOutput(writer, 1, targetFooterTopLine) catch {};
         } else {
             self.renderOffset = next_render_offset;
-            self.splitOutputColumn = next_output_column;
         }
 
         self.prepareRenderFrame(force, false);
