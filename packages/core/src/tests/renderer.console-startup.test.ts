@@ -210,6 +210,113 @@ test("CliRenderer split-footer captures direct console writes when console mode 
   expect(capture.size).toBe(0)
 })
 
+test("CliRenderer split-footer renderNative does not call TypeScript flush path", async () => {
+  const result = await createTestRenderer({
+    screenMode: "split-footer",
+    footerHeight: 6,
+    externalOutputMode: "capture-stdout",
+    consoleMode: "disabled",
+  })
+
+  renderer = result.renderer
+  const flushSpy = spyOn(renderer as any, "flushStdoutCache")
+
+  ;(renderer as any).stdout.write("pending output\n")
+  await result.renderOnce()
+
+  expect(flushSpy).toHaveBeenCalledTimes(0)
+  flushSpy.mockRestore()
+})
+
+test("CliRenderer split-footer starts in settling phase and then pins as output grows", async () => {
+  const result = await createTestRenderer({
+    width: 40,
+    height: 10,
+    screenMode: "split-footer",
+    footerHeight: 4,
+    externalOutputMode: "capture-stdout",
+    consoleMode: "disabled",
+  })
+
+  renderer = result.renderer
+
+  expect((renderer as any).splitPinnedRenderOffset).toBe(6)
+  expect((renderer as any).renderOffset).toBe(0)
+
+  ;(renderer as any).stdout.write("a\n")
+  await result.renderOnce()
+  expect((renderer as any).renderOffset).toBe(1)
+
+  ;(renderer as any).stdout.write("b\n")
+  await result.renderOnce()
+  expect((renderer as any).renderOffset).toBe(2)
+
+  ;(renderer as any).stdout.write("c\n")
+  await result.renderOnce()
+  expect((renderer as any).renderOffset).toBe(3)
+
+  for (let i = 0; i < 8; i++) {
+    ;(renderer as any).stdout.write(`line-${i}\n`)
+    await result.renderOnce()
+  }
+
+  expect((renderer as any).renderOffset).toBe(6)
+})
+
+test("CliRenderer split-footer commits only unpublished captured output chunks", async () => {
+  const result = await createTestRenderer({
+    width: 40,
+    height: 10,
+    screenMode: "split-footer",
+    footerHeight: 4,
+    externalOutputMode: "capture-stdout",
+    consoleMode: "disabled",
+  })
+
+  renderer = result.renderer
+  const splitCommitSpy = spyOn((renderer as any).lib, "renderSplitFooter")
+
+  ;(renderer as any).stdout.write("first\n")
+  await result.renderOnce()
+
+  ;(renderer as any).stdout.write("second\n")
+  await result.renderOnce()
+
+  await result.renderOnce()
+
+  const firstOutput = new TextDecoder().decode(splitCommitSpy.mock.calls[0]?.[1] as Uint8Array)
+  const secondOutput = new TextDecoder().decode(splitCommitSpy.mock.calls[1]?.[1] as Uint8Array)
+  const thirdOutput = new TextDecoder().decode(splitCommitSpy.mock.calls[2]?.[1] as Uint8Array)
+
+  expect(firstOutput).toBe("first\r\n")
+  expect(secondOutput).toBe("second\r\n")
+  expect(thirdOutput).toBe("")
+  splitCommitSpy.mockRestore()
+})
+
+test("CliRenderer split-footer normalizes captured output newlines for native commit", async () => {
+  const result = await createTestRenderer({
+    screenMode: "split-footer",
+    footerHeight: 6,
+    externalOutputMode: "capture-stdout",
+    consoleMode: "disabled",
+  })
+
+  renderer = result.renderer
+  const splitCommitSpy = spyOn((renderer as any).lib, "renderSplitFooter")
+
+  ;(renderer as any).stdout.write("line-1\nline-2\n")
+  await result.renderOnce()
+
+  expect(splitCommitSpy).toHaveBeenCalledTimes(1)
+
+  const outputBytes = splitCommitSpy.mock.calls[0]?.[1] as Uint8Array
+  const decodedOutput = new TextDecoder().decode(outputBytes)
+  expect(decodedOutput).toBe("line-1\r\nline-2\r\n")
+
+  splitCommitSpy.mockRestore()
+})
+
 test("CliRenderer flushes captured output when leaving split-footer for alternate-screen", async () => {
   const result = await createTestRenderer({
     screenMode: "split-footer",

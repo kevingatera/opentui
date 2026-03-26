@@ -268,6 +268,11 @@ export fn render(rendererPtr: *renderer.CliRenderer, force: bool) void {
     rendererPtr.render(force);
 }
 
+export fn renderSplitFooter(rendererPtr: *renderer.CliRenderer, outputPtr: [*]const u8, outputLen: usize, nextRenderOffset: u32, force: bool) void {
+    const output = outputPtr[0..outputLen];
+    rendererPtr.renderSplitFooter(output, nextRenderOffset, force);
+}
+
 export fn createOptimizedBuffer(width: u32, height: u32, respectAlpha: bool, widthMethod: u8, idPtr: [*]const u8, idLen: usize) ?*buffer.OptimizedBuffer {
     if (width == 0 or height == 0) {
         logger.warn("Invalid buffer dimensions: {}x{}", .{ width, height });

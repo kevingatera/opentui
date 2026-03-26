@@ -170,6 +170,10 @@ function getOpenTUILib(libPath?: string) {
       args: ["ptr", "bool"],
       returns: "void",
     },
+    renderSplitFooter: {
+      args: ["ptr", "ptr", "usize", "u32", "bool"],
+      returns: "void",
+    },
     getNextBuffer: {
       args: ["ptr"],
       returns: "ptr",
@@ -1388,6 +1392,7 @@ export interface RenderLib {
   updateStats: (renderer: Pointer, time: number, fps: number, frameCallbackTime: number) => void
   updateMemoryStats: (renderer: Pointer, heapUsed: number, heapTotal: number, arrayBuffers: number) => void
   render: (renderer: Pointer, force: boolean) => void
+  renderSplitFooter: (renderer: Pointer, output: Uint8Array, nextRenderOffset: number, force: boolean) => void
   getNextBuffer: (renderer: Pointer) => OptimizedBuffer
   getCurrentBuffer: (renderer: Pointer) => OptimizedBuffer
   createOptimizedBuffer: (
@@ -1847,6 +1852,7 @@ class FFIRenderLib implements RenderLib {
   private opentui: ReturnType<typeof getOpenTUILib>
   public readonly encoder: TextEncoder = new TextEncoder()
   public readonly decoder: TextDecoder = new TextDecoder()
+  private readonly emptyOutputBuffer = new Uint8Array(1)
   private logCallbackWrapper: any // Store the FFI callback wrapper
   private eventCallbackWrapper: any // Store the FFI event callback wrapper
   private _nativeEvents: EventEmitter = new EventEmitter()
@@ -2417,6 +2423,11 @@ class FFIRenderLib implements RenderLib {
 
   public render(renderer: Pointer, force: boolean) {
     this.opentui.symbols.render(renderer, force)
+  }
+
+  public renderSplitFooter(renderer: Pointer, output: Uint8Array, nextRenderOffset: number, force: boolean): void {
+    const outputForPointer = output.length === 0 ? this.emptyOutputBuffer : output
+    this.opentui.symbols.renderSplitFooter(renderer, ptr(outputForPointer), output.length, nextRenderOffset, force)
   }
 
   public createOptimizedBuffer(

@@ -1,13 +1,50 @@
-import { BoxRenderable, bold, createCliRenderer, fg, TextRenderable, t, type CliRenderer } from "../index.js"
+import {
+  BoxRenderable,
+  bold,
+  createCliRenderer,
+  fg,
+  TextRenderable,
+  t,
+  type CliRenderer,
+  type KeyEvent,
+} from "../index.js"
 import { setupCommonDemoKeys } from "./lib/standalone-keys.js"
 import { createTimeline, type JSAnimation, Timeline } from "../animation/Timeline.js"
 
+const DEFAULT_FOOTER_HEIGHT = 20
+const MIN_FOOTER_HEIGHT = DEFAULT_FOOTER_HEIGHT
+const MIN_MAIN_SCREEN_HEIGHT = 5
+const DEFAULT_OUTPUT_INTERVAL = 100
+const MIN_OUTPUT_INTERVAL = 5
+const MAX_OUTPUT_INTERVAL = 1000
+
 let text: TextRenderable | null = null
 let instructionsText: TextRenderable | null = null
-let keyHandler: ((key: any) => void) | null = null
-let outputTimer: Timer | null = null
+let keyHandler: ((key: KeyEvent) => void) | null = null
+let outputTimer: ReturnType<typeof setInterval> | null = null
 let animationSystem: SplitModeAnimations | null = null
-let testOutputInterval = 100
+let testOutputInterval = DEFAULT_OUTPUT_INTERVAL
+
+function writeDemoOutput(message: string): void {
+  process.stdout.write(`${message}\n`)
+}
+
+function clearOutputTimer(): void {
+  if (!outputTimer) return
+  clearInterval(outputTimer)
+  outputTimer = null
+}
+
+function getMaxFooterHeight(renderer: CliRenderer): number {
+  return Math.max(1, renderer.terminalHeight - MIN_MAIN_SCREEN_HEIGHT)
+}
+
+function clampFooterHeight(renderer: CliRenderer, footerHeight: number): number {
+  const maxFooterHeight = getMaxFooterHeight(renderer)
+  const minFooterHeight = Math.min(MIN_FOOTER_HEIGHT, maxFooterHeight)
+
+  return Math.min(Math.max(footerHeight, minFooterHeight), maxFooterHeight)
+}
 
 class SplitModeAnimations {
   private timeline: Timeline
@@ -26,7 +63,6 @@ class SplitModeAnimations {
     { x: 15, y: 3 },
     { x: 30, y: 2 },
   ]
-  private pulseValues = [1.0, 1.0, 1.0]
 
   constructor(renderer: CliRenderer) {
     this.renderer = renderer
@@ -150,7 +186,7 @@ class SplitModeAnimations {
         id: `orb-${index}`,
         position: "absolute",
         left: 2,
-        top: 2,
+        top: this.orbPositions[index].y,
         width: 3,
         height: 1,
         backgroundColor: color,
@@ -178,6 +214,37 @@ class SplitModeAnimations {
     })
   }
 
+  private updateSystemBars(progress: typeof this.systemProgress): void {
+    const maxWidth = this.renderer.width - 16
+    const barValues = [progress.cpu, progress.memory, progress.network, progress.disk]
+
+    barValues.forEach((value, index) => {
+      this.systemLoadingBars[index].width = Math.max(1, Math.floor((value / 100) * maxWidth))
+    })
+  }
+
+  private updateStatusCounters(counters: typeof this.counters): void {
+    const counterValues = [
+      `PACKETS: ${Math.floor(counters.packets)}`,
+      `CONN: ${Math.floor(counters.connections)}`,
+      `PROC: ${Math.floor(counters.processes)}`,
+      `UP: ${Math.floor(counters.uptime)}s`,
+    ]
+
+    counterValues.forEach((value, index) => {
+      this.statusCounters[index].content = value
+    })
+  }
+
+  private updateOrbPosition(index: number, position: { x: number }): void {
+    this.movingOrbs[index].x = Math.floor(position.x)
+  }
+
+  private updatePulseHeight(index: number, intensity: number): void {
+    const height = Math.max(1, Math.floor(intensity))
+    this.pulsingElements[index].height = Math.min(3, height)
+  }
+
   private setupAnimations(): void {
     this.timeline.add(
       this.systemProgress,
@@ -189,13 +256,7 @@ class SplitModeAnimations {
         duration: 3000,
         ease: "inOutQuad",
         onUpdate: (values: JSAnimation) => {
-          const progress = values.targets[0]
-          const maxWidth = this.renderer.width - 16
-
-          this.systemLoadingBars[0].width = Math.max(1, Math.floor((progress.cpu / 100) * maxWidth))
-          this.systemLoadingBars[1].width = Math.max(1, Math.floor((progress.memory / 100) * maxWidth))
-          this.systemLoadingBars[2].width = Math.max(1, Math.floor((progress.network / 100) * maxWidth))
-          this.systemLoadingBars[3].width = Math.max(1, Math.floor((progress.disk / 100) * maxWidth))
+          this.updateSystemBars(values.targets[0])
         },
       },
       0,
@@ -211,13 +272,7 @@ class SplitModeAnimations {
         duration: 2000,
         ease: "inOutSine",
         onUpdate: (values: JSAnimation) => {
-          const progress = values.targets[0]
-          const maxWidth = this.renderer.width - 16
-
-          this.systemLoadingBars[0].width = Math.max(1, Math.floor((progress.cpu / 100) * maxWidth))
-          this.systemLoadingBars[1].width = Math.max(1, Math.floor((progress.memory / 100) * maxWidth))
-          this.systemLoadingBars[2].width = Math.max(1, Math.floor((progress.network / 100) * maxWidth))
-          this.systemLoadingBars[3].width = Math.max(1, Math.floor((progress.disk / 100) * maxWidth))
+          this.updateSystemBars(values.targets[0])
         },
       },
       4000,
@@ -233,11 +288,7 @@ class SplitModeAnimations {
         duration: 8000,
         ease: "linear",
         onUpdate: (values: JSAnimation) => {
-          const counters = values.targets[0]
-          this.statusCounters[0].content = `PACKETS: ${Math.floor(counters.packets)}`
-          this.statusCounters[1].content = `CONN: ${Math.floor(counters.connections)}`
-          this.statusCounters[2].content = `PROC: ${Math.floor(counters.processes)}`
-          this.statusCounters[3].content = `UP: ${Math.floor(counters.uptime)}s`
+          this.updateStatusCounters(values.targets[0])
         },
       },
       0,
@@ -251,8 +302,7 @@ class SplitModeAnimations {
           duration: 2000 + index * 400,
           ease: "inOutSine",
           onUpdate: (values: JSAnimation) => {
-            const pos = values.targets[0]
-            this.movingOrbs[index].x = Math.floor(pos.x)
+            this.updateOrbPosition(index, values.targets[0])
           },
         },
         index * 800,
@@ -265,15 +315,14 @@ class SplitModeAnimations {
           duration: 2000 + index * 400,
           ease: "inOutSine",
           onUpdate: (values: JSAnimation) => {
-            const pos = values.targets[0]
-            this.movingOrbs[index].x = Math.floor(pos.x)
+            this.updateOrbPosition(index, values.targets[0])
           },
         },
         4000 + index * 800,
       )
     })
 
-    this.pulseValues.forEach((pulseVal, index) => {
+    this.pulsingElements.forEach((_, index) => {
       const pulseData = { intensity: 1.0 }
       this.timeline.add(
         pulseData,
@@ -284,9 +333,7 @@ class SplitModeAnimations {
           loop: 8,
           alternate: true,
           onUpdate: (values: JSAnimation) => {
-            const intensity = values.targets[0].intensity
-            const height = Math.max(1, Math.floor(intensity))
-            this.pulsingElements[index].height = Math.min(3, height)
+            this.updatePulseHeight(index, values.targets[0].intensity)
           },
         },
         index * 300,
@@ -306,7 +353,7 @@ class SplitModeAnimations {
 
 export function run(rendererInstance: CliRenderer): void {
   rendererInstance.setBackgroundColor("#001122")
-  rendererInstance.footerHeight = 20
+  rendererInstance.footerHeight = clampFooterHeight(rendererInstance, DEFAULT_FOOTER_HEIGHT)
   rendererInstance.screenMode = "split-footer"
   rendererInstance.externalOutputMode = "capture-stdout"
 
@@ -327,78 +374,137 @@ export function run(rendererInstance: CliRenderer): void {
     id: "split-mode-instructions",
     position: "absolute",
     left: 2,
-    top: 19,
+    bottom: 0,
     width: rendererInstance.width - 4,
     height: 2,
     zIndex: 10,
-    content: t`${bold(fg("#cccccc")("[+/-] Split height | [0] Toggle fullscreen | [M/L] Output speed | [U] Toggle mouse"))}`,
+    content: "",
   })
 
   rendererInstance.root.add(text)
   rendererInstance.root.add(instructionsText)
 
   rendererInstance.setFrameCallback(async (deltaTime: number) => {
-    if (animationSystem) {
-      animationSystem.update(deltaTime)
-    }
+    animationSystem?.update(deltaTime)
   })
 
-  console.log("=== Split Mode Demo ===")
-  console.log(`Terminal size: ${rendererInstance.terminalWidth}x${rendererInstance.terminalHeight}`)
-  console.log(`Renderer split height: ${rendererInstance.footerHeight}`)
-  console.log(`Renderer offset: ${rendererInstance.terminalHeight - rendererInstance.footerHeight}`)
-  console.log("Console output should appear here and scroll naturally")
-  console.log("The renderer should stay fixed at the bottom as a footer")
-  console.log(`Test output running at ${testOutputInterval}ms intervals (use M/L to adjust speed)`)
-  console.log(`Mouse functionality: ${rendererInstance.useMouse ? "enabled" : "disabled"} (use U to toggle)`)
+  const isCapturingOutput = () =>
+    rendererInstance.screenMode === "split-footer" && rendererInstance.externalOutputMode === "capture-stdout"
+
+  const updateInstructions = () => {
+    if (!instructionsText) return
+
+    const modeLabel =
+      rendererInstance.screenMode === "split-footer" ? `footer ${rendererInstance.footerHeight}` : "fullscreen"
+    const outputLabel = isCapturingOutput() ? `${testOutputInterval}ms` : "paused"
+    const mouseLabel = rendererInstance.useMouse ? "on" : "off"
+
+    instructionsText.content = t`${bold(
+      fg("#cccccc")(
+        `[+/-] Height ${rendererInstance.footerHeight} | [0] Mode ${modeLabel} | [M/L] Output ${outputLabel} | [U] Mouse ${mouseLabel}`,
+      ),
+    )}`
+  }
+
+  const writeCapturedOutput = (message: string) => {
+    if (!isCapturingOutput()) return
+    writeDemoOutput(message)
+  }
 
   let messageCount = 0
 
   const startTestOutput = () => {
-    if (outputTimer) {
-      clearInterval(outputTimer)
+    clearOutputTimer()
+    if (!isCapturingOutput()) {
+      updateInstructions()
+      return
     }
+
     outputTimer = setInterval(() => {
       messageCount++
-      console.log(`Test output ${messageCount}: This should appear above the renderer and scroll naturally`)
+      writeDemoOutput(`Test output ${messageCount}: This should appear above the renderer and scroll naturally`)
     }, testOutputInterval)
+
+    updateInstructions()
   }
+
+  const enableSplitMode = () => {
+    rendererInstance.footerHeight = clampFooterHeight(rendererInstance, rendererInstance.footerHeight)
+    rendererInstance.screenMode = "split-footer"
+    rendererInstance.externalOutputMode = "capture-stdout"
+    startTestOutput()
+    writeCapturedOutput(`Switched to split-footer mode (height ${rendererInstance.footerHeight})`)
+  }
+
+  const disableSplitMode = () => {
+    writeCapturedOutput("Switched to main-screen mode (test output paused)")
+    clearOutputTimer()
+    rendererInstance.externalOutputMode = "passthrough"
+    rendererInstance.screenMode = "main-screen"
+    updateInstructions()
+  }
+
+  updateInstructions()
+
+  writeDemoOutput("=== Split Mode Demo ===")
+  writeDemoOutput(`Terminal size: ${rendererInstance.terminalWidth}x${rendererInstance.terminalHeight}`)
+  writeDemoOutput(`Renderer split height: ${rendererInstance.footerHeight}`)
+  writeDemoOutput(`Renderer offset: ${Math.max(rendererInstance.terminalHeight - rendererInstance.footerHeight, 0)}`)
+  writeDemoOutput("Console output should appear here and scroll naturally")
+  writeDemoOutput("The renderer should stay fixed at the bottom as a footer")
+  writeDemoOutput(`Test output running at ${testOutputInterval}ms intervals (use M/L to adjust speed)`)
+  writeDemoOutput(`Mouse functionality: ${rendererInstance.useMouse ? "enabled" : "disabled"} (use U to toggle)`)
 
   startTestOutput()
 
   keyHandler = (key) => {
-    if (key.name === "+") {
-      const currentHeight = rendererInstance.footerHeight
-      const newHeight = Math.min(currentHeight + 1, rendererInstance.terminalHeight - 5)
-      rendererInstance.footerHeight = newHeight
-      console.log(`Split height increased to ${newHeight}`)
-    } else if (key.name === "-") {
-      const currentHeight = rendererInstance.footerHeight
-      const newHeight = Math.max(currentHeight - 1, 5)
-      rendererInstance.footerHeight = newHeight
-      console.log(`Split height decreased to ${newHeight}`)
-    } else if (key.name === "0") {
-      if (rendererInstance.screenMode === "split-footer") {
-        rendererInstance.externalOutputMode = "passthrough"
-        rendererInstance.screenMode = "main-screen"
-        console.log("Switched to main-screen mode")
-      } else {
-        rendererInstance.footerHeight = 20
-        rendererInstance.screenMode = "split-footer"
-        rendererInstance.externalOutputMode = "capture-stdout"
-        console.log("Switched to split-footer mode (height 20)")
+    switch (key.name?.toLowerCase()) {
+      case "+": {
+        const newHeight = clampFooterHeight(rendererInstance, rendererInstance.footerHeight + 1)
+        if (newHeight === rendererInstance.footerHeight) break
+        rendererInstance.footerHeight = newHeight
+        updateInstructions()
+        writeCapturedOutput(`Split height increased to ${newHeight}`)
+        break
       }
-    } else if (key.name === "m") {
-      testOutputInterval = Math.max(5, testOutputInterval - 5)
-      startTestOutput()
-      console.log(`Test output speed increased (interval: ${testOutputInterval}ms)`)
-    } else if (key.name === "l") {
-      testOutputInterval = Math.min(1000, testOutputInterval + 5)
-      startTestOutput()
-      console.log(`Test output speed decreased (interval: ${testOutputInterval}ms)`)
-    } else if (key.name === "u") {
-      rendererInstance.useMouse = !rendererInstance.useMouse
-      console.log(`Mouse functionality ${rendererInstance.useMouse ? "enabled" : "disabled"}`)
+      case "-": {
+        const newHeight = clampFooterHeight(rendererInstance, rendererInstance.footerHeight - 1)
+        if (newHeight === rendererInstance.footerHeight) break
+        rendererInstance.footerHeight = newHeight
+        updateInstructions()
+        writeCapturedOutput(`Split height decreased to ${newHeight}`)
+        break
+      }
+      case "0": {
+        if (rendererInstance.screenMode === "split-footer") {
+          disableSplitMode()
+        } else {
+          enableSplitMode()
+        }
+        break
+      }
+      case "m": {
+        const nextInterval = Math.max(MIN_OUTPUT_INTERVAL, testOutputInterval - 5)
+        if (nextInterval === testOutputInterval) break
+        testOutputInterval = nextInterval
+        startTestOutput()
+        writeCapturedOutput(`Test output speed increased (interval: ${testOutputInterval}ms)`)
+        break
+      }
+      case "l": {
+        const nextInterval = Math.min(MAX_OUTPUT_INTERVAL, testOutputInterval + 5)
+        if (nextInterval === testOutputInterval) break
+        testOutputInterval = nextInterval
+        startTestOutput()
+        writeCapturedOutput(`Test output speed decreased (interval: ${testOutputInterval}ms)`)
+        break
+      }
+      case "u": {
+        rendererInstance.useMouse = !rendererInstance.useMouse
+        updateInstructions()
+        writeCapturedOutput(`Mouse functionality ${rendererInstance.useMouse ? "enabled" : "disabled"}`)
+        break
+      }
     }
   }
 
@@ -411,10 +517,7 @@ export function destroy(rendererInstance: CliRenderer): void {
     keyHandler = null
   }
 
-  if (outputTimer) {
-    clearInterval(outputTimer)
-    outputTimer = null
-  }
+  clearOutputTimer()
 
   if (animationSystem) {
     animationSystem.destroy()
@@ -442,7 +545,7 @@ if (import.meta.main) {
     exitOnCtrlC: true,
     useMouse: true,
     screenMode: "split-footer",
-    footerHeight: 20,
+    footerHeight: DEFAULT_FOOTER_HEIGHT,
     externalOutputMode: "capture-stdout",
     consoleMode: "disabled",
   })

@@ -506,6 +506,14 @@ pub const CliRenderer = struct {
         self.renderOffset = offset;
     }
 
+    fn resetActiveOutputBuffer() void {
+        if (activeBuffer == .A) {
+            outputBufferLen = 0;
+        } else {
+            outputBufferBLen = 0;
+        }
+    }
+
     fn renderThreadFn(self: *CliRenderer) void {
         while (true) {
             self.renderMutex.lock();
@@ -549,8 +557,25 @@ pub const CliRenderer = struct {
         self.lastRenderTime = now;
         self.renderDebugOverlay();
 
-        self.prepareRenderFrame(force);
+        self.prepareRenderFrame(force, true);
 
+        self.finalizeRender(deltaTime);
+    }
+
+    pub fn renderSplitFooter(self: *CliRenderer, output: []const u8, nextRenderOffset: u32, force: bool) void {
+        const now = std.time.microTimestamp();
+        const deltaTimeMs = @as(f64, @floatFromInt(now - self.lastRenderTime));
+        const deltaTime = deltaTimeMs / 1000.0; // Convert to seconds
+
+        self.lastRenderTime = now;
+        self.renderDebugOverlay();
+
+        self.prepareSplitFooterFrame(output, nextRenderOffset, force);
+
+        self.finalizeRender(deltaTime);
+    }
+
+    fn finalizeRender(self: *CliRenderer, deltaTime: f64) void {
         if (self.useThread) {
             self.renderMutex.lock();
             while (self.renderInProgress) {
@@ -573,10 +598,11 @@ pub const CliRenderer = struct {
             self.renderMutex.unlock();
         } else {
             const writeStart = std.time.microTimestamp();
+            const output = if (activeBuffer == .A) outputBuffer[0..outputBufferLen] else outputBufferB[0..outputBufferBLen];
             if (!self.testing) {
                 var stdoutWriter = std.fs.File.stdout().writer(&self.stdoutBuffer);
                 const w = &stdoutWriter.interface;
-                w.writeAll(outputBuffer[0..outputBufferLen]) catch {};
+                w.writeAll(output) catch {};
                 w.flush() catch {};
             }
             self.renderStats.stdoutWriteTime = @as(f64, @floatFromInt(std.time.microTimestamp() - writeStart));
@@ -598,6 +624,92 @@ pub const CliRenderer = struct {
         self.addStatSample(u32, &self.statSamples.cellsUpdated, self.renderStats.cellsUpdated);
     }
 
+    // prepareSplitFooterFrame merges two logically different updates into one terminal write:
+    //
+    // 1) append unpublished external output to the log area, and
+    // 2) repaint the footer surface.
+    //
+    // Keeping them in one output transaction prevents flashing.
+    //
+    // Geometry model:
+    // - renderOffset = number of rows above the footer (0 means footer starts at row 1).
+    // - footer top line is (renderOffset + 1) because ANSI cursor coordinates are 1-based.
+    // - nextRenderOffset comes from TypeScript commit state and may increase during
+    //   the "settling" phase before bottom pinning.
+    //
+    // Ordering contract per commit:
+    // - append output first,
+    // - then clear/repaint footer at the target placement.
+    //
+    // Branch rationale:
+    // - settling (next > previous): footer is moving downward. We first clear the
+    //   old footer region so stale footer glyphs cannot be overdrawn/merged with
+    //   appended log text.
+    // - pinned (next == previous > 0): footer is stable at bottom. We use a scroll
+    //   region [1..renderOffset] so appended output scrolls only the log viewport
+    //   and cannot affect footer rows.
+    // - top-anchored (next == 0): no reserved footer viewport exists yet, so write
+    //   from row 1 without a scroll-region constraint.
+    //
+    // We update self.renderOffset before footer repaint so prepareRenderFrame()
+    // renders the footer buffer at the new placement in the same transaction.
+    fn prepareSplitFooterFrame(self: *CliRenderer, output: []const u8, nextRenderOffset: u32, force: bool) void {
+        resetActiveOutputBuffer();
+
+        const previousRenderOffset = self.renderOffset;
+        const previousFooterTopLine: u32 = @max(previousRenderOffset + 1, @as(u32, 1));
+        const targetFooterTopLine: u32 = @max(nextRenderOffset + 1, @as(u32, 1));
+        const footerIsSettling = nextRenderOffset > previousRenderOffset;
+
+        // If either output exists or a forced repaint is requested, emit explicit
+        // cursor/erase control sequences before composing the footer frame.
+        if (output.len > 0 or force) {
+            var writer = OutputBufferWriter.writer();
+
+            if (output.len > 0) {
+                if (footerIsSettling) {
+                    // Footer is relocating downward: clear old footer footprint first,
+                    // then append output at the old footer top so new log rows occupy
+                    // the space that just became part of the log viewport.
+                    ansi.ANSI.moveToOutput(writer, 1, previousFooterTopLine) catch {};
+                    writer.writeAll(ansi.ANSI.eraseBelowCursor) catch {};
+                    ansi.ANSI.moveToOutput(writer, 1, previousFooterTopLine) catch {};
+                    writer.writeAll(output) catch {};
+                } else if (nextRenderOffset > 0) {
+                    // Footer is pinned: constrain scrolling to the log viewport only.
+                    // Writing at the viewport bottom gives append-style scrolling while
+                    // preserving footer rows below the scroll region.
+                    writer.print("\x1b[1;{d}r", .{nextRenderOffset}) catch {};
+                    ansi.ANSI.moveToOutput(writer, 1, nextRenderOffset) catch {};
+                    writer.writeAll(output) catch {};
+                    writer.writeAll("\x1b[r") catch {};
+                } else {
+                    // No reserved viewport yet; append from the terminal top.
+                    ansi.ANSI.moveToOutput(writer, 1, 1) catch {};
+                    writer.writeAll(output) catch {};
+                }
+            }
+
+            // Commit placement transition before rendering footer cells so all
+            // y + renderOffset mappings in prepareRenderFrame() use target geometry.
+            self.renderOffset = nextRenderOffset;
+
+            // Reclaim footer area at the target top and place cursor there so the
+            // following frame paint starts from a known clean footer surface.
+            ansi.ANSI.moveToOutput(writer, 1, targetFooterTopLine) catch {};
+            writer.writeAll(ansi.ANSI.eraseBelowCursor) catch {};
+            ansi.ANSI.moveToOutput(writer, 1, targetFooterTopLine) catch {};
+        }
+
+        // Even when we emit no explicit output this frame, geometry may have changed.
+        // Keep renderer state in sync so future frame diffs land in the right rows.
+        if (!(output.len > 0 or force)) {
+            self.renderOffset = nextRenderOffset;
+        }
+
+        self.prepareRenderFrame(force, false);
+    }
+
     pub fn getNextBuffer(self: *CliRenderer) *OptimizedBuffer {
         return self.nextRenderBuffer;
     }
@@ -606,14 +718,12 @@ pub const CliRenderer = struct {
         return self.currentRenderBuffer;
     }
 
-    fn prepareRenderFrame(self: *CliRenderer, force: bool) void {
+    fn prepareRenderFrame(self: *CliRenderer, force: bool, reset_output_buffer: bool) void {
         const renderStartTime = std.time.microTimestamp();
         var cellsUpdated: u32 = 0;
 
-        if (activeBuffer == .A) {
-            outputBufferLen = 0;
-        } else {
-            outputBufferBLen = 0;
+        if (reset_output_buffer) {
+            resetActiveOutputBuffer();
         }
 
         var writer = OutputBufferWriter.writer();

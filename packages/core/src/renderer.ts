@@ -607,6 +607,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private clipboard: Clipboard
 
   private _splitHeight: number = 0
+  private splitPinnedRenderOffset: number = 0
+  private splitPublishedRows: number = 0
   private renderOffset: number = 0
 
   private _terminalWidth: number = 0
@@ -614,6 +616,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private _terminalIsSetup: boolean = false
 
   private externalOutputQueue = new ExternalOutputQueue()
+  private externalOutputEncoder = new TextEncoder()
   private realStdoutWrite: (chunk: any, encoding?: any, callback?: any) => boolean
 
   private _useConsole: boolean = true
@@ -720,6 +723,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this._terminalHeight = stdout.rows ?? height
     this._useThread = config.useThread === undefined ? false : config.useThread
     const { screenMode, footerHeight, externalOutputMode } = resolveModes(config)
+    this._externalOutputMode = externalOutputMode
 
     const initialGeometry = calculateRenderGeometry(
       screenMode,
@@ -731,7 +735,9 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.width = initialGeometry.renderWidth
     this.height = initialGeometry.renderHeight
     this._splitHeight = initialGeometry.effectiveFooterHeight
-    this.renderOffset = initialGeometry.renderOffset
+    this.splitPinnedRenderOffset = initialGeometry.renderOffset
+    this.splitPublishedRows = 0
+    this.renderOffset = screenMode === "split-footer" ? 0 : initialGeometry.renderOffset
 
     this._footerHeight = footerHeight
 
@@ -825,7 +831,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     })
     this.consoleMode = config.consoleMode ?? "console-overlay"
     this.applyScreenMode(screenMode, false, false)
-    this.externalOutputMode = externalOutputMode
+    this.stdout.write = externalOutputMode === "capture-stdout" ? this.interceptStdoutWrite : this.realStdoutWrite
     this._openConsoleOnError = config.openConsoleOnError ?? process.env.NODE_ENV !== "production"
     this._onDestroy = config.onDestroy
 
@@ -1229,6 +1235,121 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     return true
   }
 
+  private estimateOutputRowAdvance(output: string): number {
+    if (output.length === 0) {
+      return 0
+    }
+
+    const width = Math.max(this._terminalWidth, 1)
+    let rows = 0
+    let column = 0
+
+    for (let index = 0; index < output.length; index++) {
+      const char = output[index]
+
+      if (char === "\u001b") {
+        const nextChar = output[index + 1]
+        if (nextChar === "[") {
+          index += 2
+          while (index < output.length) {
+            const code = output.charCodeAt(index)
+            if (code >= 0x40 && code <= 0x7e) {
+              break
+            }
+            index += 1
+          }
+          continue
+        }
+
+        if (nextChar === "]") {
+          index += 2
+          while (index < output.length) {
+            const currentChar = output[index]
+            if (currentChar === "\u0007") {
+              break
+            }
+
+            if (currentChar === "\u001b" && output[index + 1] === "\\") {
+              index += 1
+              break
+            }
+
+            index += 1
+          }
+          continue
+        }
+
+        continue
+      }
+
+      if (char === "\r") {
+        column = 0
+        continue
+      }
+
+      if (char === "\n") {
+        rows += 1
+        column = 0
+        continue
+      }
+
+      const codePoint = output.codePointAt(index)
+      if (codePoint !== undefined && codePoint > 0xffff) {
+        index += 1
+      }
+
+      if (column >= width) {
+        rows += 1
+        column = 0
+      }
+
+      column += 1
+    }
+
+    return rows
+  }
+
+  private resolveSplitRenderOffset(nextPinnedRenderOffset: number, enteringSplit: boolean): number {
+    if (nextPinnedRenderOffset <= 0) {
+      this.splitPublishedRows = 0
+      return 0
+    }
+
+    if (enteringSplit) {
+      this.splitPublishedRows = 0
+      return this._externalOutputMode === "capture-stdout" ? 0 : nextPinnedRenderOffset
+    }
+
+    const currentlyPinned = this.renderOffset >= this.splitPinnedRenderOffset
+    if (currentlyPinned) {
+      return nextPinnedRenderOffset
+    }
+
+    return Math.min(this.renderOffset, nextPinnedRenderOffset)
+  }
+
+  private calculateNextSplitRenderOffset(normalizedOutput: string): number {
+    if (this._splitHeight === 0) {
+      return 0
+    }
+
+    if (this._externalOutputMode !== "capture-stdout") {
+      return this.renderOffset
+    }
+
+    if (normalizedOutput.length === 0 || this.renderOffset >= this.splitPinnedRenderOffset) {
+      return this.renderOffset
+    }
+
+    const rowAdvance = this.estimateOutputRowAdvance(normalizedOutput)
+    if (rowAdvance <= 0) {
+      return this.renderOffset
+    }
+
+    this.splitPublishedRows += rowAdvance
+    return Math.min(this.renderOffset + rowAdvance, this.splitPinnedRenderOffset)
+  }
+
   private applyScreenMode(screenMode: ScreenMode, emitResize: boolean = true, requestRender: boolean = true): void {
     const prevScreenMode = this._screenMode
     const prevSplitHeight = this._splitHeight
@@ -1247,6 +1368,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     const prevUseAlternateScreen = prevScreenMode === "alternate-screen"
     const nextUseAlternateScreen = screenMode === "alternate-screen"
     const terminalScreenModeChanged = this._terminalIsSetup && prevUseAlternateScreen !== nextUseAlternateScreen
+    const enteringSplitFooter = prevScreenMode !== "split-footer" && nextSplitHeight > 0
     const leavingSplitFooter = prevSplitHeight > 0 && nextSplitHeight === 0
 
     if (this._terminalIsSetup && leavingSplitFooter) {
@@ -1271,7 +1393,9 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
     this._screenMode = screenMode
     this._splitHeight = nextSplitHeight
-    this.renderOffset = nextGeometry.renderOffset
+    this.splitPinnedRenderOffset = nextGeometry.renderOffset
+    this.renderOffset =
+      nextSplitHeight > 0 ? this.resolveSplitRenderOffset(this.splitPinnedRenderOffset, enteringSplitFooter) : 0
     this.width = nextGeometry.renderWidth
     this.height = nextGeometry.renderHeight
 
@@ -1307,10 +1431,10 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
     const output = this.externalOutputQueue.claim()
 
-    const rendererStartLine = this._terminalHeight - this._splitHeight
+    const rendererStartLine = this.renderOffset + 1
     const flush = ANSI.moveCursorAndClear(rendererStartLine, 1)
 
-    const outputLine = this._terminalHeight - this._splitHeight
+    const outputLine = this.renderOffset + 1
     const move = ANSI.moveCursor(outputLine, 1)
 
     let clear = ""
@@ -1906,6 +2030,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private processResize(width: number, height: number): void {
     if (width === this._terminalWidth && height === this._terminalHeight) return
 
+    const wasSplitPinned = this._splitHeight > 0 && this.renderOffset >= this.splitPinnedRenderOffset
     const previousGeometry = calculateRenderGeometry(
       this._screenMode,
       this._terminalWidth,
@@ -1941,7 +2066,15 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     }
 
     this._splitHeight = nextGeometry.effectiveFooterHeight
-    this.renderOffset = nextGeometry.renderOffset
+    this.splitPinnedRenderOffset = nextGeometry.renderOffset
+    if (this._splitHeight > 0) {
+      this.renderOffset = wasSplitPinned
+        ? this.splitPinnedRenderOffset
+        : Math.min(this.renderOffset, this.splitPinnedRenderOffset)
+    } else {
+      this.renderOffset = 0
+      this.splitPublishedRows = 0
+    }
     this.width = nextGeometry.renderWidth
     this.height = nextGeometry.renderHeight
 
@@ -2469,15 +2602,18 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       throw new Error("Rendering called concurrently")
     }
 
-    let force = false
-    if (this._splitHeight > 0) {
-      // TODO: Flickering could maybe be even more reduced by moving the flush to the native layer,
-      // to output the flush with the buffered writer, after the render is done.
-      force = this.flushStdoutCache(this._splitHeight)
-    }
-
     this.renderingNative = true
-    this.lib.render(this.rendererPtr, force)
+    if (this._splitHeight > 0) {
+      const output = this.externalOutputQueue.claim()
+      const normalizedOutput = output.includes("\n") ? output.replace(/\r?\n/g, "\r\n") : output
+      const outputBytes = this.externalOutputEncoder.encode(normalizedOutput)
+      const nextRenderOffset = this.calculateNextSplitRenderOffset(normalizedOutput)
+      const force = outputBytes.length > 0 || nextRenderOffset !== this.renderOffset
+      this.lib.renderSplitFooter(this.rendererPtr, outputBytes, nextRenderOffset, force)
+      this.renderOffset = nextRenderOffset
+    } else {
+      this.lib.render(this.rendererPtr, false)
+    }
     // this.dumpStdoutBuffer(Date.now())
     this.renderingNative = false
   }
