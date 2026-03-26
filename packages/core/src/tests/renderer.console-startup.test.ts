@@ -742,6 +742,33 @@ test("CliRenderer split-footer renderNative repaints footer frame with no pendin
   splitCommitSpy.mockRestore()
 })
 
+test("CliRenderer split-footer defers first native frame while startup cursor seed is pending", async () => {
+  const result = await createTestRenderer({
+    screenMode: "split-footer",
+    footerHeight: 6,
+    externalOutputMode: "capture-stdout",
+    consoleMode: "disabled",
+  })
+
+  renderer = result.renderer
+  ;(renderer as any).pendingSplitStartupCursorSeed = true
+  ;(renderer as any).splitStartupSeedTimeoutId = setTimeout(() => {}, 10)
+
+  const repaintSpy = spyOn((renderer as any).lib, "repaintSplitFooter")
+  const commitSpy = spyOn((renderer as any).lib, "commitSplitFooterSnapshot")
+
+  await result.renderOnce()
+
+  expect(repaintSpy).toHaveBeenCalledTimes(0)
+  expect(commitSpy).toHaveBeenCalledTimes(0)
+
+  clearTimeout((renderer as any).splitStartupSeedTimeoutId)
+  ;(renderer as any).splitStartupSeedTimeoutId = null
+
+  repaintSpy.mockRestore()
+  commitSpy.mockRestore()
+})
+
 test("CliRenderer split-footer starts in settling phase and then pins as output grows", async () => {
   const result = await createTestRenderer({
     width: 40,
@@ -754,7 +781,7 @@ test("CliRenderer split-footer starts in settling phase and then pins as output 
 
   renderer = result.renderer
 
-  expect((renderer as any).renderOffset).toBe(0)
+  expect((renderer as any).renderOffset).toBe(1)
 
   ;(renderer as any).stdout.write("a\n")
   await result.renderOnce()
@@ -774,6 +801,100 @@ test("CliRenderer split-footer starts in settling phase and then pins as output 
   }
 
   expect((renderer as any).renderOffset).toBe(6)
+})
+
+test("CliRenderer entering split capture seeds from current terminal cursor row", async () => {
+  const result = await createTestRenderer({
+    width: 40,
+    height: 20,
+    screenMode: "main-screen",
+    externalOutputMode: "passthrough",
+    consoleMode: "disabled",
+  })
+
+  renderer = result.renderer
+  renderer.footerHeight = 6
+  renderer.setCursorPosition(1, 4, true)
+
+  renderer.screenMode = "split-footer"
+  renderer.externalOutputMode = "capture-stdout"
+
+  expect((renderer as any).renderOffset).toBe(4)
+})
+
+test("CliRenderer reseeds split startup offset from non-home CPR capability response", async () => {
+  const result = await createTestRenderer({
+    width: 40,
+    height: 20,
+    screenMode: "split-footer",
+    footerHeight: 6,
+    externalOutputMode: "capture-stdout",
+    consoleMode: "disabled",
+  })
+
+  renderer = result.renderer
+  expect((renderer as any).renderOffset).toBe(1)
+
+  const lib = (renderer as any).lib
+  const originalGetCursorState = lib.getCursorState.bind(lib)
+  ;(renderer as any).pendingSplitStartupCursorSeed = true
+  ;(renderer as any).capabilityTimeoutId = setTimeout(() => {}, 10)
+
+  try {
+    lib.getCursorState = () => ({
+      ...originalGetCursorState((renderer as any).rendererPtr),
+      y: 5,
+    })
+
+    const handled = (renderer as any).processCapabilitySequence("\x1b[5;1R", true)
+
+    expect(handled).toBe(false)
+    expect((renderer as any).renderOffset).toBe(5)
+    expect((renderer as any).pendingSplitStartupCursorSeed).toBe(false)
+  } finally {
+    clearTimeout((renderer as any).capabilityTimeoutId)
+    ;(renderer as any).capabilityTimeoutId = null
+    lib.getCursorState = originalGetCursorState
+  }
+})
+
+test("CliRenderer does not consume standalone CPR replies during capability window", async () => {
+  const result = await createTestRenderer({
+    width: 40,
+    height: 20,
+    screenMode: "main-screen",
+    externalOutputMode: "passthrough",
+    consoleMode: "disabled",
+  })
+
+  renderer = result.renderer
+  ;(renderer as any).pendingSplitStartupCursorSeed = false
+  ;(renderer as any).capabilityTimeoutId = setTimeout(() => {}, 10)
+
+  const handled = (renderer as any).processCapabilitySequence("\x1b[7;11R", true)
+  expect(handled).toBe(false)
+
+  clearTimeout((renderer as any).capabilityTimeoutId)
+  ;(renderer as any).capabilityTimeoutId = null
+})
+
+test("CliRenderer preserves cursor seed rows when split starts with zero pinned offset", async () => {
+  const result = await createTestRenderer({
+    width: 40,
+    height: 10,
+    screenMode: "split-footer",
+    footerHeight: 12,
+    externalOutputMode: "capture-stdout",
+    consoleMode: "disabled",
+  })
+
+  renderer = result.renderer
+
+  expect((renderer as any).renderOffset).toBe(0)
+
+  renderer.footerHeight = 4
+
+  expect((renderer as any).renderOffset).toBe(1)
 })
 
 test("CliRenderer split-footer commits only unpublished captured output chunks", async () => {
