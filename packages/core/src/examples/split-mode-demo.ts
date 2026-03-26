@@ -21,6 +21,7 @@ const MAX_OUTPUT_INTERVAL = 1000
 let text: TextRenderable | null = null
 let instructionsText: TextRenderable | null = null
 let keyHandler: ((key: KeyEvent) => void) | null = null
+let resizeHandler: ((width: number, height: number) => void) | null = null
 let outputTimer: ReturnType<typeof setInterval> | null = null
 let animationSystem: SplitModeAnimations | null = null
 let testOutputInterval = DEFAULT_OUTPUT_INTERVAL
@@ -52,9 +53,14 @@ class SplitModeAnimations {
   private container: BoxRenderable
 
   private systemLoadingBars: BoxRenderable[] = []
+  private systemBarBackgrounds: BoxRenderable[] = []
   private movingOrbs: BoxRenderable[] = []
   private statusCounters: TextRenderable[] = []
   private pulsingElements: BoxRenderable[] = []
+  private statusPanel: BoxRenderable | null = null
+  private statsPanel: BoxRenderable | null = null
+  private compactCounterLabels = false
+  private orbTrackMaxX = 2
 
   private systemProgress = { cpu: 0, memory: 0, network: 0, disk: 0 }
   private counters = { packets: 0, connections: 0, processes: 0, uptime: 0 }
@@ -66,6 +72,7 @@ class SplitModeAnimations {
 
   constructor(renderer: CliRenderer) {
     this.renderer = renderer
+    this.orbTrackMaxX = Math.max(2, this.renderer.width - 10)
     this.timeline = createTimeline({
       duration: 8000,
       loop: true,
@@ -98,9 +105,11 @@ class SplitModeAnimations {
       titleAlignment: "center",
       border: true,
     })
+    this.statusPanel = statusPanel
     this.container.add(statusPanel)
 
     this.systemLoadingBars = []
+    this.systemBarBackgrounds = []
     const systems = [
       { name: "CPU", color: "#6a5acd", y: 6 },
       { name: "MEM", color: "#4682b4", y: 7 },
@@ -131,6 +140,7 @@ class SplitModeAnimations {
         zIndex: 1,
       })
       this.container.add(bgBar)
+      this.systemBarBackgrounds.push(bgBar)
 
       const progressBar = new BoxRenderable(this.renderer, {
         id: `${system.name.toLowerCase()}-progress`,
@@ -161,6 +171,7 @@ class SplitModeAnimations {
       titleAlignment: "center",
       border: true,
     })
+    this.statsPanel = statsPanel
     this.container.add(statsPanel)
 
     this.statusCounters = []
@@ -212,6 +223,8 @@ class SplitModeAnimations {
       this.container.add(pulse)
       this.pulsingElements.push(pulse)
     })
+
+    this.relayoutStatusCounters()
   }
 
   private updateSystemBars(progress: typeof this.systemProgress): void {
@@ -224,11 +237,15 @@ class SplitModeAnimations {
   }
 
   private updateStatusCounters(counters: typeof this.counters): void {
+    const labels = this.compactCounterLabels
+      ? ["PKT", "CON", "PRC", "UP"]
+      : ["PACKETS", "CONN", "PROC", "UP"]
+
     const counterValues = [
-      `PACKETS: ${Math.floor(counters.packets)}`,
-      `CONN: ${Math.floor(counters.connections)}`,
-      `PROC: ${Math.floor(counters.processes)}`,
-      `UP: ${Math.floor(counters.uptime)}s`,
+      `${labels[0]}: ${Math.floor(counters.packets)}`,
+      `${labels[1]}: ${Math.floor(counters.connections)}`,
+      `${labels[2]}: ${Math.floor(counters.processes)}`,
+      `${labels[3]}: ${Math.floor(counters.uptime)}s`,
     ]
 
     counterValues.forEach((value, index) => {
@@ -237,7 +254,9 @@ class SplitModeAnimations {
   }
 
   private updateOrbPosition(index: number, position: { x: number }): void {
-    this.movingOrbs[index].x = Math.floor(position.x)
+    const maxX = Math.max(2, this.renderer.width - 10)
+    const clampedX = Math.max(2, Math.min(position.x, maxX))
+    this.movingOrbs[index].x = Math.floor(clampedX)
   }
 
   private updatePulseHeight(index: number, intensity: number): void {
@@ -298,7 +317,7 @@ class SplitModeAnimations {
       this.timeline.add(
         orbPos,
         {
-          x: this.renderer.width - 10,
+          x: this.orbTrackMaxX,
           duration: 2000 + index * 400,
           ease: "inOutSine",
           onUpdate: (values: JSAnimation) => {
@@ -341,13 +360,93 @@ class SplitModeAnimations {
     })
   }
 
+  private relayoutStatusCounters(): void {
+    const left = 4
+    const right = Math.max(left, this.renderer.width - 4)
+    const availableWidth = Math.max(1, right - left)
+    const singleRowStep = this.statusCounters.length > 1 ? Math.floor(availableWidth / (this.statusCounters.length - 1)) : 0
+    const useTwoRows = singleRowStep < 12
+
+    if (useTwoRows) {
+      const columnCount = 2
+      const columnStep = Math.max(1, Math.floor(availableWidth / (columnCount - 1)))
+      this.compactCounterLabels = true
+
+      this.statusCounters.forEach((counter, index) => {
+        const col = index % columnCount
+        const row = Math.floor(index / columnCount)
+        counter.x = left + col * columnStep
+        counter.y = 15 + row
+      })
+      return
+    }
+
+    this.compactCounterLabels = false
+    this.statusCounters.forEach((counter, index) => {
+      counter.x = left + index * singleRowStep
+      counter.y = 15
+    })
+  }
+
+  private remapOrbTrackForResize(): void {
+    const nextOrbTrackMaxX = Math.max(2, this.renderer.width - 10)
+    if (nextOrbTrackMaxX === this.orbTrackMaxX) {
+      return
+    }
+
+    const previousSpan = Math.max(1, this.orbTrackMaxX - 2)
+    const nextSpan = Math.max(1, nextOrbTrackMaxX - 2)
+
+    this.orbPositions.forEach((orbPos) => {
+      const clampedPreviousX = Math.max(2, Math.min(orbPos.x, this.orbTrackMaxX))
+      const progress = (clampedPreviousX - 2) / previousSpan
+      orbPos.x = 2 + progress * nextSpan
+    })
+
+    this.orbTrackMaxX = nextOrbTrackMaxX
+  }
+
   public update(deltaTime: number): void {
     this.timeline.update(deltaTime)
+  }
+
+  public handleResize(): void {
+    const panelWidth = Math.max(10, this.renderer.width - 6)
+    const maxBarWidth = Math.max(1, this.renderer.width - 16)
+
+    this.remapOrbTrackForResize()
+
+    if (this.statusPanel) {
+      this.statusPanel.width = panelWidth
+    }
+
+    if (this.statsPanel) {
+      this.statsPanel.width = panelWidth
+    }
+
+    this.systemBarBackgrounds.forEach((bar) => {
+      bar.width = maxBarWidth
+    })
+
+    this.relayoutStatusCounters()
+
+    this.orbPositions.forEach((orbPos, index) => {
+      this.updateOrbPosition(index, orbPos)
+    })
+
+    this.pulsingElements.forEach((pulse, index) => {
+      pulse.x = Math.max(1, this.renderer.width - 8 + index * 2)
+    })
+
+    this.updateSystemBars(this.systemProgress)
+    this.updateStatusCounters(this.counters)
   }
 
   public destroy(): void {
     this.timeline.pause()
     this.renderer.root.remove("animation-container")
+    this.statusPanel = null
+    this.statsPanel = null
   }
 }
 
@@ -406,6 +505,18 @@ export function run(rendererInstance: CliRenderer): void {
     )}`
   }
 
+  const updateLayoutForCurrentSize = () => {
+    if (text) {
+      text.width = Math.max(1, rendererInstance.width - 4)
+    }
+
+    if (instructionsText) {
+      instructionsText.width = Math.max(1, rendererInstance.width - 4)
+    }
+
+    animationSystem?.handleResize()
+  }
+
   const writeCapturedOutput = (message: string) => {
     if (!isCapturingOutput()) return
     writeDemoOutput(message)
@@ -445,6 +556,19 @@ export function run(rendererInstance: CliRenderer): void {
   }
 
   updateInstructions()
+  updateLayoutForCurrentSize()
+
+  resizeHandler = () => {
+    const clampedFooterHeight = clampFooterHeight(rendererInstance, rendererInstance.footerHeight)
+    if (clampedFooterHeight !== rendererInstance.footerHeight) {
+      rendererInstance.footerHeight = clampedFooterHeight
+    }
+
+    updateLayoutForCurrentSize()
+    updateInstructions()
+  }
+
+  rendererInstance.on("resize", resizeHandler)
 
   writeDemoOutput("=== Split Mode Demo ===")
   writeDemoOutput(`Terminal size: ${rendererInstance.terminalWidth}x${rendererInstance.terminalHeight}`)
@@ -515,6 +639,11 @@ export function destroy(rendererInstance: CliRenderer): void {
   if (keyHandler) {
     rendererInstance.keyInput.off("keypress", keyHandler)
     keyHandler = null
+  }
+
+  if (resizeHandler) {
+    rendererInstance.off("resize", resizeHandler)
+    resizeHandler = null
   }
 
   clearOutputTimer()
