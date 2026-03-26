@@ -276,24 +276,24 @@ export fn render(rendererPtr: *renderer.CliRenderer, force: bool) void {
     rendererPtr.render(force);
 }
 
-export fn renderSplitFooter(
+export fn repaintSplitFooter(
     rendererPtr: *renderer.CliRenderer,
-    outputPtr: [*]const u8,
-    outputLen: usize,
     pinnedRenderOffset: u32,
     force: bool,
 ) u32 {
-    const output = outputPtr[0..outputLen];
-    return rendererPtr.renderSplitFooter(output, pinnedRenderOffset, force);
+    return rendererPtr.repaintSplitFooter(pinnedRenderOffset, force);
 }
 
 export fn renderSplitFooterSnapshot(
     rendererPtr: *renderer.CliRenderer,
     snapshotBufferPtr: *buffer.OptimizedBuffer,
+    rowColumns: u32,
+    startOnNewLine: bool,
+    trailingNewline: bool,
     pinnedRenderOffset: u32,
     force: bool,
 ) u32 {
-    return rendererPtr.renderSplitFooterSnapshot(snapshotBufferPtr, pinnedRenderOffset, force);
+    return rendererPtr.renderSplitFooterSnapshot(snapshotBufferPtr, rowColumns, startOnNewLine, trailingNewline, pinnedRenderOffset, force);
 }
 
 export fn createOptimizedBuffer(width: u32, height: u32, respectAlpha: bool, widthMethod: u8, idPtr: [*]const u8, idLen: usize) ?*buffer.OptimizedBuffer {

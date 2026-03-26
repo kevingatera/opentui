@@ -1016,7 +1016,7 @@ test "renderer - explicit_cursor_positioning with CJK characters" {
     try std.testing.expect(std.mem.indexOf(u8, output, "\x1b[1;3H") != null);
 }
 
-test "renderer - renderSplitFooter writes append before footer repaint in one output" {
+test "renderer - renderSplitFooterSnapshot writes append before footer repaint in one output" {
     const pool = gp.initGlobalPool(std.testing.allocator);
     defer gp.deinitGlobalPool();
     var local_link_pool = link.LinkPool.init(std.testing.allocator);
@@ -1038,8 +1038,19 @@ test "renderer - renderSplitFooter writes append before footer repaint in one ou
     const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
     try next_buffer.drawText("FOOT", 0, 0, fg, bg, 0);
 
-    const appended = "append-line\n";
-    _ = cli_renderer.renderSplitFooter(appended, 2, true);
+    var snapshot = try OptimizedBuffer.init(
+        std.testing.allocator,
+        11,
+        1,
+        .{ .pool = pool, .width_method = .unicode, .respectAlpha = false },
+    );
+    defer snapshot.deinit();
+
+    try snapshot.clear(.{ 0.0, 0.0, 0.0, 0.0 }, 32);
+    try snapshot.drawText("append-line", 0, 0, fg, .{ 0.0, 0.0, 0.0, 0.0 }, 0);
+
+    const appended = "append-line";
+    _ = cli_renderer.renderSplitFooterSnapshot(snapshot, 11, false, true, 2, true);
 
     const output = cli_renderer.getLastOutputForTest();
     const append_index = std.mem.indexOf(u8, output, appended);
@@ -1078,7 +1089,7 @@ test "renderer - renderSplitFooter writes append before footer repaint in one ou
     try std.testing.expectEqual(@as(usize, 1), sync_count);
 }
 
-test "renderer - renderSplitFooter settling phase moves footer downward" {
+test "renderer - renderSplitFooterSnapshot settling phase moves footer downward" {
     const pool = gp.initGlobalPool(std.testing.allocator);
     defer gp.deinitGlobalPool();
     var local_link_pool = link.LinkPool.init(std.testing.allocator);
@@ -1100,8 +1111,19 @@ test "renderer - renderSplitFooter settling phase moves footer downward" {
     const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
     try next_buffer.drawText("FOOT", 0, 0, fg, bg, 0);
 
-    const appended = "settle\n";
-    _ = cli_renderer.renderSplitFooter(appended, 3, true);
+    var snapshot = try OptimizedBuffer.init(
+        std.testing.allocator,
+        6,
+        1,
+        .{ .pool = pool, .width_method = .unicode, .respectAlpha = false },
+    );
+    defer snapshot.deinit();
+
+    try snapshot.clear(.{ 0.0, 0.0, 0.0, 0.0 }, 32);
+    try snapshot.drawText("settle", 0, 0, fg, .{ 0.0, 0.0, 0.0, 0.0 }, 0);
+
+    const appended = "settle";
+    _ = cli_renderer.renderSplitFooterSnapshot(snapshot, 6, false, true, 3, true);
 
     const output = cli_renderer.getLastOutputForTest();
     const settling_clear_index = std.mem.indexOf(u8, output, "\x1b[1;1H\x1b[J");
@@ -1119,6 +1141,39 @@ test "renderer - renderSplitFooter settling phase moves footer downward" {
     try std.testing.expect(settling_clear_index.? < append_index.?);
     try std.testing.expect(append_index.? < scroll_region_reset_index.?);
     try std.testing.expect(append_index.? < footer_clear_index.?);
+    try std.testing.expect(footer_clear_index.? < sync_index.?);
+}
+
+test "renderer - repaintSplitFooter repaints footer without append payload" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+    var local_link_pool = link.LinkPool.init(std.testing.allocator);
+    defer local_link_pool.deinit();
+
+    var cli_renderer = try CliRenderer.create(
+        std.testing.allocator,
+        12,
+        3,
+        pool,
+        true,
+    );
+    defer cli_renderer.destroy();
+
+    _ = cli_renderer.resetSplitScrollback(2, 2);
+
+    const next_buffer = cli_renderer.getNextBuffer();
+    const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    try next_buffer.drawText("FOOT", 0, 0, fg, bg, 0);
+
+    _ = cli_renderer.repaintSplitFooter(2, true);
+
+    const output = cli_renderer.getLastOutputForTest();
+    const footer_clear_index = std.mem.indexOf(u8, output, "\x1b[3;1H\x1b[J");
+    const sync_index = std.mem.indexOf(u8, output, ansi.ANSI.syncSet);
+
+    try std.testing.expect(footer_clear_index != null);
+    try std.testing.expect(sync_index != null);
     try std.testing.expect(footer_clear_index.? < sync_index.?);
 }
 
@@ -1156,7 +1211,7 @@ test "renderer - renderSplitFooterSnapshot appends styled snapshot before footer
     try snapshot.drawText("SNAP", 0, 0, .{ 1.0, 0.5, 0.0, 1.0 }, .{ 0.0, 0.0, 0.0, 0.0 }, ansi.TextAttributes.BOLD);
     try snapshot.drawText("SHOT", 0, 1, .{ 0.2, 0.8, 0.9, 1.0 }, .{ 0.0, 0.0, 0.0, 0.0 }, 0);
 
-    _ = cli_renderer.renderSplitFooterSnapshot(snapshot, 2, true);
+    _ = cli_renderer.renderSplitFooterSnapshot(snapshot, 8, true, true, 2, true);
 
     const output = cli_renderer.getLastOutputForTest();
     const snapshot_text_index = std.mem.indexOf(u8, output, "SNAP");

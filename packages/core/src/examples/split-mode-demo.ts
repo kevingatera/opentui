@@ -483,7 +483,7 @@ class SplitFooterChatDemo {
 
     this.promptText = new TextRenderable(this.renderer, {
       id: "split-chat-prompt",
-      content: "you >",
+      content: "",
       position: "absolute",
       left: 3,
       top: Math.max(6, this.renderer.height - 3),
@@ -500,7 +500,6 @@ class SplitFooterChatDemo {
       left: 9,
       top: Math.max(6, this.renderer.height - 3),
       width: Math.max(1, this.renderer.width - 12),
-      height: 1,
       zIndex: 12,
       placeholder: "Type a message and press Enter...",
       placeholderColor: this.palette.inputPlaceholder,

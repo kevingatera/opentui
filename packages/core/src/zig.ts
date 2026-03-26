@@ -178,12 +178,12 @@ function getOpenTUILib(libPath?: string) {
       args: ["ptr", "bool"],
       returns: "void",
     },
-    renderSplitFooter: {
-      args: ["ptr", "ptr", "usize", "u32", "bool"],
+    repaintSplitFooter: {
+      args: ["ptr", "u32", "bool"],
       returns: "u32",
     },
     renderSplitFooterSnapshot: {
-      args: ["ptr", "ptr", "u32", "bool"],
+      args: ["ptr", "ptr", "u32", "bool", "bool", "u32", "bool"],
       returns: "u32",
     },
     getNextBuffer: {
@@ -1406,10 +1406,13 @@ export interface RenderLib {
   updateStats: (renderer: Pointer, time: number, fps: number, frameCallbackTime: number) => void
   updateMemoryStats: (renderer: Pointer, heapUsed: number, heapTotal: number, arrayBuffers: number) => void
   render: (renderer: Pointer, force: boolean) => void
-  renderSplitFooter: (renderer: Pointer, output: Uint8Array, pinnedRenderOffset: number, force: boolean) => number
+  repaintSplitFooter: (renderer: Pointer, pinnedRenderOffset: number, force: boolean) => number
   renderSplitFooterSnapshot: (
     renderer: Pointer,
     snapshot: OptimizedBuffer,
+    rowColumns: number,
+    startOnNewLine: boolean,
+    trailingNewline: boolean,
     pinnedRenderOffset: number,
     force: boolean,
   ) => number
@@ -1872,7 +1875,6 @@ class FFIRenderLib implements RenderLib {
   private opentui: ReturnType<typeof getOpenTUILib>
   public readonly encoder: TextEncoder = new TextEncoder()
   public readonly decoder: TextDecoder = new TextDecoder()
-  private readonly emptyOutputBuffer = new Uint8Array(1)
   private logCallbackWrapper: any // Store the FFI callback wrapper
   private eventCallbackWrapper: any // Store the FFI event callback wrapper
   private _nativeEvents: EventEmitter = new EventEmitter()
@@ -2453,24 +2455,28 @@ class FFIRenderLib implements RenderLib {
     this.opentui.symbols.render(renderer, force)
   }
 
-  public renderSplitFooter(renderer: Pointer, output: Uint8Array, pinnedRenderOffset: number, force: boolean): number {
-    const outputForPointer = output.length === 0 ? this.emptyOutputBuffer : output
-    return this.opentui.symbols.renderSplitFooter(
-      renderer,
-      ptr(outputForPointer),
-      output.length,
-      pinnedRenderOffset,
-      force,
-    )
+  public repaintSplitFooter(renderer: Pointer, pinnedRenderOffset: number, force: boolean): number {
+    return this.opentui.symbols.repaintSplitFooter(renderer, pinnedRenderOffset, force)
   }
 
   public renderSplitFooterSnapshot(
     renderer: Pointer,
     snapshot: OptimizedBuffer,
+    rowColumns: number,
+    startOnNewLine: boolean,
+    trailingNewline: boolean,
     pinnedRenderOffset: number,
     force: boolean,
   ): number {
-    return this.opentui.symbols.renderSplitFooterSnapshot(renderer, snapshot.ptr, pinnedRenderOffset, force)
+    return this.opentui.symbols.renderSplitFooterSnapshot(
+      renderer,
+      snapshot.ptr,
+      rowColumns,
+      startOnNewLine,
+      trailingNewline,
+      pinnedRenderOffset,
+      force,
+    )
   }
 
   public createOptimizedBuffer(

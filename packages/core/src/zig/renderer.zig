@@ -604,9 +604,8 @@ pub const CliRenderer = struct {
         self.finalizeRender(deltaTime);
     }
 
-    pub fn renderSplitFooter(
+    pub fn repaintSplitFooter(
         self: *CliRenderer,
-        output: []const u8,
         pinned_render_offset: u32,
         force: bool,
     ) u32 {
@@ -617,7 +616,7 @@ pub const CliRenderer = struct {
         self.lastRenderTime = now;
         self.renderDebugOverlay();
 
-        self.prepareSplitFooterFrame(output, pinned_render_offset, force);
+        self.prepareSplitFooterRepaintFrame(pinned_render_offset, force);
 
         self.finalizeRender(deltaTime);
 
@@ -627,6 +626,9 @@ pub const CliRenderer = struct {
     pub fn renderSplitFooterSnapshot(
         self: *CliRenderer,
         snapshot: *const OptimizedBuffer,
+        row_columns: u32,
+        start_on_new_line: bool,
+        trailing_newline: bool,
         pinned_render_offset: u32,
         force: bool,
     ) u32 {
@@ -637,7 +639,7 @@ pub const CliRenderer = struct {
         self.lastRenderTime = now;
         self.renderDebugOverlay();
 
-        self.prepareSplitFooterSnapshotFrame(snapshot, pinned_render_offset, force);
+        self.prepareSplitFooterSnapshotFrame(snapshot, row_columns, start_on_new_line, trailing_newline, pinned_render_offset, force);
 
         self.finalizeRender(deltaTime);
 
@@ -693,52 +695,23 @@ pub const CliRenderer = struct {
         self.addStatSample(u32, &self.statSamples.cellsUpdated, self.renderStats.cellsUpdated);
     }
 
-    // prepareSplitFooterFrame keeps split-footer append + repaint atomic while
-    // native SplitScrollback owns the publish cursor and footer placement.
-    fn prepareSplitFooterFrame(
+    fn prepareSplitFooterRepaintFrame(
         self: *CliRenderer,
-        output: []const u8,
         pinned_render_offset: u32,
         force: bool,
     ) void {
         resetActiveOutputBuffer();
 
         const previousRenderOffset = self.renderOffset;
-        const previousOutputColumn = self.splitScrollback.tail_column;
-
-        if (output.len > 0) {
-            self.splitScrollback.publishTextBridge(output, self.width, self.terminal.getCapabilities().unicode);
-        }
-
         const next_render_offset = self.splitScrollback.renderOffset(pinned_render_offset);
         const previousFooterTopLine: u32 = @max(previousRenderOffset + 1, @as(u32, 1));
         const targetFooterTopLine: u32 = @max(next_render_offset + 1, @as(u32, 1));
+        const clearTopLine: u32 = @min(previousFooterTopLine, targetFooterTopLine);
 
-        // If either output exists or a forced repaint is requested, emit explicit
-        // cursor/erase control sequences before composing the footer frame.
-        if (output.len > 0 or force) {
+        if (force or previousRenderOffset != next_render_offset) {
             var writer = OutputBufferWriter.writer();
-
-            if (output.len > 0) {
-                ansi.ANSI.moveToOutput(writer, 1, previousFooterTopLine) catch {};
-                writer.writeAll(ansi.ANSI.eraseBelowCursor) catch {};
-
-                if (pinned_render_offset > 0) {
-                    writer.print("\x1b[1;{d}r", .{pinned_render_offset}) catch {};
-                    moveToSplitOutputCursor(writer, previousRenderOffset, previousOutputColumn, self.width);
-                    writer.writeAll(output) catch {};
-                    writer.writeAll("\x1b[r") catch {};
-                } else {
-                    moveToSplitOutputCursor(writer, previousRenderOffset, previousOutputColumn, self.width);
-                    writer.writeAll(output) catch {};
-                }
-            }
-
             self.renderOffset = next_render_offset;
-
-            // Reclaim footer area at the target top and place cursor there so the
-            // following frame paint starts from a known clean footer surface.
-            ansi.ANSI.moveToOutput(writer, 1, targetFooterTopLine) catch {};
+            ansi.ANSI.moveToOutput(writer, 1, clearTopLine) catch {};
             writer.writeAll(ansi.ANSI.eraseBelowCursor) catch {};
             ansi.ANSI.moveToOutput(writer, 1, targetFooterTopLine) catch {};
         } else {
@@ -748,7 +721,13 @@ pub const CliRenderer = struct {
         self.prepareRenderFrame(force, false);
     }
 
-    fn writeSnapshotCommit(self: *CliRenderer, writer: anytype, snapshot: *const OptimizedBuffer) void {
+    fn writeSnapshotCommit(
+        self: *CliRenderer,
+        writer: anytype,
+        snapshot: *const OptimizedBuffer,
+        row_columns: u32,
+        trailing_newline: bool,
+    ) void {
         var currentFg: ?RGBA = null;
         var currentBg: ?RGBA = null;
         var currentAttributes: i32 = -1;
@@ -757,11 +736,12 @@ pub const CliRenderer = struct {
 
         const colorEpsilon: f32 = COLOR_EPSILON_DEFAULT;
         const hyperlinksEnabled = self.terminal.getCapabilities().hyperlinks;
+        const render_columns = @min(row_columns, snapshot.width);
 
         for (0..snapshot.height) |uy| {
             const y = @as(u32, @intCast(uy));
 
-            for (0..snapshot.width) |ux| {
+            for (0..render_columns) |ux| {
                 const x = @as(u32, @intCast(ux));
                 const cell = snapshot.get(x, y) orelse continue;
 
@@ -835,7 +815,11 @@ pub const CliRenderer = struct {
                 }
             }
 
-            writer.writeAll("\r\n") catch {};
+            const is_last_row = @as(u32, @intCast(uy + 1)) >= snapshot.height;
+            if (!is_last_row or trailing_newline) {
+                writer.writeAll("\r\n") catch {};
+            }
+
             writer.writeAll(ansi.ANSI.reset) catch {};
             currentFg = null;
             currentBg = null;
@@ -851,6 +835,9 @@ pub const CliRenderer = struct {
     fn prepareSplitFooterSnapshotFrame(
         self: *CliRenderer,
         snapshot: *const OptimizedBuffer,
+        row_columns: u32,
+        start_on_new_line: bool,
+        trailing_newline: bool,
         pinned_render_offset: u32,
         force: bool,
     ) void {
@@ -859,13 +846,14 @@ pub const CliRenderer = struct {
         const previousRenderOffset = self.renderOffset;
         const previousOutputColumn = self.splitScrollback.tail_column;
         const snapshot_has_content = snapshot.width > 0 and snapshot.height > 0;
-        const starts_mid_line = previousOutputColumn > 0;
+        const normalized_row_columns = @min(row_columns, snapshot.width);
+        const starts_mid_line = previousOutputColumn > 0 and start_on_new_line;
 
         if (snapshot_has_content) {
             if (starts_mid_line) {
                 self.splitScrollback.noteNewline();
             }
-            self.splitScrollback.publishSnapshotRows(snapshot.height, snapshot.width, self.width);
+            self.splitScrollback.publishSnapshotRows(snapshot.height, normalized_row_columns, self.width, trailing_newline);
         }
 
         const next_render_offset = self.splitScrollback.renderOffset(pinned_render_offset);
@@ -888,7 +876,7 @@ pub const CliRenderer = struct {
                     writer.writeAll("\r\n") catch {};
                 }
 
-                self.writeSnapshotCommit(writer, snapshot);
+                self.writeSnapshotCommit(writer, snapshot, normalized_row_columns, trailing_newline);
 
                 if (pinned_render_offset > 0) {
                     writer.writeAll("\x1b[r") catch {};
