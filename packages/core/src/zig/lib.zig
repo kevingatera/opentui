@@ -221,6 +221,10 @@ export fn setRenderOffset(rendererPtr: *renderer.CliRenderer, offset: u32) void 
     rendererPtr.setRenderOffset(offset);
 }
 
+export fn setSplitOutputColumn(rendererPtr: *renderer.CliRenderer, column: u32) void {
+    rendererPtr.setSplitOutputColumn(column);
+}
+
 export fn updateStats(rendererPtr: *renderer.CliRenderer, time: f64, fps: u32, frameCallbackTime: f64) void {
     rendererPtr.updateStats(time, fps, frameCallbackTime);
 }
@@ -268,9 +272,17 @@ export fn render(rendererPtr: *renderer.CliRenderer, force: bool) void {
     rendererPtr.render(force);
 }
 
-export fn renderSplitFooter(rendererPtr: *renderer.CliRenderer, outputPtr: [*]const u8, outputLen: usize, nextRenderOffset: u32, force: bool) void {
+export fn renderSplitFooter(
+    rendererPtr: *renderer.CliRenderer,
+    outputPtr: [*]const u8,
+    outputLen: usize,
+    pinnedRenderOffset: u32,
+    nextRenderOffset: u32,
+    nextOutputColumn: u32,
+    force: bool,
+) void {
     const output = outputPtr[0..outputLen];
-    rendererPtr.renderSplitFooter(output, nextRenderOffset, force);
+    rendererPtr.renderSplitFooter(output, pinnedRenderOffset, nextRenderOffset, nextOutputColumn, force);
 }
 
 export fn createOptimizedBuffer(width: u32, height: u32, respectAlpha: bool, widthMethod: u8, idPtr: [*]const u8, idLen: usize) ?*buffer.OptimizedBuffer {

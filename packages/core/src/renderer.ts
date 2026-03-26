@@ -36,6 +36,7 @@ import {
   isPixelResolutionResponse,
   parsePixelResolution,
 } from "./lib/terminal-capability-detection.js"
+import { SplitFooterScrollbackPublisher } from "./lib/split-footer-scrollback-publisher.js"
 import { type Clock, type TimerHandle, SystemClock } from "./lib/clock.js"
 import { StdinParser, type StdinEvent, type StdinParserProtocolContext } from "./lib/stdin-parser.js"
 
@@ -607,15 +608,15 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private clipboard: Clipboard
 
   private _splitHeight: number = 0
-  private splitPinnedRenderOffset: number = 0
-  private splitPublishedRows: number = 0
   private renderOffset: number = 0
+  private splitOutputColumn: number = 0
 
   private _terminalWidth: number = 0
   private _terminalHeight: number = 0
   private _terminalIsSetup: boolean = false
 
   private externalOutputQueue = new ExternalOutputQueue()
+  private splitFooterPublisher: SplitFooterScrollbackPublisher | null = null
   private externalOutputEncoder = new TextEncoder()
   private realStdoutWrite: (chunk: any, encoding?: any, callback?: any) => boolean
 
@@ -735,8 +736,6 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.width = initialGeometry.renderWidth
     this.height = initialGeometry.renderHeight
     this._splitHeight = initialGeometry.effectiveFooterHeight
-    this.splitPinnedRenderOffset = initialGeometry.renderOffset
-    this.splitPublishedRows = 0
     this.renderOffset = screenMode === "split-footer" ? 0 : initialGeometry.renderOffset
 
     this._footerHeight = footerHeight
@@ -1183,6 +1182,17 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
     this._externalOutputMode = mode
     this.stdout.write = mode === "capture-stdout" ? this.interceptStdoutWrite : this.realStdoutWrite
+
+    if (this._screenMode === "split-footer" && this._splitHeight > 0 && mode === "capture-stdout") {
+      this.resetSplitFooterPublisher(previousMode === "passthrough" ? this.getSplitPinnedRenderOffset() : 0)
+      return
+    }
+
+    if (mode !== "capture-stdout") {
+      this.splitFooterPublisher?.reset()
+    }
+
+    this.syncSplitFooterState()
   }
 
   public get liveRequestCount(): number {
@@ -1235,119 +1245,58 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     return true
   }
 
-  private estimateOutputRowAdvance(output: string): number {
-    if (output.length === 0) {
-      return 0
-    }
-
-    const width = Math.max(this._terminalWidth, 1)
-    let rows = 0
-    let column = 0
-
-    for (let index = 0; index < output.length; index++) {
-      const char = output[index]
-
-      if (char === "\u001b") {
-        const nextChar = output[index + 1]
-        if (nextChar === "[") {
-          index += 2
-          while (index < output.length) {
-            const code = output.charCodeAt(index)
-            if (code >= 0x40 && code <= 0x7e) {
-              break
-            }
-            index += 1
-          }
-          continue
-        }
-
-        if (nextChar === "]") {
-          index += 2
-          while (index < output.length) {
-            const currentChar = output[index]
-            if (currentChar === "\u0007") {
-              break
-            }
-
-            if (currentChar === "\u001b" && output[index + 1] === "\\") {
-              index += 1
-              break
-            }
-
-            index += 1
-          }
-          continue
-        }
-
-        continue
-      }
-
-      if (char === "\r") {
-        column = 0
-        continue
-      }
-
-      if (char === "\n") {
-        rows += 1
-        column = 0
-        continue
-      }
-
-      const codePoint = output.codePointAt(index)
-      if (codePoint !== undefined && codePoint > 0xffff) {
-        index += 1
-      }
-
-      if (column >= width) {
-        rows += 1
-        column = 0
-      }
-
-      column += 1
-    }
-
-    return rows
+  private getSplitPinnedRenderOffset(): number {
+    return this._screenMode === "split-footer" ? Math.max(this._terminalHeight - this._splitHeight, 0) : 0
   }
 
-  private resolveSplitRenderOffset(nextPinnedRenderOffset: number, enteringSplit: boolean): number {
-    if (nextPinnedRenderOffset <= 0) {
-      this.splitPublishedRows = 0
-      return 0
-    }
-
-    if (enteringSplit) {
-      this.splitPublishedRows = 0
-      return this._externalOutputMode === "capture-stdout" ? 0 : nextPinnedRenderOffset
-    }
-
-    const currentlyPinned = this.renderOffset >= this.splitPinnedRenderOffset
-    if (currentlyPinned) {
-      return nextPinnedRenderOffset
-    }
-
-    return Math.min(this.renderOffset, nextPinnedRenderOffset)
+  private updateSplitFooterNativeState(): void {
+    this.lib.setRenderOffset(this.rendererPtr, this.renderOffset)
+    this.lib.setSplitOutputColumn(this.rendererPtr, this.splitOutputColumn)
   }
 
-  private calculateNextSplitRenderOffset(normalizedOutput: string): number {
-    if (this._splitHeight === 0) {
-      return 0
+  private resetSplitFooterPublisher(baseRows: number = 0): void {
+    const pinnedRenderOffset = this.getSplitPinnedRenderOffset()
+
+    if (!this.splitFooterPublisher) {
+      this.splitFooterPublisher = new SplitFooterScrollbackPublisher(this._terminalWidth, pinnedRenderOffset, baseRows)
+    } else {
+      this.splitFooterPublisher.configure(this._terminalWidth, pinnedRenderOffset)
+      this.splitFooterPublisher.reset(baseRows)
     }
 
-    if (this._externalOutputMode !== "capture-stdout") {
-      return this.renderOffset
+    const state = this.splitFooterPublisher.getState()
+    this.renderOffset = state.renderOffset
+    this.splitOutputColumn = state.outputColumn
+    this.updateSplitFooterNativeState()
+  }
+
+  private syncSplitFooterPublisherGeometry(): void {
+    if (!this.splitFooterPublisher) return
+
+    this.splitFooterPublisher.configure(this._terminalWidth, this.getSplitPinnedRenderOffset())
+    const state = this.splitFooterPublisher.getState()
+    this.renderOffset = state.renderOffset
+    this.splitOutputColumn = state.outputColumn
+  }
+
+  private syncSplitFooterState(): void {
+    const splitActive = this._screenMode === "split-footer" && this._splitHeight > 0
+
+    if (!splitActive) {
+      this.renderOffset = 0
+      this.splitOutputColumn = 0
+      this.updateSplitFooterNativeState()
+      return
     }
 
-    if (normalizedOutput.length === 0 || this.renderOffset >= this.splitPinnedRenderOffset) {
-      return this.renderOffset
+    if (this._externalOutputMode === "capture-stdout") {
+      this.syncSplitFooterPublisherGeometry()
+    } else {
+      this.renderOffset = this.getSplitPinnedRenderOffset()
+      this.splitOutputColumn = 0
     }
 
-    const rowAdvance = this.estimateOutputRowAdvance(normalizedOutput)
-    if (rowAdvance <= 0) {
-      return this.renderOffset
-    }
-
-    this.splitPublishedRows += rowAdvance
-    return Math.min(this.renderOffset + rowAdvance, this.splitPinnedRenderOffset)
+    this.updateSplitFooterNativeState()
   }
 
   private applyScreenMode(screenMode: ScreenMode, emitResize: boolean = true, requestRender: boolean = true): void {
@@ -1368,7 +1317,6 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     const prevUseAlternateScreen = prevScreenMode === "alternate-screen"
     const nextUseAlternateScreen = screenMode === "alternate-screen"
     const terminalScreenModeChanged = this._terminalIsSetup && prevUseAlternateScreen !== nextUseAlternateScreen
-    const enteringSplitFooter = prevScreenMode !== "split-footer" && nextSplitHeight > 0
     const leavingSplitFooter = prevSplitHeight > 0 && nextSplitHeight === 0
 
     if (this._terminalIsSetup && leavingSplitFooter) {
@@ -1393,14 +1341,25 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
     this._screenMode = screenMode
     this._splitHeight = nextSplitHeight
-    this.splitPinnedRenderOffset = nextGeometry.renderOffset
-    this.renderOffset =
-      nextSplitHeight > 0 ? this.resolveSplitRenderOffset(this.splitPinnedRenderOffset, enteringSplitFooter) : 0
     this.width = nextGeometry.renderWidth
     this.height = nextGeometry.renderHeight
 
-    this.lib.setRenderOffset(this.rendererPtr, this.renderOffset)
     this.lib.resizeRenderer(this.rendererPtr, this.width, this.height)
+
+    if (this._screenMode === "split-footer" && this._externalOutputMode === "capture-stdout") {
+      if (prevScreenMode !== "split-footer") {
+        this.resetSplitFooterPublisher(0)
+      } else if (this.splitFooterPublisher) {
+        this.syncSplitFooterPublisherGeometry()
+        this.updateSplitFooterNativeState()
+      } else {
+        this.resetSplitFooterPublisher(0)
+      }
+    } else {
+      this.splitFooterPublisher?.reset()
+      this.syncSplitFooterState()
+    }
+
     this.nextRenderBuffer = this.lib.getNextBuffer(this.rendererPtr)
     this.currentRenderBuffer = this.lib.getCurrentBuffer(this.rendererPtr)
 
@@ -2030,7 +1989,6 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private processResize(width: number, height: number): void {
     if (width === this._terminalWidth && height === this._terminalHeight) return
 
-    const wasSplitPinned = this._splitHeight > 0 && this.renderOffset >= this.splitPinnedRenderOffset
     const previousGeometry = calculateRenderGeometry(
       this._screenMode,
       this._terminalWidth,
@@ -2066,21 +2024,22 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     }
 
     this._splitHeight = nextGeometry.effectiveFooterHeight
-    this.splitPinnedRenderOffset = nextGeometry.renderOffset
-    if (this._splitHeight > 0) {
-      this.renderOffset = wasSplitPinned
-        ? this.splitPinnedRenderOffset
-        : Math.min(this.renderOffset, this.splitPinnedRenderOffset)
-    } else {
-      this.renderOffset = 0
-      this.splitPublishedRows = 0
-    }
     this.width = nextGeometry.renderWidth
     this.height = nextGeometry.renderHeight
 
-    this.lib.setRenderOffset(this.rendererPtr, this.renderOffset)
-
     this.lib.resizeRenderer(this.rendererPtr, this.width, this.height)
+
+    if (this._screenMode === "split-footer" && this._externalOutputMode === "capture-stdout") {
+      if (!this.splitFooterPublisher) {
+        this.resetSplitFooterPublisher(0)
+      } else {
+        this.syncSplitFooterPublisherGeometry()
+        this.updateSplitFooterNativeState()
+      }
+    } else {
+      this.syncSplitFooterState()
+    }
+
     this.nextRenderBuffer = this.lib.getNextBuffer(this.rendererPtr)
     this.currentRenderBuffer = this.lib.getCurrentBuffer(this.rendererPtr)
     this._console.resize(this.width, this.height)
@@ -2463,6 +2422,13 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.stdinParser = null
     this.oscSubscribers.clear()
     this._console.destroy()
+    this.splitFooterPublisher?.destroy()
+    this.splitFooterPublisher = null
+    this.externalOutputMode = "passthrough"
+
+    if (this._splitHeight > 0) {
+      this.flushStdoutCache(this._splitHeight, true)
+    }
 
     this.lib.destroyRenderer(this.rendererPtr)
     rendererTracker.removeRenderer(this)
@@ -2605,12 +2571,40 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.renderingNative = true
     if (this._splitHeight > 0) {
       const output = this.externalOutputQueue.claim()
-      const normalizedOutput = output.includes("\n") ? output.replace(/\r?\n/g, "\r\n") : output
-      const outputBytes = this.externalOutputEncoder.encode(normalizedOutput)
-      const nextRenderOffset = this.calculateNextSplitRenderOffset(normalizedOutput)
-      const force = outputBytes.length > 0 || nextRenderOffset !== this.renderOffset
-      this.lib.renderSplitFooter(this.rendererPtr, outputBytes, nextRenderOffset, force)
-      this.renderOffset = nextRenderOffset
+
+      if (this._externalOutputMode === "capture-stdout") {
+        if (!this.splitFooterPublisher) {
+          this.resetSplitFooterPublisher(0)
+        }
+
+        const nextState = this.splitFooterPublisher!.append(output)
+        const outputBytes = this.externalOutputEncoder.encode(output)
+        const force =
+          outputBytes.length > 0 ||
+          nextState.renderOffset !== this.renderOffset ||
+          nextState.outputColumn !== this.splitOutputColumn
+
+        this.lib.renderSplitFooter(
+          this.rendererPtr,
+          outputBytes,
+          this.getSplitPinnedRenderOffset(),
+          nextState.renderOffset,
+          nextState.outputColumn,
+          force,
+        )
+
+        this.renderOffset = nextState.renderOffset
+        this.splitOutputColumn = nextState.outputColumn
+      } else {
+        this.lib.renderSplitFooter(
+          this.rendererPtr,
+          new Uint8Array(0),
+          this.getSplitPinnedRenderOffset(),
+          this.renderOffset,
+          this.splitOutputColumn,
+          false,
+        )
+      }
     } else {
       this.lib.render(this.rendererPtr, false)
     }

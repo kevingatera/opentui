@@ -1039,13 +1039,19 @@ test "renderer - renderSplitFooter writes append before footer repaint in one ou
     try next_buffer.drawText("FOOT", 0, 0, fg, bg, 0);
 
     const appended = "append-line\n";
-    cli_renderer.renderSplitFooter(appended, 2, true);
+    cli_renderer.renderSplitFooter(appended, 2, 2, 0, true);
 
     const output = cli_renderer.getLastOutputForTest();
     const append_index = std.mem.indexOf(u8, output, appended);
     const scroll_region_set_index = std.mem.indexOf(u8, output, "\x1b[1;2r");
     const scroll_region_reset_index = std.mem.indexOf(u8, output, "\x1b[r");
-    const footer_clear_index = std.mem.indexOf(u8, output, "\x1b[3;1H\x1b[J");
+    const footer_clear_index = if (scroll_region_reset_index) |reset_start|
+        if (std.mem.indexOf(u8, output[reset_start + "\x1b[r".len ..], "\x1b[3;1H\x1b[J")) |relative|
+            reset_start + "\x1b[r".len + relative
+        else
+            null
+    else
+        null;
     const sync_index = std.mem.indexOf(u8, output, ansi.ANSI.syncSet);
     const footer_move_after_sync = if (sync_index) |sync_start|
         std.mem.indexOf(u8, output[sync_start + ansi.ANSI.syncSet.len ..], "\x1b[3;1H")
@@ -1060,7 +1066,6 @@ test "renderer - renderSplitFooter writes append before footer repaint in one ou
     try std.testing.expect(footer_move_after_sync != null);
     try std.testing.expect(scroll_region_set_index.? < append_index.?);
     try std.testing.expect(append_index.? < scroll_region_reset_index.?);
-    try std.testing.expect(scroll_region_reset_index.? < footer_clear_index.?);
     try std.testing.expect(footer_clear_index.? < sync_index.?);
 
     var sync_count: usize = 0;
@@ -1096,16 +1101,16 @@ test "renderer - renderSplitFooter settling phase moves footer downward" {
     try next_buffer.drawText("FOOT", 0, 0, fg, bg, 0);
 
     const appended = "settle\n";
-    cli_renderer.renderSplitFooter(appended, 1, true);
+    cli_renderer.renderSplitFooter(appended, 3, 2, 0, true);
 
     const output = cli_renderer.getLastOutputForTest();
     const settling_clear_index = std.mem.indexOf(u8, output, "\x1b[1;1H\x1b[J");
     const append_index = std.mem.indexOf(u8, output, appended);
     const scroll_region_reset_index = std.mem.indexOf(u8, output, "\x1b[r");
-    const footer_clear_index = std.mem.indexOf(u8, output, "\x1b[2;1H\x1b[J");
+    const footer_clear_index = std.mem.indexOf(u8, output, "\x1b[3;1H\x1b[J");
     const sync_index = std.mem.indexOf(u8, output, ansi.ANSI.syncSet);
 
-    try std.testing.expectEqual(@as(u32, 1), cli_renderer.renderOffset);
+    try std.testing.expectEqual(@as(u32, 2), cli_renderer.renderOffset);
     try std.testing.expect(settling_clear_index != null);
     try std.testing.expect(append_index != null);
     try std.testing.expect(scroll_region_reset_index == null);

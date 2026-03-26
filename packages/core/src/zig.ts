@@ -158,6 +158,10 @@ function getOpenTUILib(libPath?: string) {
       args: ["ptr", "u32"],
       returns: "void",
     },
+    setSplitOutputColumn: {
+      args: ["ptr", "u32"],
+      returns: "void",
+    },
     updateStats: {
       args: ["ptr", "f64", "u32", "f64"],
       returns: "void",
@@ -171,7 +175,7 @@ function getOpenTUILib(libPath?: string) {
       returns: "void",
     },
     renderSplitFooter: {
-      args: ["ptr", "ptr", "usize", "u32", "bool"],
+      args: ["ptr", "ptr", "usize", "u32", "u32", "u32", "bool"],
       returns: "void",
     },
     getNextBuffer: {
@@ -1389,10 +1393,18 @@ export interface RenderLib {
   setUseThread: (renderer: Pointer, useThread: boolean) => void
   setBackgroundColor: (renderer: Pointer, color: RGBA) => void
   setRenderOffset: (renderer: Pointer, offset: number) => void
+  setSplitOutputColumn: (renderer: Pointer, column: number) => void
   updateStats: (renderer: Pointer, time: number, fps: number, frameCallbackTime: number) => void
   updateMemoryStats: (renderer: Pointer, heapUsed: number, heapTotal: number, arrayBuffers: number) => void
   render: (renderer: Pointer, force: boolean) => void
-  renderSplitFooter: (renderer: Pointer, output: Uint8Array, nextRenderOffset: number, force: boolean) => void
+  renderSplitFooter: (
+    renderer: Pointer,
+    output: Uint8Array,
+    pinnedRenderOffset: number,
+    nextRenderOffset: number,
+    nextOutputColumn: number,
+    force: boolean,
+  ) => void
   getNextBuffer: (renderer: Pointer) => OptimizedBuffer
   getCurrentBuffer: (renderer: Pointer) => OptimizedBuffer
   createOptimizedBuffer: (
@@ -2034,6 +2046,10 @@ class FFIRenderLib implements RenderLib {
     this.opentui.symbols.setRenderOffset(renderer, offset)
   }
 
+  public setSplitOutputColumn(renderer: Pointer, column: number): void {
+    this.opentui.symbols.setSplitOutputColumn(renderer, column)
+  }
+
   public updateStats(renderer: Pointer, time: number, fps: number, frameCallbackTime: number) {
     this.opentui.symbols.updateStats(renderer, time, fps, frameCallbackTime)
   }
@@ -2425,9 +2441,24 @@ class FFIRenderLib implements RenderLib {
     this.opentui.symbols.render(renderer, force)
   }
 
-  public renderSplitFooter(renderer: Pointer, output: Uint8Array, nextRenderOffset: number, force: boolean): void {
+  public renderSplitFooter(
+    renderer: Pointer,
+    output: Uint8Array,
+    pinnedRenderOffset: number,
+    nextRenderOffset: number,
+    nextOutputColumn: number,
+    force: boolean,
+  ): void {
     const outputForPointer = output.length === 0 ? this.emptyOutputBuffer : output
-    this.opentui.symbols.renderSplitFooter(renderer, ptr(outputForPointer), output.length, nextRenderOffset, force)
+    this.opentui.symbols.renderSplitFooter(
+      renderer,
+      ptr(outputForPointer),
+      output.length,
+      pinnedRenderOffset,
+      nextRenderOffset,
+      nextOutputColumn,
+      force,
+    )
   }
 
   public createOptimizedBuffer(
