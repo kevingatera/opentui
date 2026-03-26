@@ -1,117 +1,284 @@
 import {
   BoxRenderable,
   CliRenderEvents,
-  createCliRenderer,
-  InputRenderable,
-  InputRenderableEvents,
   TextRenderable,
+  TextareaRenderable,
+  createCliRenderer,
   type CliRenderer,
   type KeyEvent,
   type RenderContext,
   type ScrollbackComponent,
-  type ScrollbackSnapshot,
   type ThemeMode,
 } from "../index.js"
 import { setupCommonDemoKeys } from "./lib/standalone-keys.js"
 
-const DEFAULT_FOOTER_HEIGHT = 14
-const MIN_FOOTER_HEIGHT = 10
-const MIN_MAIN_SCREEN_HEIGHT = 6
+const DEFAULT_FOOTER_HEIGHT = 11
+const MIN_FOOTER_HEIGHT = 8
+const MIN_MAIN_SCREEN_HEIGHT = 5
 
-type ChatRole = "user" | "assistant" | "system"
+const DEFAULT_STREAM_INTERVAL = 1600
+const MIN_STREAM_INTERVAL = 180
+const MAX_STREAM_INTERVAL = 2000
+const STREAM_INTERVAL_STEP = 80
+
+interface WallLyricPassage {
+  song: string
+  lines: string[]
+}
+
+const WALL_STREAM_PASSAGES: WallLyricPassage[] = [
+  {
+    song: "In the Flesh?",
+    lines: [
+      "So ya",
+      "Thought ya",
+      "Might like to go to the show",
+      "To feel the warm thrill of confusion",
+      "That space cadet glow",
+    ],
+  },
+  {
+    song: "The Thin Ice",
+    lines: [
+      "Mamma loves her baby",
+      "And Daddy loves you too",
+      "And the sea may look warm to you babe",
+      "And the sky may look blue",
+    ],
+  },
+  {
+    song: "Another Brick in the Wall (Part 2)",
+    lines: [
+      "We don't need no education",
+      "We don't need no thought control",
+      "No dark sarcasm in the class room",
+      "Teacher leave us kids alone",
+    ],
+  },
+  {
+    song: "Mother",
+    lines: [
+      "Mother should I build the wall",
+      "Mother should I trust the government",
+      "Mother will they put me in the firing line",
+      "Oooh is it just a waste of time",
+    ],
+  },
+  {
+    song: "Goodbye Blue Sky",
+    lines: [
+      "Did, did, did, did you see the frightened ones",
+      "Did, did, did, did you hear the falling bombs",
+      "When the promise of a brave new world unfurled beneath a clear blue sky",
+      "The flames are all long gone",
+      "But the pain lingers on",
+    ],
+  },
+  {
+    song: "Empty Spaces",
+    lines: [
+      "What shall we use to fill the empty spaces where we used to talk",
+      "Shall we set out across this sea of faces in search of more and more applause",
+      "But never relax at all",
+      "With our backs to the wall",
+    ],
+  },
+  {
+    song: "One of My Turns",
+    lines: [
+      "Day after day, love turns grey",
+      "Nothing is very much fun anymore",
+      "Would you like to watch TV?",
+      "Would you like something to eat?",
+      "Why are you running away?",
+    ],
+  },
+  {
+    song: "Goodbye Cruel World",
+    lines: ["Goodbye cruel world", "I'm leaving you today", "Goodbye"],
+  },
+  {
+    song: "Hey You",
+    lines: [
+      "Hey you! out there in the cold",
+      "getting lonely, getting old, can you feel me",
+      "Hey you! with your ears against the wall",
+      "Waiting for someone to call out would you touch me",
+      "Together we stand, divided we fall",
+    ],
+  },
+  {
+    song: "Nobody Home",
+    lines: [
+      "I've got a little black book with my poems in",
+      "I've got thirteen channels on the TV to choose from",
+      "When I try to get through on the telephone to you there'll be nobody home",
+      "Ooooh Babe when I pick up the phone",
+      "There's still nobody home",
+    ],
+  },
+  {
+    song: "Comfortably Numb",
+    lines: [
+      "Hello, is there anybody in there",
+      "just nod if you can hear me",
+      "There is no pain, you are receding",
+      "The child is grown",
+      "The dream is gone",
+      "And I have become comfortably numb",
+    ],
+  },
+  {
+    song: "The Trial",
+    lines: [
+      "Good morning Worm your honour",
+      "The prisoner who now stands before you",
+      "Was caught red handed showing feelings",
+      "In all my years of judging I have never heard before of someone more deserving",
+      "Tear down the wall",
+    ],
+  },
+  {
+    song: "Outside the Wall",
+    lines: [
+      "All alone, or in twos",
+      "The ones who really love you walk up and down outside the wall",
+      "And when they've given you their all",
+      "Some stagger and fall after all it's not easy",
+      "Banging your heart against some mad bugger's wall",
+    ],
+  },
+]
+
+const WALL_DISK_ONE_TRACKS = [
+  "In the Flesh?",
+  "The Thin Ice",
+  "Another Brick in the Wall (Part 1)",
+  "The Happiest Days of Our Lives",
+  "Another Brick in the Wall (Part 2)",
+  "Mother",
+  "Goodbye Blue Sky",
+  "Empty Spaces",
+  "Young Lust",
+  "One of My Turns",
+  "Don't Leave Me Now",
+  "Another Brick in the Wall (Part 3)",
+  "Goodbye Cruel World",
+]
+
+const WALL_DISK_TWO_TRACKS = [
+  "Hey You",
+  "Is There Anybody Out There?",
+  "Nobody Home",
+  "Vera",
+  "Bring the Boys Back Home",
+  "Comfortably Numb",
+  "The Show Must Go On",
+  "In the Flesh",
+  "Run Like Hell",
+  "Waiting for the Worms",
+  "Stop",
+  "The Trial",
+  "Outside the Wall",
+]
+
+const WALL_ASSISTANT_LINES = [
+  "Hello, is there anybody in there\njust nod if you can hear me",
+  "Hey you! with your ears against the wall\nWaiting for someone to call out would you touch me",
+  "The show must go on\nGoodbye cruel world",
+  "All in all you're just another brick in the wall",
+  "All alone, or in twos\nThe ones who really love you walk up and down outside the wall",
+]
+
+type DemoMode = "split-footer" | "fullscreen"
+type MessageRole = "user" | "assistant" | "system" | "stream"
 
 interface DemoPalette {
   appBackground: string
-  footerBorder: string
-  footerBackground: string
-  headerText: string
+  shellBackground: string
+  shellBorder: string
+  titleText: string
+  modeText: string
   helpText: string
   statusText: string
-  typingText: string
-  inputFrameBorder: string
-  inputFrameBackground: string
-  promptText: string
+  streamHeadingText: string
+  streamText: string
+  composerBorder: string
+  composerBackground: string
+  composerHint: string
   inputPlaceholder: string
   inputText: string
   inputFocusedText: string
   inputFocusedBackground: string
   inputCursor: string
-  chatUserBorder: string
-  chatAssistantBorder: string
-  chatSystemBorder: string
-  chatBodyText: string
-  bulletBorder: string
-  bulletBodyText: string
-  toolBorder: string
-  toolBodyText: string
+  controlText: string
+  messageText: string
+  userBorder: string
+  assistantBorder: string
+  systemBorder: string
+  streamBorder: string
 }
 
 const DARK_PALETTE: DemoPalette = {
-  appBackground: "#091324",
-  footerBorder: "#395172",
-  footerBackground: "#10243f",
-  headerText: "#f8fafc",
-  helpText: "#bfd3ea",
-  statusText: "#8fb3d8",
-  typingText: "#f5c063",
-  inputFrameBorder: "#5d7ea6",
-  inputFrameBackground: "#0c1e35",
-  promptText: "#7ef0c1",
-  inputPlaceholder: "#5f7894",
-  inputText: "#e2f1ff",
-  inputFocusedText: "#ffffff",
-  inputFocusedBackground: "#0f2744",
-  inputCursor: "#f8fafc",
-  chatUserBorder: "#67c7a2",
-  chatAssistantBorder: "#7ba7d8",
-  chatSystemBorder: "#d7a46c",
-  chatBodyText: "#f1f7ff",
-  bulletBorder: "#6293c2",
-  bulletBodyText: "#dbeaf8",
-  toolBorder: "#8a7cd3",
-  toolBodyText: "#eee7ff",
+  appBackground: "#0A1222",
+  shellBackground: "#0F1F39",
+  shellBorder: "#4C6D94",
+  titleText: "#F6FAFF",
+  modeText: "#A7D4FF",
+  helpText: "#C3D9F0",
+  statusText: "#D5E7FA",
+  streamHeadingText: "#66CCFF",
+  streamText: "#CBE9FF",
+  composerBorder: "#6A89AD",
+  composerBackground: "#112642",
+  composerHint: "#8CB6DF",
+  inputPlaceholder: "#5F7FA0",
+  inputText: "#E7F2FF",
+  inputFocusedText: "#FFFFFF",
+  inputFocusedBackground: "#153153",
+  inputCursor: "#FFFFFF",
+  controlText: "#A5C9EC",
+  messageText: "#EDF6FF",
+  userBorder: "#68C79E",
+  assistantBorder: "#78A8DA",
+  systemBorder: "#D9A568",
+  streamBorder: "#4FB8F5",
 }
 
 const LIGHT_PALETTE: DemoPalette = {
-  appBackground: "#ecf3fb",
-  footerBorder: "#87a3bf",
-  footerBackground: "#f7fbff",
-  headerText: "#1f3852",
-  helpText: "#395876",
-  statusText: "#496988",
-  typingText: "#8c5b17",
-  inputFrameBorder: "#9ab0c6",
-  inputFrameBackground: "#ffffff",
-  promptText: "#0a7a4f",
-  inputPlaceholder: "#8298ad",
-  inputText: "#1d3348",
-  inputFocusedText: "#13283b",
-  inputFocusedBackground: "#f1f7fe",
-  inputCursor: "#1f3852",
-  chatUserBorder: "#1e9a66",
-  chatAssistantBorder: "#366fa8",
-  chatSystemBorder: "#b27d2a",
-  chatBodyText: "#1f3852",
-  bulletBorder: "#4177a8",
-  bulletBodyText: "#294766",
-  toolBorder: "#6550b5",
-  toolBodyText: "#3f2f7d",
+  appBackground: "#EEF4FB",
+  shellBackground: "#FBFDFF",
+  shellBorder: "#90A8C1",
+  titleText: "#17324F",
+  modeText: "#245D93",
+  helpText: "#395B7D",
+  statusText: "#23435F",
+  streamHeadingText: "#1F5F97",
+  streamText: "#2D5D87",
+  composerBorder: "#A5B8CB",
+  composerBackground: "#FFFFFF",
+  composerHint: "#4B6784",
+  inputPlaceholder: "#7A93AB",
+  inputText: "#1A334D",
+  inputFocusedText: "#13293F",
+  inputFocusedBackground: "#F3F8FF",
+  inputCursor: "#1B3550",
+  controlText: "#4A6481",
+  messageText: "#19334F",
+  userBorder: "#1F9968",
+  assistantBorder: "#356FA8",
+  systemBorder: "#B37F2D",
+  streamBorder: "#2E73AF",
 }
 
 function resolveDemoPalette(themeMode: ThemeMode | null): DemoPalette {
   return themeMode === "light" ? LIGHT_PALETTE : DARK_PALETTE
 }
 
-interface ChatMessageEntry {
-  role: ChatRole
+interface BoxMessageEntry {
+  role: MessageRole
   text: string
   timestamp: Date
-  palette: DemoPalette
-}
-
-interface BulletListEntry {
-  title: string
-  items: string[]
   palette: DemoPalette
 }
 
@@ -126,6 +293,8 @@ interface RenderableSnapshotEntry {
   height: number
   build: (context: RenderContext) => BoxRenderable
 }
+
+let snapshotNodeCounter = 0
 
 function formatTimestamp(timestamp: Date): string {
   const hh = timestamp.getHours().toString().padStart(2, "0")
@@ -215,130 +384,146 @@ function wrapText(text: string, width: number): string[] {
   return wrapped.length > 0 ? wrapped : [""]
 }
 
-function roleBorderColor(role: ChatRole, palette: DemoPalette): string {
+function roleBorderColor(role: MessageRole, palette: DemoPalette): string {
   switch (role) {
     case "user":
-      return palette.chatUserBorder
+      return palette.userBorder
     case "assistant":
-      return palette.chatAssistantBorder
+      return palette.assistantBorder
     case "system":
-      return palette.chatSystemBorder
+      return palette.systemBorder
+    case "stream":
+      return palette.streamBorder
   }
 }
 
-function createSnapshot(root: BoxRenderable, width: number, height: number): ScrollbackSnapshot {
-  return {
-    root,
-    width,
-    height,
+function roleLabel(role: MessageRole): string {
+  switch (role) {
+    case "user":
+      return "YOU"
+    case "assistant":
+      return "ASSISTANT"
+    case "system":
+      return "SYSTEM"
+    case "stream":
+      return "STREAM LIVE"
   }
 }
 
-const chatMessageComponent: ScrollbackComponent<ChatMessageEntry> = {
+function roleHeadingColor(role: MessageRole, palette: DemoPalette): string {
+  switch (role) {
+    case "user":
+      return palette.userBorder
+    case "assistant":
+      return palette.assistantBorder
+    case "system":
+      return palette.systemBorder
+    case "stream":
+      return palette.streamHeadingText
+  }
+}
+
+function roleHeadingAttributes(role: MessageRole): number {
+  if (role === "stream") {
+    return 5
+  }
+
+  return 1
+}
+
+function roleBodyColor(role: MessageRole, palette: DemoPalette): string {
+  switch (role) {
+    case "system":
+      return palette.helpText
+    case "stream":
+      return palette.streamText
+    default:
+      return palette.messageText
+  }
+}
+
+const simpleTextBoxComponent: ScrollbackComponent<BoxMessageEntry> = {
   scrollback: (entry, ctx) => {
-    const roleLabel = entry.role.toUpperCase()
-    const cardWidth = Math.max(16, Math.min(ctx.width, 80))
-    const bodyWidth = Math.max(1, cardWidth - 2)
-    const wrappedMessage = wrapText(entry.text, bodyWidth)
-    const cardHeight = Math.max(3, wrappedMessage.length + 2)
+    const maxTextWidth = Math.max(18, Math.min(ctx.width - 4, 90))
+    const headingCore = truncateToWidth(
+      `${roleLabel(entry.role)} | ${formatTimestamp(entry.timestamp)}`,
+      Math.max(1, maxTextWidth - 2),
+    )
+    const headingLine = ` ${headingCore}`
+    const bodyIndent = entry.role === "stream" ? " > " : " "
+    const bodyWrapWidth = Math.max(1, maxTextWidth - bodyIndent.length)
+    const bodyLines = wrapText(entry.text, bodyWrapWidth).map((line) => `${bodyIndent}${line}`)
+    const longestBody = bodyLines.reduce((maxWidth, line) => Math.max(maxWidth, line.length), 1)
+    const longestLine = Math.max(headingLine.length, longestBody)
 
-    const card = new BoxRenderable(ctx.renderContext, {
-      id: `chat-card-${entry.role}-${entry.timestamp.getTime()}`,
+    const textWidth = Math.min(maxTextWidth, Math.max(2, longestLine + 1))
+    const boxWidth = Math.min(ctx.width, Math.max(4, textWidth + 1))
+    const boxHeight = Math.max(4, bodyLines.length + 3)
+
+    const box = new BoxRenderable(ctx.renderContext, {
+      id: `split-simple-box-${snapshotNodeCounter++}`,
       position: "absolute",
       left: 0,
       top: 0,
-      width: cardWidth,
-      height: cardHeight,
-      border: true,
-      borderStyle: "single",
+      width: boxWidth,
+      height: boxHeight,
+      border: ["left"],
+      borderStyle: "double",
       borderColor: roleBorderColor(entry.role, entry.palette),
       backgroundColor: "transparent",
-      title: `${roleLabel} ${formatTimestamp(entry.timestamp)}`,
     })
 
-    const body = new TextRenderable(ctx.renderContext, {
-      id: `chat-card-text-${entry.timestamp.getTime()}`,
+    const headingText = new TextRenderable(ctx.renderContext, {
+      id: `split-simple-heading-${snapshotNodeCounter++}`,
       position: "absolute",
       left: 1,
       top: 1,
-      width: bodyWidth,
-      height: Math.max(1, cardHeight - 2),
-      content: wrappedMessage.join("\n"),
-      fg: entry.palette.chatBodyText,
+      width: Math.max(1, boxWidth - 1),
+      height: 1,
+      content: headingLine,
+      fg: roleHeadingColor(entry.role, entry.palette),
+      attributes: roleHeadingAttributes(entry.role),
     })
 
-    card.add(body)
+    const bodyText = new TextRenderable(ctx.renderContext, {
+      id: `split-simple-body-${snapshotNodeCounter++}`,
+      position: "absolute",
+      left: 1,
+      top: 2,
+      width: Math.max(1, boxWidth - 1),
+      height: Math.max(1, boxHeight - 3),
+      content: bodyLines.join("\n"),
+      fg: roleBodyColor(entry.role, entry.palette),
+    })
 
-    return createSnapshot(card, cardWidth, cardHeight)
-  },
-}
+    box.add(headingText)
+    box.add(bodyText)
 
-const bulletListComponent: ScrollbackComponent<BulletListEntry> = {
-  scrollback: (entry, ctx) => {
-    const lines: string[] = []
-    const cardWidth = Math.max(20, Math.min(ctx.width, 82))
-    const bodyWidth = Math.max(1, cardWidth - 2)
-    const itemWidth = Math.max(1, bodyWidth - 2)
-
-    for (const item of entry.items) {
-      const wrappedItem = wrapText(item, itemWidth)
-      wrappedItem.forEach((line, index) => {
-        lines.push(`${index === 0 ? "- " : "  "}${line}`)
-      })
+    return {
+      root: box,
+      width: boxWidth,
+      height: boxHeight,
     }
-
-    const cardHeight = Math.max(3, lines.length + 2)
-    const card = new BoxRenderable(ctx.renderContext, {
-      id: `bullet-card-${Date.now()}`,
-      position: "absolute",
-      left: 0,
-      top: 0,
-      width: cardWidth,
-      height: cardHeight,
-      border: true,
-      borderStyle: "single",
-      borderColor: entry.palette.bulletBorder,
-      backgroundColor: "transparent",
-      title: truncateToWidth(entry.title, Math.max(1, cardWidth - 4)),
-    })
-
-    const body = new TextRenderable(ctx.renderContext, {
-      id: `bullet-card-text-${Date.now()}`,
-      position: "absolute",
-      left: 1,
-      top: 1,
-      width: bodyWidth,
-      height: Math.max(1, cardHeight - 2),
-      content: lines.join("\n"),
-      fg: entry.palette.bulletBodyText,
-    })
-
-    card.add(body)
-
-    return createSnapshot(card, cardWidth, cardHeight)
   },
 }
 
 const toolCardComponent: ScrollbackComponent<ToolCardEntry> = {
   scrollback: (entry, ctx) => {
-    const cardWidth = Math.max(18, Math.min(ctx.width, 76))
+    const cardWidth = Math.max(24, Math.min(ctx.width, 80))
     const bodyWidth = Math.max(1, cardWidth - 2)
     const lines: string[] = []
 
-    entry.rows.forEach((row, rowIndex) => {
-      const wrappedRows = wrapText(row, bodyWidth)
-      for (const wrappedRow of wrappedRows) {
-        lines.push(wrappedRow)
-      }
-
-      if (rowIndex < entry.rows.length - 1) {
+    entry.rows.forEach((row, index) => {
+      lines.push(...wrapText(row, bodyWidth))
+      if (index < entry.rows.length - 1) {
         lines.push("")
       }
     })
 
     const cardHeight = Math.max(3, lines.length + 2)
+
     const card = new BoxRenderable(ctx.renderContext, {
-      id: `tool-card-${Date.now()}`,
+      id: `split-tool-card-${snapshotNodeCounter++}`,
       position: "absolute",
       left: 0,
       top: 0,
@@ -346,25 +531,29 @@ const toolCardComponent: ScrollbackComponent<ToolCardEntry> = {
       height: cardHeight,
       border: true,
       borderStyle: "double",
-      borderColor: entry.palette.toolBorder,
+      borderColor: entry.palette.assistantBorder,
       backgroundColor: "transparent",
       title: truncateToWidth(entry.title, Math.max(1, cardWidth - 4)),
     })
 
     const body = new TextRenderable(ctx.renderContext, {
-      id: `tool-card-text-${Date.now()}`,
+      id: `split-tool-card-text-${snapshotNodeCounter++}`,
       position: "absolute",
       left: 1,
       top: 1,
       width: bodyWidth,
       height: Math.max(1, cardHeight - 2),
       content: lines.join("\n"),
-      fg: entry.palette.toolBodyText,
+      fg: entry.palette.messageText,
     })
 
     card.add(body)
 
-    return createSnapshot(card, cardWidth, cardHeight)
+    return {
+      root: card,
+      width: cardWidth,
+      height: cardHeight,
+    }
   },
 }
 
@@ -373,550 +562,740 @@ const renderableSnapshotComponent: ScrollbackComponent<RenderableSnapshotEntry> 
     const width = Math.max(1, Math.min(entry.width, ctx.width))
     const height = Math.max(1, entry.height)
     const root = entry.build(ctx.renderContext)
-    return createSnapshot(root, width, height)
+
+    return {
+      root,
+      width,
+      height,
+    }
   },
 }
 
-class SplitFooterChatDemo {
-  private footerContainer: BoxRenderable
-  private headerText: TextRenderable
-  private helpText: TextRenderable
+class SplitFooterDemo {
+  private shell: BoxRenderable
+  private headerRow: BoxRenderable
+  private titleText: TextRenderable
+  private modeText: TextRenderable
+  private composerBox: BoxRenderable
+  private composer: TextareaRenderable
+  private statusRow: BoxRenderable
   private statusText: TextRenderable
-  private typingText: TextRenderable
-  private inputFrame: BoxRenderable
-  private promptText: TextRenderable
-  private input: InputRenderable
+  private metaText: TextRenderable
+  private controlsRow: BoxRenderable
+  private controlsText: TextRenderable
 
+  private palette: DemoPalette
+  private mode: DemoMode = "split-footer"
+  private desiredFooterHeight = DEFAULT_FOOTER_HEIGHT
   private publishQueue: Promise<void> = Promise.resolve()
   private pendingAssistantReply: ReturnType<typeof setTimeout> | null = null
-  private commitCount: number = 0
-  private messageCount: number = 0
-  private assistantTyping: boolean = false
-  private statusMessage: string = "Ready"
-  private destroyed: boolean = false
-  private palette: DemoPalette
+  private streamTimer: ReturnType<typeof setInterval> | null = null
+  private streamEnabled = true
+  private streamIntervalMs = DEFAULT_STREAM_INTERVAL
+  private streamCount = 0
+  private commitCount = 0
+  private messageCount = 0
+  private assistantTyping = false
+  private statusMessage = "Ready"
+  private destroyed = false
 
   constructor(private renderer: CliRenderer) {
     this.palette = resolveDemoPalette(this.renderer.themeMode)
-    this.renderer.footerHeight = this.clampFooterHeight(DEFAULT_FOOTER_HEIGHT)
-    this.renderer.screenMode = "split-footer"
-    this.renderer.externalOutputMode = "capture-stdout"
+    this.desiredFooterHeight = this.clampFooterHeight(this.desiredFooterHeight)
+
+    if (this.renderer.screenMode !== "split-footer") {
+      this.renderer.screenMode = "split-footer"
+    }
+
+    this.renderer.footerHeight = this.desiredFooterHeight
+
+    if (this.renderer.externalOutputMode !== "capture-stdout") {
+      this.renderer.externalOutputMode = "capture-stdout"
+    }
+
+    this.mode = "split-footer"
     this.renderer.setBackgroundColor(this.palette.appBackground)
 
-    this.footerContainer = new BoxRenderable(this.renderer, {
-      id: "split-chat-footer-container",
-      position: "absolute",
-      left: 0,
-      top: 0,
-      width: this.renderer.width,
-      height: this.renderer.height,
+    this.shell = new BoxRenderable(this.renderer, {
+      id: "split-footer-shell",
+      width: "100%",
+      height: "100%",
+      border: false,
+      backgroundColor: this.palette.shellBackground,
+      padding: 0,
+      gap: 0,
+      flexDirection: "column",
       zIndex: 10,
-      border: true,
-      borderStyle: "double",
-      borderColor: this.palette.footerBorder,
-      backgroundColor: this.palette.footerBackground,
-      title: "Direct Mode Chat",
-      titleAlignment: "center",
     })
 
-    this.headerText = new TextRenderable(this.renderer, {
-      id: "split-chat-header",
-      content: "Split footer chat + snapshot commits",
-      position: "absolute",
-      left: 2,
-      top: 1,
-      width: Math.max(1, this.renderer.width - 4),
+    this.headerRow = new BoxRenderable(this.renderer, {
+      id: "split-footer-header-row",
+      width: "100%",
       height: 1,
-      zIndex: 11,
-      fg: this.palette.headerText,
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
     })
 
-    this.helpText = new TextRenderable(this.renderer, {
-      id: "split-chat-help",
-      content: "Type /help, /tree for renderable snapshots, /footer <n> to resize",
-      position: "absolute",
-      left: 2,
-      top: 2,
-      width: Math.max(1, this.renderer.width - 4),
-      height: 1,
-      zIndex: 11,
-      fg: this.palette.helpText,
+    this.titleText = new TextRenderable(this.renderer, {
+      id: "split-footer-title",
+      content: "Split Footer Demo",
+      fg: this.palette.titleText,
     })
 
-    this.statusText = new TextRenderable(this.renderer, {
-      id: "split-chat-status",
+    this.modeText = new TextRenderable(this.renderer, {
+      id: "split-footer-mode",
       content: "",
-      position: "absolute",
-      left: 2,
-      top: 3,
-      width: Math.max(1, this.renderer.width - 4),
-      height: 1,
-      zIndex: 11,
-      fg: this.palette.statusText,
+      fg: this.palette.modeText,
     })
 
-    this.typingText = new TextRenderable(this.renderer, {
-      id: "split-chat-typing",
-      content: "",
-      position: "absolute",
-      left: 2,
-      top: 4,
-      width: Math.max(1, this.renderer.width - 4),
-      height: 1,
-      zIndex: 11,
-      fg: this.palette.typingText,
+    this.composerBox = new BoxRenderable(this.renderer, {
+      id: "split-footer-composer-frame",
+      width: "100%",
+      minHeight: 4,
+      flexGrow: 1,
+      border: false,
+      backgroundColor: this.palette.composerBackground,
+      padding: 0,
+      gap: 0,
+      flexDirection: "column",
     })
 
-    this.inputFrame = new BoxRenderable(this.renderer, {
-      id: "split-chat-input-frame",
-      position: "absolute",
-      left: 2,
-      top: Math.max(5, this.renderer.height - 4),
-      width: Math.max(4, this.renderer.width - 4),
-      height: 3,
-      zIndex: 11,
-      border: true,
-      borderStyle: "single",
-      borderColor: this.palette.inputFrameBorder,
-      backgroundColor: this.palette.inputFrameBackground,
-    })
-
-    this.promptText = new TextRenderable(this.renderer, {
-      id: "split-chat-prompt",
-      content: "",
-      position: "absolute",
-      left: 3,
-      top: Math.max(6, this.renderer.height - 3),
-      width: 5,
-      height: 1,
-      zIndex: 12,
-      fg: this.palette.promptText,
-      bg: "transparent",
-    })
-
-    this.input = new InputRenderable(this.renderer, {
-      id: "split-chat-input",
-      position: "absolute",
-      left: 9,
-      top: Math.max(6, this.renderer.height - 3),
-      width: Math.max(1, this.renderer.width - 12),
-      zIndex: 12,
-      placeholder: "Type a message and press Enter...",
+    this.composer = new TextareaRenderable(this.renderer, {
+      id: "split-footer-composer",
+      width: "100%",
+      minHeight: 3,
+      flexGrow: 1,
+      wrapMode: "word",
+      showCursor: true,
+      placeholder: "Type message or /command... (Enter = new line, Ctrl+Enter = send)",
       placeholderColor: this.palette.inputPlaceholder,
       textColor: this.palette.inputText,
       focusedTextColor: this.palette.inputFocusedText,
-      backgroundColor: this.palette.inputFrameBackground,
+      backgroundColor: this.palette.composerBackground,
       focusedBackgroundColor: this.palette.inputFocusedBackground,
       cursorColor: this.palette.inputCursor,
-      value: "",
-      maxLength: 400,
+      onSubmit: this.handleComposerSubmit,
+      keyBindings: [
+        { name: "return", ctrl: true, action: "submit" },
+        { name: "linefeed", ctrl: true, action: "submit" },
+      ],
     })
 
-    this.footerContainer.add(this.headerText)
-    this.footerContainer.add(this.helpText)
-    this.footerContainer.add(this.statusText)
-    this.footerContainer.add(this.typingText)
-    this.footerContainer.add(this.inputFrame)
-    this.footerContainer.add(this.promptText)
-    this.footerContainer.add(this.input)
-    this.renderer.root.add(this.footerContainer)
+    this.statusRow = new BoxRenderable(this.renderer, {
+      id: "split-footer-status-row",
+      width: "100%",
+      height: 1,
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+    })
 
-    this.input.on(InputRenderableEvents.INPUT, this.handleInputChange)
-    this.input.on(InputRenderableEvents.ENTER, this.handleInputSubmit)
+    this.statusText = new TextRenderable(this.renderer, {
+      id: "split-footer-status",
+      content: "",
+      fg: this.palette.statusText,
+    })
+
+    this.metaText = new TextRenderable(this.renderer, {
+      id: "split-footer-meta",
+      content: "",
+      fg: this.palette.streamText,
+    })
+
+    this.controlsRow = new BoxRenderable(this.renderer, {
+      id: "split-footer-controls-row",
+      width: "100%",
+      height: 1,
+      flexDirection: "row",
+      justifyContent: "flex-start",
+      alignItems: "center",
+    })
+
+    this.controlsText = new TextRenderable(this.renderer, {
+      id: "split-footer-controls",
+      content: "",
+      width: "100%",
+      height: 1,
+      fg: this.palette.controlText,
+    })
+
+    this.headerRow.add(this.titleText)
+    this.headerRow.add(this.modeText)
+
+    this.composerBox.add(this.composer)
+
+    this.statusRow.add(this.statusText)
+    this.statusRow.add(this.metaText)
+
+    this.controlsRow.add(this.controlsText)
+
+    this.shell.add(this.headerRow)
+    this.shell.add(this.composerBox)
+    this.shell.add(this.statusRow)
+    this.shell.add(this.controlsRow)
+    this.renderer.root.add(this.shell)
+
+    this.composer.on("line-info-change", this.handleDraftChanged)
     this.renderer.keyInput.on("keypress", this.handleKeyPress)
     this.renderer.on("resize", this.handleResize)
     this.renderer.on(CliRenderEvents.THEME_MODE, this.handleThemeMode)
+    this.renderer.on(CliRenderEvents.DESTROY, this.handleRendererDestroy)
 
-    this.relayout()
     this.applyPalette()
-    this.refreshStatus("Type /help, then send a prompt to publish your first snapshot commit")
-    this.input.focus()
+    this.refreshStatus("ready")
+    this.publishWelcomeMessages()
+    this.syncStreamLoop()
+    this.composer.focus()
   }
 
-  private clampFooterHeight(nextHeight: number): number {
+  private get draftLength(): number {
+    if (this.destroyed || this.composer.isDestroyed) {
+      return 0
+    }
+
+    return this.composer.plainText.length
+  }
+
+  private isSplitCaptureMode(): boolean {
+    return this.renderer.screenMode === "split-footer" && this.renderer.externalOutputMode === "capture-stdout"
+  }
+
+  private clampFooterHeight(requestedHeight: number): number {
     const maxFooterHeight = Math.max(1, this.renderer.terminalHeight - MIN_MAIN_SCREEN_HEIGHT)
     const minFooterHeight = Math.min(MIN_FOOTER_HEIGHT, maxFooterHeight)
-    return Math.min(Math.max(nextHeight, minFooterHeight), maxFooterHeight)
-  }
-
-  private relayout(): void {
-    this.footerContainer.width = this.renderer.width
-    this.footerContainer.height = this.renderer.height
-
-    const contentWidth = Math.max(1, this.renderer.width - 4)
-    this.headerText.width = contentWidth
-    this.helpText.width = contentWidth
-    this.statusText.width = contentWidth
-    this.typingText.width = contentWidth
-
-    const inputTop = Math.max(5, this.renderer.height - 4)
-    this.inputFrame.top = inputTop
-    this.inputFrame.width = Math.max(4, this.renderer.width - 4)
-
-    this.promptText.top = inputTop + 1
-    this.input.top = inputTop + 1
-
-    const inputLeft = this.promptText.x + this.promptText.width + 1
-    const availableInputWidth = Math.max(1, this.inputFrame.width - (inputLeft - this.inputFrame.x) - 2)
-    this.input.x = inputLeft
-    this.input.width = availableInputWidth
+    return Math.min(Math.max(requestedHeight, minFooterHeight), maxFooterHeight)
   }
 
   private applyPalette(): void {
     this.renderer.setBackgroundColor(this.palette.appBackground)
-    this.footerContainer.borderColor = this.palette.footerBorder
-    this.footerContainer.backgroundColor = this.palette.footerBackground
-    this.headerText.fg = this.palette.headerText
-    this.helpText.fg = this.palette.helpText
+    this.shell.backgroundColor = this.palette.shellBackground
+    this.shell.borderColor = this.palette.shellBorder
+    this.titleText.fg = this.palette.titleText
+    this.modeText.fg = this.palette.modeText
     this.statusText.fg = this.palette.statusText
-    this.typingText.fg = this.palette.typingText
-    this.inputFrame.borderColor = this.palette.inputFrameBorder
-    this.inputFrame.backgroundColor = this.palette.inputFrameBackground
-    this.promptText.fg = this.palette.promptText
-    this.input.placeholderColor = this.palette.inputPlaceholder
-    this.input.textColor = this.palette.inputText
-    this.input.focusedTextColor = this.palette.inputFocusedText
-    this.input.backgroundColor = this.palette.inputFrameBackground
-    this.input.focusedBackgroundColor = this.palette.inputFocusedBackground
-    this.input.cursorColor = this.palette.inputCursor
+    this.metaText.fg = this.palette.streamText
+    this.composerBox.borderColor = this.palette.composerBorder
+    this.composerBox.backgroundColor = this.palette.composerBackground
+    this.composer.placeholderColor = this.palette.inputPlaceholder
+    this.composer.textColor = this.palette.inputText
+    this.composer.focusedTextColor = this.palette.inputFocusedText
+    this.composer.backgroundColor = this.palette.composerBackground
+    this.composer.focusedBackgroundColor = this.palette.inputFocusedBackground
+    this.composer.cursorColor = this.palette.inputCursor
+    this.controlsText.fg = this.palette.controlText
   }
 
   private refreshStatus(message?: string): void {
+    if (this.destroyed) {
+      return
+    }
+
     if (message) {
       this.statusMessage = message
     }
 
-    const statusParts = [
-      `commits ${this.commitCount}`,
-      `messages ${this.messageCount}`,
-      `footer ${this.renderer.footerHeight}`,
-      `width ${this.renderer.width}`,
-      `widthMethod ${this.renderer.widthMethod}`,
-    ]
-    this.statusText.content = `${statusParts.join(" | ")} | ${this.statusMessage}`
-    this.typingText.content = this.assistantTyping ? "assistant is composing a response..." : ""
+    const modeLabel = this.mode === "split-footer" ? `split:${this.renderer.footerHeight}` : "fullscreen"
+    const streamLabel = this.streamEnabled ? `${this.streamIntervalMs}ms` : "off"
+    const mouseLabel = this.renderer.useMouse ? "mouse:on" : "mouse:off"
+    const typingLabel = this.assistantTyping ? "typing" : "idle"
+
+    this.modeText.content = modeLabel
+    this.statusText.content = `msg ${this.messageCount} draft ${this.draftLength} ${typingLabel} | ${this.statusMessage}`
+    this.metaText.content = `${mouseLabel} stream:${streamLabel} commits:${this.commitCount} lines:${this.streamCount}`
+    this.controlsText.content =
+      "Ctrl+Enter send · Enter newline · Shift+U mouse · Ctrl+S stream · Ctrl+0 mode · Ctrl+R demo · /help"
   }
 
-  private publishToScrollback<Data>(component: ScrollbackComponent<Data>, data: Data): void {
+  private activateSplitFooterMode(announce: boolean = true): void {
+    this.desiredFooterHeight = this.clampFooterHeight(this.desiredFooterHeight)
+
+    if (this.renderer.screenMode !== "split-footer") {
+      this.renderer.screenMode = "split-footer"
+    }
+
+    this.renderer.footerHeight = this.desiredFooterHeight
+
+    if (this.renderer.externalOutputMode !== "capture-stdout") {
+      this.renderer.externalOutputMode = "capture-stdout"
+    }
+
+    this.mode = "split-footer"
+    this.syncStreamLoop()
+    this.refreshStatus("split-footer mode")
+
+    if (announce) {
+      this.publishMessage(
+        "system",
+        `Switched to split-footer mode (height ${this.renderer.footerHeight}). Stream capture is active.`,
+        false,
+      )
+    }
+  }
+
+  private activateFullscreenMode(): void {
+    if (this.renderer.externalOutputMode !== "passthrough") {
+      this.renderer.externalOutputMode = "passthrough"
+    }
+
+    if (this.renderer.screenMode !== "main-screen") {
+      this.renderer.screenMode = "main-screen"
+    }
+
+    this.mode = "fullscreen"
+    this.syncStreamLoop()
+    this.refreshStatus("fullscreen mode")
+  }
+
+  private toggleMode(): void {
+    if (this.mode === "split-footer") {
+      this.activateFullscreenMode()
+    } else {
+      this.activateSplitFooterMode(true)
+    }
+  }
+
+  private enqueueScrollbackComponent<Data>(
+    component: ScrollbackComponent<Data>,
+    data: Data,
+    failureStatus: string,
+  ): void {
+    if (!this.isSplitCaptureMode()) {
+      this.refreshStatus("output paused in fullscreen")
+      return
+    }
+
     this.publishQueue = this.publishQueue
       .then(async () => {
-        if (this.destroyed) return
+        if (this.destroyed || !this.isSplitCaptureMode()) {
+          return
+        }
 
         await this.renderer.writeToScrollback(component, data)
 
-        if (this.destroyed) return
+        if (this.destroyed) {
+          return
+        }
 
         this.commitCount += 1
         this.refreshStatus()
       })
       .catch((error) => {
         if (!this.destroyed) {
-          this.refreshStatus("scrollback publish failed")
+          this.refreshStatus(failureStatus)
           console.error("split-mode-demo publish failed", error)
         }
       })
   }
 
-  private appendChat(role: ChatRole, text: string): void {
-    this.messageCount += 1
-    this.publishToScrollback(chatMessageComponent, {
-      role,
-      text,
-      timestamp: new Date(),
-      palette: this.palette,
-    })
+  private publishMessage(role: MessageRole, text: string, countAsMessage: boolean = true): void {
+    if (countAsMessage) {
+      this.messageCount += 1
+    }
+
+    const paletteSnapshot: DemoPalette = { ...this.palette }
+
+    this.enqueueScrollbackComponent(
+      simpleTextBoxComponent,
+      {
+        role,
+        text,
+        timestamp: new Date(),
+        palette: paletteSnapshot,
+      },
+      "failed to publish text box",
+    )
   }
 
-  private appendBulletList(title: string, items: string[]): void {
-    this.publishToScrollback(bulletListComponent, {
-      title,
-      items,
-      palette: this.palette,
-    })
+  private publishToolCard(title: string, rows: string[]): void {
+    const paletteSnapshot: DemoPalette = { ...this.palette }
+
+    this.enqueueScrollbackComponent(
+      toolCardComponent,
+      {
+        title,
+        rows,
+        palette: paletteSnapshot,
+      },
+      "failed to publish tool card",
+    )
   }
 
-  private appendToolCard(title: string, rows: string[]): void {
-    this.publishToScrollback(toolCardComponent, {
-      title,
-      rows,
-      palette: this.palette,
-    })
-  }
-
-  private appendRenderableSnapshot(
+  private publishRenderableSnapshot(
     width: number,
     height: number,
     build: (context: RenderContext) => BoxRenderable,
   ): void {
-    this.publishToScrollback(renderableSnapshotComponent, {
-      width,
-      height,
-      build,
-    })
+    this.enqueueScrollbackComponent(
+      renderableSnapshotComponent,
+      {
+        width,
+        height,
+        build,
+      },
+      "failed to publish renderable snapshot",
+    )
   }
 
-  private appendComponentTreeShowcase(title: string): void {
-    const cardWidth = Math.max(32, Math.min(this.renderer.width, 88))
-    const cardHeight = 11
-    const palette = this.palette
+  private publishTreeSnapshot(title: string): void {
+    const paletteSnapshot: DemoPalette = { ...this.palette }
+    const snapshotWidth = Math.max(34, Math.min(this.renderer.width, 88))
+    const snapshotHeight = 11
 
-    this.appendRenderableSnapshot(cardWidth, cardHeight, (snapshotContext) => {
+    this.publishRenderableSnapshot(snapshotWidth, snapshotHeight, (snapshotContext) => {
       const frame = new BoxRenderable(snapshotContext, {
-        id: "showcase-frame",
+        id: `split-tree-frame-${snapshotNodeCounter++}`,
         position: "absolute",
         left: 0,
         top: 0,
-        width: cardWidth,
-        height: cardHeight,
+        width: snapshotWidth,
+        height: snapshotHeight,
         border: true,
         borderStyle: "double",
-        borderColor: palette.toolBorder,
+        borderColor: paletteSnapshot.assistantBorder,
         backgroundColor: "transparent",
-        title,
+        title: title,
       })
 
-      const banner = new BoxRenderable(snapshotContext, {
-        id: "showcase-banner",
-        position: "absolute",
-        left: 1,
-        top: 1,
-        width: Math.max(1, cardWidth - 2),
-        height: 1,
-        backgroundColor: palette.footerBackground,
-      })
-
-      const bannerText = new TextRenderable(snapshotContext, {
-        id: "showcase-banner-text",
-        position: "absolute",
-        left: 2,
-        top: 1,
-        width: Math.max(1, cardWidth - 4),
-        height: 1,
-        content: "nested renderable tree snapshot",
-        fg: palette.headerText,
-      })
+      const leftPanelWidth = Math.max(12, Math.floor((snapshotWidth - 7) * 0.5))
+      const rightPanelLeft = 2 + leftPanelWidth + 1
+      const rightPanelWidth = Math.max(8, snapshotWidth - rightPanelLeft - 2)
 
       const leftPanel = new BoxRenderable(snapshotContext, {
-        id: "showcase-left-panel",
+        id: `split-tree-left-${snapshotNodeCounter++}`,
         position: "absolute",
         left: 2,
         top: 3,
-        width: Math.max(10, Math.floor((cardWidth - 6) * 0.5)),
+        width: leftPanelWidth,
         height: 5,
         border: true,
         borderStyle: "single",
-        borderColor: palette.chatAssistantBorder,
+        borderColor: paletteSnapshot.systemBorder,
         backgroundColor: "transparent",
-        title: "metrics",
+        title: "disk 1",
       })
 
       const rightPanel = new BoxRenderable(snapshotContext, {
-        id: "showcase-right-panel",
+        id: `split-tree-right-${snapshotNodeCounter++}`,
         position: "absolute",
-        left: Math.max(3, Math.floor(cardWidth * 0.55)),
+        left: rightPanelLeft,
         top: 3,
-        width: Math.max(8, cardWidth - Math.max(3, Math.floor(cardWidth * 0.55)) - 2),
+        width: rightPanelWidth,
         height: 5,
         border: true,
         borderStyle: "single",
-        borderColor: palette.chatUserBorder,
+        borderColor: paletteSnapshot.userBorder,
         backgroundColor: "transparent",
-        title: "tools",
+        title: "disk 2",
       })
 
-      const metricBarA = new BoxRenderable(snapshotContext, {
-        id: "showcase-metric-bar-a",
+      const leftText = new TextRenderable(snapshotContext, {
+        id: `split-tree-left-text-${snapshotNodeCounter++}`,
         position: "absolute",
         left: 3,
         top: 4,
-        width: Math.max(2, Math.floor((cardWidth - 10) * 0.3)),
-        height: 1,
-        backgroundColor: palette.chatSystemBorder,
+        width: Math.max(1, leftPanelWidth - 2),
+        height: 3,
+        content: "In the Flesh?\nThe Thin Ice\nAnother Brick Pt. 2",
+        fg: paletteSnapshot.messageText,
       })
 
-      const metricBarB = new BoxRenderable(snapshotContext, {
-        id: "showcase-metric-bar-b",
+      const rightText = new TextRenderable(snapshotContext, {
+        id: `split-tree-right-text-${snapshotNodeCounter++}`,
         position: "absolute",
-        left: 3,
-        top: 6,
-        width: Math.max(2, Math.floor((cardWidth - 10) * 0.4)),
-        height: 1,
-        backgroundColor: palette.chatAssistantBorder,
-      })
-
-      const toolLine = new TextRenderable(snapshotContext, {
-        id: "showcase-tool-line",
-        position: "absolute",
-        left: Math.max(4, Math.floor(cardWidth * 0.55) + 1),
+        left: rightPanelLeft + 1,
         top: 5,
-        width: Math.max(1, cardWidth - Math.max(4, Math.floor(cardWidth * 0.55) + 1) - 2),
-        height: 1,
-        content: "render -> snapshot -> native commit",
-        fg: palette.toolBodyText,
+        width: Math.max(1, rightPanelWidth - 2),
+        height: 2,
+        content: "Hey You / Nobody Home\nComfortably Numb / The Trial",
+        fg: paletteSnapshot.messageText,
       })
 
-      const footerLine = new TextRenderable(snapshotContext, {
-        id: "showcase-footer-line",
+      const footerText = new TextRenderable(snapshotContext, {
+        id: `split-tree-footer-text-${snapshotNodeCounter++}`,
         position: "absolute",
         left: 2,
         top: 9,
-        width: Math.max(1, cardWidth - 4),
+        width: Math.max(1, snapshotWidth - 4),
         height: 1,
-        content: "actual renderable tree commit (no UTF-8 payload bridge)",
-        fg: palette.helpText,
+        content: "all in all it's just another brick in the wall",
+        fg: paletteSnapshot.helpText,
       })
 
-      frame.add(banner)
-      frame.add(bannerText)
       frame.add(leftPanel)
       frame.add(rightPanel)
-      frame.add(metricBarA)
-      frame.add(metricBarB)
-      frame.add(toolLine)
-      frame.add(footerLine)
+      frame.add(leftText)
+      frame.add(rightText)
+      frame.add(footerText)
       return frame
     })
   }
 
-  private publishWelcomeEntries(): void {
-    this.appendChat(
+  private getPassage(index: number): WallLyricPassage {
+    const total = WALL_STREAM_PASSAGES.length
+    const safeIndex = ((index % total) + total) % total
+    return WALL_STREAM_PASSAGES[safeIndex]!
+  }
+
+  private passageText(passage: WallLyricPassage): string {
+    return passage.lines.join("\n")
+  }
+
+  private publishWelcomeMessages(): void {
+    this.publishMessage(
       "system",
-      `Split footer ready. Render width ${this.renderer.width}, width method ${this.renderer.widthMethod}.`,
+      `Lyric cue pack loaded. Width ${this.renderer.width}. Use /demo for a full Disc 1 -> Disc 2 sequence.`,
+      false,
     )
 
-    this.appendBulletList("Commands", [
-      "/help - show command guide",
-      "/card - append a tool-card component",
-      "/tree - append a nested renderable tree snapshot",
-      "/demo - append a short multi-component transcript",
-      "/welcome - append the initial onboarding entries",
-      "/footer <n> - change footer height",
-    ])
-
-    this.appendToolCard("component snapshot", [
-      "source: split-mode-demo",
-      "path: renderer.writeToScrollback(component, data)",
-      "payload: native snapshot commit",
-      "ownership: placement and pinning stay native",
-    ])
+    this.publishMessage("system", "Stream mode now follows an ordered narrative arc, not random single lines.", false)
   }
 
-  private handleInputChange = (value: string): void => {
-    this.refreshStatus(`draft length ${value.length}`)
-  }
+  private syncStreamLoop(): void {
+    const shouldRun = this.streamEnabled && this.isSplitCaptureMode() && !this.destroyed
 
-  private handleInputSubmit = (value: string): void => {
-    const trimmedValue = value.trim()
-    if (trimmedValue.length === 0) {
-      this.refreshStatus("empty draft ignored")
+    if (!shouldRun) {
+      if (this.streamTimer) {
+        clearInterval(this.streamTimer)
+        this.streamTimer = null
+      }
       return
     }
 
-    this.input.value = ""
-    this.appendChat("user", trimmedValue)
-
-    if (trimmedValue.startsWith("/")) {
-      this.handleCommand(trimmedValue)
+    if (this.streamTimer) {
       return
     }
 
-    this.scheduleAssistantReply(trimmedValue)
+    this.streamTimer = setInterval(this.emitStreamTick, this.streamIntervalMs)
+  }
+
+  private setStreamEnabled(enabled: boolean): void {
+    this.streamEnabled = enabled
+    if (!enabled && this.streamTimer) {
+      clearInterval(this.streamTimer)
+      this.streamTimer = null
+    }
+    if (enabled) {
+      this.syncStreamLoop()
+    }
+    this.refreshStatus(`stream ${enabled ? "enabled" : "disabled"}`)
+  }
+
+  private setStreamInterval(requestedInterval: number): void {
+    const clampedInterval = Math.min(Math.max(requestedInterval, MIN_STREAM_INTERVAL), MAX_STREAM_INTERVAL)
+    if (clampedInterval === this.streamIntervalMs) {
+      this.refreshStatus("stream speed unchanged")
+      return
+    }
+
+    this.streamIntervalMs = clampedInterval
+
+    if (this.streamTimer) {
+      clearInterval(this.streamTimer)
+      this.streamTimer = null
+    }
+
+    this.syncStreamLoop()
+    this.refreshStatus(`stream interval ${clampedInterval}ms`)
+  }
+
+  private emitStreamTick = (): void => {
+    if (this.destroyed || !this.streamEnabled || !this.isSplitCaptureMode()) {
+      return
+    }
+
+    const nextPassage = this.getPassage(this.streamCount)
+    this.streamCount += 1
+    this.publishMessage("stream", this.passageText(nextPassage), false)
+    this.refreshStatus()
+  }
+
+  private publishCommandHelp(): void {
+    this.publishMessage(
+      "system",
+      [
+        "Commands:",
+        "/help - show this command guide",
+        "/demo - append a lyric medley",
+        "/card - append a setlist card component",
+        "/tree - append a stage-map snapshot",
+        "/mouse on|off|toggle - toggle mouse handling",
+        "/stream on|off|toggle - control stream output",
+        "/speed <ms> - set stream interval",
+        "/mode split|full|toggle - switch split/footer mode",
+        "/footer <n> - set split footer height",
+        "keys: Ctrl+Enter send, Enter newline, Shift+U mouse, Ctrl+S stream",
+      ].join("\n"),
+      false,
+    )
+  }
+
+  private publishDemoTranscript(): void {
+    const discOneSequence = [0, 2, 4, 5, 7]
+    const discTwoSequence = [8, 10, 11, 12]
+
+    this.publishMessage("system", "Disc 1 sequence:", false)
+    discOneSequence.forEach((index) => {
+      this.publishMessage("assistant", this.passageText(this.getPassage(index)))
+    })
+
+    this.publishMessage("system", "Disc 2 sequence:", false)
+    discTwoSequence.forEach((index) => {
+      this.publishMessage("assistant", this.passageText(this.getPassage(index)))
+    })
+
+    this.publishToolCard("Setlist", [
+      `Disk 1 opener: ${WALL_DISK_ONE_TRACKS[0]} -> ${WALL_DISK_ONE_TRACKS[1]} -> ${WALL_DISK_ONE_TRACKS[2]}`,
+      `Disk 2 opener: ${WALL_DISK_TWO_TRACKS[0]} -> ${WALL_DISK_TWO_TRACKS[1]} -> ${WALL_DISK_TWO_TRACKS[2]}`,
+      "Finale: Outside the Wall",
+    ])
+    this.publishTreeSnapshot("snapshot: stage map")
+    this.publishMessage(
+      "system",
+      "All alone, or in twos, the ones who really love you walk up and down outside the wall.",
+      false,
+    )
+    this.refreshStatus("demo transcript queued")
   }
 
   private handleCommand(commandLine: string): void {
-    const [command, ...args] = commandLine.split(/\s+/)
+    const [command, ...args] = commandLine.trim().split(/\s+/)
 
     switch (command.toLowerCase()) {
       case "/help": {
-        this.appendBulletList("Interactive commands", [
-          "/help - print this help block",
-          "/card - render one tool-card component entry",
-          "/tree - render a nested renderable tree with backgrounds",
-          "/demo - render a mini sequence of different component entries",
-          "/welcome - enqueue onboarding entries",
-          "/footer <n> - resize the split footer to a specific height",
-        ])
+        this.publishCommandHelp()
         this.refreshStatus("help published")
         return
       }
 
+      case "/demo": {
+        this.publishDemoTranscript()
+        return
+      }
+
       case "/card": {
-        this.appendToolCard("tool call: summarize-state", [
-          "status: ok",
-          `current footer: ${this.renderer.footerHeight}`,
-          `render width: ${this.renderer.width}`,
-          "result: one snapshot component entry appended",
+        const currentPassage = this.getPassage(this.streamCount)
+        const nextPassage = this.getPassage(this.streamCount + 1)
+
+        this.publishToolCard("Cue card", [
+          `${currentPassage.song} -> ${nextPassage.song}`,
+          currentPassage.lines.slice(0, 2).join(" / "),
+          nextPassage.lines[0] ?? "",
         ])
-        this.refreshStatus("tool card published")
+        this.refreshStatus("tool card queued")
         return
       }
 
       case "/tree": {
-        this.appendComponentTreeShowcase("component tree snapshot")
-        this.refreshStatus("renderable tree snapshot published")
+        this.publishTreeSnapshot("snapshot: stage map")
+        this.refreshStatus("tree snapshot queued")
         return
       }
 
-      case "/demo": {
-        this.publishDemoSequence()
-        this.refreshStatus("demo sequence queued")
+      case "/mouse": {
+        const option = (args[0] ?? "toggle").toLowerCase()
+
+        if (option === "on") {
+          this.renderer.useMouse = true
+        } else if (option === "off") {
+          this.renderer.useMouse = false
+        } else {
+          this.renderer.useMouse = !this.renderer.useMouse
+        }
+
+        this.refreshStatus(`mouse ${this.renderer.useMouse ? "enabled" : "disabled"}`)
         return
       }
 
-      case "/welcome": {
-        this.publishWelcomeEntries()
-        this.refreshStatus("welcome entries queued")
+      case "/stream": {
+        const option = (args[0] ?? "toggle").toLowerCase()
+        if (option === "on") {
+          this.setStreamEnabled(true)
+        } else if (option === "off") {
+          this.setStreamEnabled(false)
+        } else {
+          this.setStreamEnabled(!this.streamEnabled)
+        }
+        return
+      }
+
+      case "/speed": {
+        if (args.length === 0) {
+          this.publishMessage("system", `Current stream interval is ${this.streamIntervalMs}ms.`, false)
+          return
+        }
+
+        const requested = Number.parseInt(args[0], 10)
+        if (!Number.isFinite(requested)) {
+          this.publishMessage("system", `Invalid speed value: ${args[0]}`, false)
+          this.refreshStatus("invalid speed value")
+          return
+        }
+
+        this.setStreamInterval(requested)
+        return
+      }
+
+      case "/mode": {
+        const option = (args[0] ?? "toggle").toLowerCase()
+        if (option === "split" || option === "footer") {
+          this.activateSplitFooterMode(true)
+        } else if (option === "full" || option === "fullscreen" || option === "main") {
+          this.activateFullscreenMode()
+        } else {
+          this.toggleMode()
+        }
         return
       }
 
       case "/footer": {
         if (args.length === 0) {
-          this.appendChat("system", "usage: /footer <height>")
-          this.refreshStatus("missing footer height")
+          this.publishMessage("system", "usage: /footer <height>", false)
           return
         }
 
-        const requestedHeight = Number.parseInt(args[0], 10)
-        if (!Number.isFinite(requestedHeight)) {
-          this.appendChat("system", `invalid footer height: ${args[0]}`)
+        const requested = Number.parseInt(args[0], 10)
+        if (!Number.isFinite(requested)) {
+          this.publishMessage("system", `Invalid footer height: ${args[0]}`, false)
           this.refreshStatus("invalid footer height")
           return
         }
 
-        const clampedHeight = this.clampFooterHeight(requestedHeight)
-        this.renderer.footerHeight = clampedHeight
-        this.relayout()
-        this.appendChat("system", `footer height set to ${clampedHeight}`)
-        this.refreshStatus(`footer resized to ${clampedHeight}`)
+        this.desiredFooterHeight = this.clampFooterHeight(requested)
+        if (this.mode === "split-footer") {
+          this.renderer.footerHeight = this.desiredFooterHeight
+          this.publishMessage("system", `footer height set to ${this.desiredFooterHeight}`, false)
+        }
+        this.refreshStatus(`footer target ${this.desiredFooterHeight}`)
         return
       }
 
       default: {
-        this.appendChat("system", `unknown command: ${command}`)
+        this.publishMessage("system", `Unknown command: ${command}`, false)
         this.refreshStatus("unknown command")
       }
     }
   }
 
-  private publishDemoSequence(): void {
-    this.appendChat(
-      "assistant",
-      "This demo uses writeToScrollback(component, data). Each call commits one snapshot artifact.",
-    )
+  private handleComposerSubmit = (): void => {
+    const value = this.composer.plainText
+    const trimmed = value.trim()
 
-    this.appendToolCard("render pipeline", [
-      "1) TS builds a renderable tree from component + data",
-      "2) renderer snapshots the tree into a native buffer",
-      "3) native commit appends snapshot then repaints footer",
-    ])
+    if (trimmed.length === 0) {
+      this.refreshStatus("empty draft ignored")
+      return
+    }
 
-    this.appendBulletList("Why this shape is useful", [
-      "lets us iterate on commit primitives with realistic chat turns",
-      "keeps split placement ownership native",
-      "avoids reintroducing TS scrollback placement state",
-    ])
+    this.composer.setText("")
+    this.composer.focus()
 
-    this.appendComponentTreeShowcase("demo: arbitrary renderable tree")
+    if (trimmed.startsWith("/")) {
+      this.handleCommand(trimmed)
+      return
+    }
+
+    this.publishMessage("user", trimmed)
+    this.scheduleAssistantReply(trimmed)
   }
 
   private scheduleAssistantReply(userText: string): void {
@@ -926,18 +1305,16 @@ class SplitFooterChatDemo {
     }
 
     this.assistantTyping = true
-    this.refreshStatus("assistant thinking")
+    this.refreshStatus("assistant composing")
 
-    const delayMs = Math.min(1200, 300 + userText.length * 10)
+    const delayMs = Math.min(1100, 250 + userText.length * 10)
     this.pendingAssistantReply = setTimeout(() => {
       this.pendingAssistantReply = null
-
       if (this.destroyed) {
         return
       }
 
-      const response = this.buildAssistantReply(userText)
-      this.appendChat("assistant", response)
+      this.publishMessage("assistant", this.buildAssistantReply(userText))
       this.assistantTyping = false
       this.refreshStatus("assistant reply queued")
     }, delayMs)
@@ -946,60 +1323,131 @@ class SplitFooterChatDemo {
   private buildAssistantReply(userText: string): string {
     const normalized = userText.toLowerCase()
 
-    if (normalized.includes("stage 3")) {
-      return "Stage 3 now means snapshot commits through writeToScrollback while split placement stays native."
+    if (normalized.includes("wall")) {
+      return "All in all you're just another brick in the wall"
     }
 
-    if (normalized.includes("component")) {
-      return "Each transcript turn can be a renderable tree snapshot committed as one append-only artifact."
+    if (normalized.includes("home")) {
+      return "Open your heart, I'm coming home"
     }
 
-    if (normalized.includes("resize")) {
-      return "Try /footer 10 or /footer 18 to exercise resize transitions while keeping append-only commits."
+    if (normalized.includes("show")) {
+      return "The show must go on"
     }
 
-    return `Got it: \"${truncateToWidth(userText, 80)}\". Try /demo for a multi-component publish sequence.`
+    if (normalized.includes("hello") || normalized.includes("anybody")) {
+      return "Hello, is there anybody in there"
+    }
+
+    if (normalized.includes("goodbye")) {
+      return "Goodbye cruel world, I'm leaving you today"
+    }
+
+    if (normalized.includes("more") || normalized.includes("next")) {
+      return this.passageText(this.getPassage(this.streamCount))
+    }
+
+    return WALL_ASSISTANT_LINES[(this.messageCount + userText.length) % WALL_ASSISTANT_LINES.length]!
   }
 
   private adjustFooterHeight(delta: number): void {
+    if (this.mode !== "split-footer") {
+      this.refreshStatus("footer height can only change in split mode")
+      return
+    }
+
     const nextHeight = this.clampFooterHeight(this.renderer.footerHeight + delta)
     if (nextHeight === this.renderer.footerHeight) {
       this.refreshStatus("footer already at limit")
       return
     }
 
+    this.desiredFooterHeight = nextHeight
     this.renderer.footerHeight = nextHeight
-    this.relayout()
-    this.appendChat("system", `footer height adjusted to ${nextHeight}`)
-    this.refreshStatus(`footer adjusted to ${nextHeight}`)
+    this.refreshStatus(`footer height ${nextHeight}`)
+    this.publishMessage("system", `footer height adjusted to ${nextHeight}`, false)
+  }
+
+  private handleDraftChanged = (): void => {
+    this.refreshStatus()
+  }
+
+  private isModeToggleKey(key: KeyEvent): boolean {
+    if (!key.ctrl) {
+      return false
+    }
+
+    if (key.baseCode === 48) {
+      return true
+    }
+
+    if (key.name === "0" || key.name === "kp0" || key.name === ")") {
+      return true
+    }
+
+    return key.raw === "\u001b[27;5;48~" || key.raw === "\u001b[27;6;48~"
   }
 
   private handleKeyPress = (key: KeyEvent): void => {
-    if (key.ctrl && key.name === "l") {
-      this.input.value = ""
-      this.refreshStatus("draft cleared")
+    if (!key.ctrl && !key.meta && key.shift && key.name === "u") {
+      key.preventDefault()
+      this.renderer.useMouse = !this.renderer.useMouse
+      this.refreshStatus(`mouse ${this.renderer.useMouse ? "enabled" : "disabled"}`)
+      return
+    }
+
+    if (key.ctrl && key.name === "s") {
+      key.preventDefault()
+      this.setStreamEnabled(!this.streamEnabled)
+      return
+    }
+
+    if (this.isModeToggleKey(key)) {
+      key.preventDefault()
+      this.toggleMode()
       return
     }
 
     if (key.ctrl && key.name === "r") {
-      this.publishDemoSequence()
-      this.refreshStatus("demo sequence queued")
+      key.preventDefault()
+      this.publishDemoTranscript()
+      return
+    }
+
+    if (key.ctrl && key.name === "l") {
+      key.preventDefault()
+      this.composer.setText("")
+      this.refreshStatus("draft cleared")
       return
     }
 
     if (key.ctrl && key.name === "up") {
+      key.preventDefault()
       this.adjustFooterHeight(1)
       return
     }
 
     if (key.ctrl && key.name === "down") {
+      key.preventDefault()
       this.adjustFooterHeight(-1)
       return
     }
 
+    if (key.ctrl && key.name === "]") {
+      key.preventDefault()
+      this.setStreamInterval(this.streamIntervalMs - STREAM_INTERVAL_STEP)
+      return
+    }
+
+    if (key.ctrl && key.name === "[") {
+      key.preventDefault()
+      this.setStreamInterval(this.streamIntervalMs + STREAM_INTERVAL_STEP)
+      return
+    }
+
     if (key.name === "escape") {
-      this.input.focus()
-      this.refreshStatus("input focused")
+      this.composer.focus()
+      this.refreshStatus("composer focused")
     }
   }
 
@@ -1010,13 +1458,16 @@ class SplitFooterChatDemo {
   }
 
   private handleResize = (): void => {
-    const clampedFooterHeight = this.clampFooterHeight(this.renderer.footerHeight)
-    if (clampedFooterHeight !== this.renderer.footerHeight) {
-      this.renderer.footerHeight = clampedFooterHeight
+    this.desiredFooterHeight = this.clampFooterHeight(this.desiredFooterHeight)
+    if (this.mode === "split-footer" && this.renderer.footerHeight !== this.desiredFooterHeight) {
+      this.renderer.footerHeight = this.desiredFooterHeight
     }
 
-    this.relayout()
     this.refreshStatus("layout resized")
+  }
+
+  private handleRendererDestroy = (): void => {
+    this.destroy()
   }
 
   public destroy(): void {
@@ -1025,20 +1476,26 @@ class SplitFooterChatDemo {
     }
 
     this.destroyed = true
+    this.streamEnabled = false
 
     if (this.pendingAssistantReply) {
       clearTimeout(this.pendingAssistantReply)
       this.pendingAssistantReply = null
     }
 
-    this.input.off(InputRenderableEvents.INPUT, this.handleInputChange)
-    this.input.off(InputRenderableEvents.ENTER, this.handleInputSubmit)
+    if (this.streamTimer) {
+      clearInterval(this.streamTimer)
+      this.streamTimer = null
+    }
+
+    this.composer.off("line-info-change", this.handleDraftChanged)
+    this.composer.onSubmit = undefined
     this.renderer.keyInput.off("keypress", this.handleKeyPress)
     this.renderer.off("resize", this.handleResize)
     this.renderer.off(CliRenderEvents.THEME_MODE, this.handleThemeMode)
+    this.renderer.off(CliRenderEvents.DESTROY, this.handleRendererDestroy)
 
-    this.input.destroy()
-    this.renderer.root.remove(this.footerContainer.id)
+    this.renderer.root.remove(this.shell.id)
 
     if (!this.renderer.isDestroyed) {
       this.renderer.externalOutputMode = "passthrough"
@@ -1047,14 +1504,14 @@ class SplitFooterChatDemo {
   }
 }
 
-let activeDemo: SplitFooterChatDemo | null = null
+let activeDemo: SplitFooterDemo | null = null
 
 export function run(rendererInstance: CliRenderer): void {
   if (activeDemo) {
     activeDemo.destroy()
   }
 
-  activeDemo = new SplitFooterChatDemo(rendererInstance)
+  activeDemo = new SplitFooterDemo(rendererInstance)
 }
 
 export function destroy(_rendererInstance: CliRenderer): void {
