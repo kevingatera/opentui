@@ -150,6 +150,10 @@ function getOpenTUILib(libPath?: string) {
       args: ["ptr", "bool"],
       returns: "void",
     },
+    setClearOnShutdown: {
+      args: ["ptr", "bool"],
+      returns: "void",
+    },
     setBackgroundColor: {
       args: ["ptr", "ptr"],
       returns: "void",
@@ -1399,6 +1403,7 @@ export interface RenderLib {
   setTerminalEnvVar: (renderer: Pointer, key: string, value: string) => boolean
   destroyRenderer: (renderer: Pointer) => void
   setUseThread: (renderer: Pointer, useThread: boolean) => void
+  setClearOnShutdown: (renderer: Pointer, clear: boolean) => void
   setBackgroundColor: (renderer: Pointer, color: RGBA) => void
   setRenderOffset: (renderer: Pointer, offset: number) => void
   resetSplitScrollback: (renderer: Pointer, seedRows: number, pinnedRenderOffset: number) => number
@@ -2046,6 +2051,10 @@ class FFIRenderLib implements RenderLib {
 
   public setUseThread(renderer: Pointer, useThread: boolean) {
     this.opentui.symbols.setUseThread(renderer, useThread)
+  }
+
+  public setClearOnShutdown(renderer: Pointer, clear: boolean) {
+    this.opentui.symbols.setClearOnShutdown(renderer, clear)
   }
 
   public setBackgroundColor(renderer: Pointer, color: RGBA) {

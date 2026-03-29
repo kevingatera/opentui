@@ -665,6 +665,51 @@ test("CliRenderer destroy flushes writeToScrollback output before clearing split
   lib.destroyRenderer = originalDestroyRenderer
 })
 
+test("CliRenderer destroy does not clear split footer surface when clearOnShutdown is false", async () => {
+  const result = await createTestRenderer({
+    width: 40,
+    height: 10,
+    screenMode: "split-footer",
+    footerHeight: 4,
+    externalOutputMode: "capture-stdout",
+    consoleMode: "disabled",
+    clearOnShutdown: false,
+  })
+
+  renderer = result.renderer
+  ;(renderer as any)._terminalIsSetup = true
+  ;(renderer as any).stdout.write("before-destroy\n")
+
+  const order: string[] = []
+  const lib = (renderer as any).lib
+  const originalCommitSplitFooterSnapshot = lib.commitSplitFooterSnapshot.bind(lib)
+  const originalSetRenderOffset = lib.setRenderOffset.bind(lib)
+  const originalDestroyRenderer = lib.destroyRenderer.bind(lib)
+
+  lib.commitSplitFooterSnapshot = (...args: any[]) => {
+    order.push("split-commit")
+    return originalCommitSplitFooterSnapshot(...args)
+  }
+  lib.setRenderOffset = (...args: any[]) => {
+    if (args[1] === 0) {
+      order.push("clear")
+    }
+    return originalSetRenderOffset(...args)
+  }
+  lib.destroyRenderer = (...args: any[]) => {
+    order.push("destroy")
+    return originalDestroyRenderer(...args)
+  }
+
+  renderer.destroy()
+
+  expect(order).toEqual(["split-commit", "destroy"])
+
+  lib.commitSplitFooterSnapshot = originalCommitSplitFooterSnapshot
+  lib.setRenderOffset = originalSetRenderOffset
+  lib.destroyRenderer = originalDestroyRenderer
+})
+
 test("CliRenderer split-footer passthrough ignores console capture writes", async () => {
   const result = await createTestRenderer({
     screenMode: "split-footer",

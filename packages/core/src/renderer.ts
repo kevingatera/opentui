@@ -103,6 +103,9 @@ export interface CliRendererConfig {
   // Clean up on these signals. Defaults to the common termination signals.
   exitSignals?: NodeJS.Signals[]
 
+  // Clear owned screen regions on suspend/destroy. Defaults to true.
+  clearOnShutdown?: boolean
+
   // Forward these env var names to native terminal detection.
   forwardEnvKeys?: string[]
 
@@ -687,6 +690,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private _screenMode: ScreenMode = "alternate-screen"
   private _footerHeight: number = DEFAULT_FOOTER_HEIGHT
   private _externalOutputMode: ExternalOutputMode = "passthrough"
+  private clearOnShutdown: boolean = true
   private _suspendedMouseEnabled: boolean = false
   private _previousControlState: RendererControlState = RendererControlState.IDLE
   private capturedRenderable?: Renderable
@@ -829,6 +833,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this._footerHeight = footerHeight
 
     this.rendererPtr = rendererPtr
+    this.clearOnShutdown = config.clearOnShutdown ?? true
+    this.lib.setClearOnShutdown(this.rendererPtr, this.clearOnShutdown)
 
     const forwardEnvKeys = config.forwardEnvKeys ?? [...DEFAULT_FORWARDED_ENV_KEYS]
     for (const key of forwardEnvKeys) {
@@ -2783,7 +2789,9 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     ) {
       this.flushPendingSplitOutputBeforeTransition(true)
       this.renderOffset = 0
-      this.lib.setRenderOffset(this.rendererPtr, 0)
+      if (this.clearOnShutdown) {
+        this.lib.setRenderOffset(this.rendererPtr, 0)
+      }
     }
 
     this._externalOutputMode = "passthrough"

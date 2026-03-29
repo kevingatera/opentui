@@ -64,6 +64,7 @@ pub const CliRenderer = struct {
     testing: bool = false,
     useAlternateScreen: bool = true,
     terminalSetup: bool = false,
+    clearOnShutdown: bool = true,
 
     renderStats: struct {
         lastFrameTime: f64,
@@ -357,6 +358,10 @@ pub const CliRenderer = struct {
         self.performShutdownSequence();
     }
 
+    pub fn setClearOnShutdown(self: *CliRenderer, clear: bool) void {
+        self.clearOnShutdown = clear;
+    }
+
     pub fn resumeRenderer(self: *CliRenderer) void {
         if (!self.terminalSetup) return;
         self.setupTerminalWithoutDetection(self.useAlternateScreen, self.renderOffset == 0);
@@ -383,10 +388,10 @@ pub const CliRenderer = struct {
 
         if (self.useAlternateScreen) {
             direct.flush() catch {};
-        } else if (self.renderOffset == 0) {
+        } else if (self.clearOnShutdown and self.renderOffset == 0) {
             direct.writeAll("\x1b[H\x1b[J") catch {};
             direct.flush() catch {};
-        } else if (self.renderOffset > 0) {
+        } else if (self.clearOnShutdown and self.renderOffset > 0) {
             self.clearSplitFooterSurface(direct);
             direct.flush() catch {};
         }

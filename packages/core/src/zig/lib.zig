@@ -209,6 +209,10 @@ export fn setUseThread(rendererPtr: *renderer.CliRenderer, useThread: bool) void
     rendererPtr.setUseThread(useThread);
 }
 
+export fn setClearOnShutdown(rendererPtr: *renderer.CliRenderer, clear: bool) void {
+    rendererPtr.setClearOnShutdown(clear);
+}
+
 export fn destroyRenderer(rendererPtr: *renderer.CliRenderer) void {
     rendererPtr.destroy();
 }
