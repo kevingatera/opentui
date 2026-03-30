@@ -969,15 +969,6 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       return
     }
 
-    // requestRender() can queue a one-shot frame right before start().
-    // Once continuous rendering is running, skip that queued one-shot frame
-    // so we do not create a second scheduling chain.
-    if (this._isRunning || this._isDestroyed) {
-      this.updateScheduled = false
-      this.resolveIdleIfNeeded()
-      return
-    }
-
     try {
       await this.loop()
     } finally {
@@ -2024,9 +2015,9 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     if (!this._isRunning && !this._isDestroyed) {
       this._isRunning = true
 
-      // If a one-shot frame was queued while idle, the continuous start() loop
-      // supersedes it. Invalidate the queued one-shot so it cannot fire later
-      // and render after a rapid start()/stop() sequence.
+      // Invalidate any queued idle one-shot frame.
+      // start()/live/resume transition to the continuous loop, so queued
+      // activateFrame callbacks must no-op via !updateScheduled.
       this.updateScheduled = false
 
       if (this.memorySnapshotInterval > 0) {
