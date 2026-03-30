@@ -964,9 +964,17 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   }
 
   private async activateFrame() {
-    await this.loop()
-    this.updateScheduled = false
-    this.resolveIdleIfNeeded()
+    if (!this.updateScheduled) {
+      this.resolveIdleIfNeeded()
+      return
+    }
+
+    try {
+      await this.loop()
+    } finally {
+      this.updateScheduled = false
+      this.resolveIdleIfNeeded()
+    }
   }
 
   public get consoleMode(): ConsoleMode {
@@ -2006,6 +2014,11 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private internalStart(): void {
     if (!this._isRunning && !this._isDestroyed) {
       this._isRunning = true
+
+      // Invalidate any queued idle one-shot frame.
+      // start()/live/resume transition to the continuous loop, so queued
+      // activateFrame callbacks must no-op via !updateScheduled.
+      this.updateScheduled = false
 
       if (this.memorySnapshotInterval > 0) {
         this.startMemorySnapshotTimer()
