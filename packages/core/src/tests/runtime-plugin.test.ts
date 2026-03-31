@@ -240,4 +240,52 @@ describe("runtime plugin", () => {
     expect(result.exitCode).toBe(0)
     expect(stdout).toContain("marker=resolved-from-external-root")
   })
+
+  it("rewrites runtime specifiers in node_modules modules by default", () => {
+    const fixturePath = join(import.meta.dir, "runtime-plugin-node-modules-runtime-specifier.fixture.ts")
+    const result = Bun.spawnSync([process.execPath, fixturePath], {
+      cwd: join(import.meta.dir, "..", ".."),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: process.env,
+    })
+
+    const stdout = result.stdout.toString().trim()
+    const stderr = result.stderr.toString().trim()
+
+    if (stdout) {
+      console.debug(`[runtime-plugin-node-modules-runtime-specifier.fixture] stdout:\n${stdout}`)
+    }
+
+    if (stderr) {
+      console.debug(`[runtime-plugin-node-modules-runtime-specifier.fixture] stderr:\n${stderr}`)
+    }
+
+    expect(result.exitCode).toBe(0)
+    expect(stdout).toContain("marker=resolved-from-node-modules-runtime-specifier")
+  })
+
+  it("does not rewrite non-runtime bare imports in node_modules modules by default", () => {
+    const fixturePath = join(import.meta.dir, "runtime-plugin-node-modules-no-bare-rewrite.fixture.ts")
+    const result = Bun.spawnSync([process.execPath, fixturePath], {
+      cwd: join(import.meta.dir, "..", ".."),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: process.env,
+    })
+
+    const stdout = result.stdout.toString().trim()
+    const stderr = result.stderr.toString().trim()
+
+    if (stdout) {
+      console.debug(`[runtime-plugin-node-modules-no-bare-rewrite.fixture] stdout:\n${stdout}`)
+    }
+
+    if (stderr) {
+      console.debug(`[runtime-plugin-node-modules-no-bare-rewrite.fixture] stderr:\n${stderr}`)
+    }
+
+    expect(result.exitCode).toBe(0)
+    expect(stdout).toContain("errorContainsMissingBareDependency=true")
+  })
 })
