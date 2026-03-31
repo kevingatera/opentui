@@ -5,15 +5,25 @@ export type RuntimeModuleExports = Record<string, unknown>
 export type RuntimeModuleLoader = () => RuntimeModuleExports | Promise<RuntimeModuleExports>
 export type RuntimeModuleEntry = RuntimeModuleExports | RuntimeModuleLoader
 
+export interface RuntimePluginRewriteOptions {
+  nodeModulesRuntimeSpecifiers?: boolean
+  nodeModulesBareSpecifiers?: boolean
+}
+
 export interface CreateRuntimePluginOptions {
   core?: RuntimeModuleEntry
   additional?: Record<string, RuntimeModuleEntry>
+  rewrite?: RuntimePluginRewriteOptions
 }
 
 const CORE_RUNTIME_SPECIFIER = "@opentui/core"
 const CORE_TESTING_RUNTIME_SPECIFIER = "@opentui/core/testing"
 const RUNTIME_MODULE_PREFIX = "opentui:runtime-module:"
 const MAX_RUNTIME_RESOLVE_PARENTS = 64
+const DEFAULT_RUNTIME_PLUGIN_REWRITE_OPTIONS: Required<RuntimePluginRewriteOptions> = {
+  nodeModulesRuntimeSpecifiers: true,
+  nodeModulesBareSpecifiers: false,
+}
 
 const DEFAULT_CORE_RUNTIME_MODULE_SPECIFIERS = [CORE_RUNTIME_SPECIFIER, CORE_TESTING_RUNTIME_SPECIFIER] as const
 
@@ -54,6 +64,21 @@ const sourcePath = (path: string): string => {
   return end === undefined ? path : path.slice(0, end)
 }
 
+const isNodeModulesPath = (path: string): boolean => {
+  return /(?:^|[/\\])node_modules(?:[/\\])/.test(path)
+}
+
+const resolveRuntimePluginRewriteOptions = (
+  options: RuntimePluginRewriteOptions | undefined,
+): Required<RuntimePluginRewriteOptions> => {
+  return {
+    nodeModulesRuntimeSpecifiers:
+      options?.nodeModulesRuntimeSpecifiers ?? DEFAULT_RUNTIME_PLUGIN_REWRITE_OPTIONS.nodeModulesRuntimeSpecifiers,
+    nodeModulesBareSpecifiers:
+      options?.nodeModulesBareSpecifiers ?? DEFAULT_RUNTIME_PLUGIN_REWRITE_OPTIONS.nodeModulesBareSpecifiers,
+  }
+}
+
 const runtimeLoaderForPath = (path: string): "js" | "ts" | "jsx" | "tsx" | null => {
   const cleanPath = sourcePath(path)
 
@@ -76,7 +101,7 @@ const runtimeLoaderForPath = (path: string): "js" | "ts" | "jsx" | "tsx" | null 
   return null
 }
 
-const runtimeSourceFilter = /^(?!.*(?:\/|\\)node_modules(?:\/|\\)).*\.(?:[cm]?js|[cm]?ts|jsx|tsx)(?:[?#].*)?$/
+const runtimeSourceFilter = /\.(?:[cm]?js|[cm]?ts|jsx|tsx)(?:[?#].*)?$/
 
 const resolveImportSpecifierPatterns = [
   /(from\s+["'])([^"']+)(["'])/g,
@@ -190,6 +215,7 @@ export function createRuntimePlugin(input: CreateRuntimePluginOptions = {}): Bun
   const runtimeModules = new Map<string, RuntimeModuleEntry>()
   runtimeModules.set(CORE_RUNTIME_SPECIFIER, input.core ?? (coreRuntime as RuntimeModuleExports))
   runtimeModules.set(CORE_TESTING_RUNTIME_SPECIFIER, loadCoreTestingRuntimeModule)
+  const rewriteOptions = resolveRuntimePluginRewriteOptions(input.rewrite)
 
   for (const [specifier, moduleEntry] of Object.entries(input.additional ?? {})) {
     runtimeModules.set(specifier, moduleEntry)
@@ -222,6 +248,14 @@ export function createRuntimePlugin(input: CreateRuntimePluginOptions = {}): Bun
 
       build.onLoad({ filter: runtimeSourceFilter }, async (args) => {
         const path = sourcePath(args.path)
+        const nodeModulesPath = isNodeModulesPath(path)
+        const shouldRewriteRuntimeSpecifiers = !nodeModulesPath || rewriteOptions.nodeModulesRuntimeSpecifiers
+        const shouldRewriteBareSpecifiers = !nodeModulesPath || rewriteOptions.nodeModulesBareSpecifiers
+
+        if (!shouldRewriteRuntimeSpecifiers && !shouldRewriteBareSpecifiers) {
+          return undefined
+        }
+
         const loader = runtimeLoaderForPath(args.path)
         if (!loader) {
           throw new Error(`Unable to determine runtime loader for path: ${args.path}`)
@@ -229,13 +263,17 @@ export function createRuntimePlugin(input: CreateRuntimePluginOptions = {}): Bun
 
         const file = Bun.file(path)
         const contents = await file.text()
-        const runtimeRewrittenContents = rewriteRuntimeSpecifiers(contents, runtimeModuleIdsBySpecifier)
+        const runtimeRewrittenContents = shouldRewriteRuntimeSpecifiers
+          ? rewriteRuntimeSpecifiers(contents, runtimeModuleIdsBySpecifier)
+          : contents
 
-        if (runtimeRewrittenContents !== contents) {
+        if (runtimeRewrittenContents !== contents && shouldRewriteBareSpecifiers) {
           registerResolveParent(resolveParentsByRecency, path)
         }
 
-        const transformedContents = rewriteImportsFromResolveParents(runtimeRewrittenContents, resolveParentsByRecency)
+        const transformedContents = shouldRewriteBareSpecifiers
+          ? rewriteImportsFromResolveParents(runtimeRewrittenContents, resolveParentsByRecency)
+          : runtimeRewrittenContents
 
         return {
           contents: transformedContents,
