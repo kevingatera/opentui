@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Buffer } from "node:buffer"
 import { ManualClock } from "../testing/manual-clock.js"
+import type { Clock, TimerHandle } from "./clock.js"
 import type { ScrollInfo } from "./parse.mouse"
 import { StdinParser, type StdinEvent, type StdinParserOptions } from "./stdin-parser.js"
 
@@ -1689,6 +1690,21 @@ describe("StdinParser", () => {
       }
     })
 
+    test("flushTimeout() only flushes when caller reports elapsed timeout", () => {
+      const parser = createParser({ timeoutMs: TEST_TIMEOUT_MS })
+      try {
+        parser.push(Buffer.from("\x1b"))
+
+        parser.flushTimeout(TEST_TIMEOUT_MS - 1)
+        expect(snap(parser)).toEqual([])
+
+        parser.flushTimeout(TEST_TIMEOUT_MS)
+        expect(snap(parser)).toEqual([k("escape", { raw: "\x1b" })])
+      } finally {
+        parser.destroy()
+      }
+    })
+
     test("timeout resets when more bytes arrive", () => {
       const { parser, clock } = createTimedParser()
       try {
@@ -2199,6 +2215,60 @@ describe("StdinParser", () => {
         expect(snap(p)).toEqual([paste("\x1b[20".repeat(100))])
       } finally {
         p.destroy()
+      }
+    })
+  })
+
+  describe("timer/clock disagreement race condition", () => {
+    test("timeout callback flushes even when now() reports slightly less elapsed time than timeoutMs", () => {
+      const inner = new ManualClock()
+      let insideTimerCallback = false
+
+      // Wraps ManualClock so that now() returns pendingSinceMs + timeoutMs - 1
+      // during the timeout callback, simulating runtime behavior where timer
+      // scheduling and now() sampling disagree by a small amount.
+      const disagreeingClock: Clock = {
+        now(): number {
+          if (insideTimerCallback) {
+            // Report 1ms less than the timeout requires — this is the
+            // race condition that kept bytes stuck before the fix.
+            return TEST_TIMEOUT_MS - 1
+          }
+          return inner.now()
+        },
+        setTimeout(fn: () => void, delayMs: number): TimerHandle {
+          return inner.setTimeout(() => {
+            insideTimerCallback = true
+            try {
+              fn()
+            } finally {
+              insideTimerCallback = false
+            }
+          }, delayMs)
+        },
+        clearTimeout(handle: TimerHandle): void {
+          inner.clearTimeout(handle)
+        },
+        setInterval(fn: () => void, delayMs: number): TimerHandle {
+          return inner.setInterval(fn, delayMs)
+        },
+        clearInterval(handle: TimerHandle): void {
+          inner.clearInterval(handle)
+        },
+      }
+
+      const parser = new StdinParser({ armTimeouts: true, clock: disagreeingClock, timeoutMs: TEST_TIMEOUT_MS })
+      try {
+        parser.push(Buffer.from("\x1b"))
+        expect(snap(parser)).toEqual([])
+
+        // Fire the timer — now() will report timeoutMs - 1 elapsed, but the
+        // timeout callback still force-flushes without re-checking elapsed time.
+        inner.advance(TEST_TIMEOUT_MS)
+
+        expect(snap(parser)).toEqual([k("escape", { raw: "\x1b" })])
+      } finally {
+        parser.destroy()
       }
     })
   })
