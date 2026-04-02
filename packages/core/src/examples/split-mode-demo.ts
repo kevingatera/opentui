@@ -21,6 +21,18 @@ const DEFAULT_STREAM_INTERVAL = 1600
 const MIN_STREAM_INTERVAL = 180
 const MAX_STREAM_INTERVAL = 2000
 const STREAM_INTERVAL_STEP = 80
+const CTRL_R_HOLD_REPEAT_MS = 45
+const CTRL_R_HOLD_DURATION_MS = 1400
+const CTRL_R_HOLD_BOOT_DELAY_MS = 600
+// Stress-mode helpers are opt-in by default. This keeps the example usable for
+// interactive/manual checks while still allowing scripted flicker repro loops.
+const DEFAULT_AUTO_EXIT_MS = 0
+
+const AUTO_CTRL_R_HOLD_ON_BOOT =
+  process.env.OTUI_SPLIT_DEMO_AUTO_CTRL_R_HOLD === "1" ||
+  process.env.OTUI_SPLIT_DEMO_AUTO_CTRL_R_HOLD?.toLowerCase() === "true"
+const AUTO_EXIT_ENV = Number.parseInt(process.env.OTUI_SPLIT_DEMO_AUTO_EXIT_MS ?? "", 10)
+const AUTO_EXIT_MS = Number.isFinite(AUTO_EXIT_ENV) && AUTO_EXIT_ENV > 0 ? AUTO_EXIT_ENV : DEFAULT_AUTO_EXIT_MS
 
 interface WallLyricPassage {
   song: string
@@ -426,6 +438,9 @@ class SplitFooterDemo {
   private desiredFooterHeight = DEFAULT_FOOTER_HEIGHT
   private pendingAssistantReply: ReturnType<typeof setTimeout> | null = null
   private streamTimer: ReturnType<typeof setInterval> | null = null
+  private ctrlRHoldTimer: ReturnType<typeof setInterval> | null = null
+  private ctrlRBootTimer: ReturnType<typeof setTimeout> | null = null
+  private ctrlRHoldDeadlineMs = 0
   private streamEnabled = true
   private streamIntervalMs = DEFAULT_STREAM_INTERVAL
   private streamCount = 0
@@ -581,6 +596,9 @@ class SplitFooterDemo {
     this.applyPalette()
     this.refreshStatus("ready")
     this.publishWelcomeMessages()
+    if (AUTO_CTRL_R_HOLD_ON_BOOT) {
+      this.scheduleCtrlRHoldBootSimulation()
+    }
     this.syncStreamLoop()
     this.composer.focus()
   }
@@ -640,7 +658,7 @@ class SplitFooterDemo {
     this.statusText.content = `msg ${this.messageCount} draft ${this.draftLength} ${typingLabel} | ${this.statusMessage}`
     this.metaText.content = `${mouseLabel} stream:${streamLabel} commits:${this.commitCount} lines:${this.streamCount}`
     this.controlsText.content =
-      "Ctrl+Enter send · Enter newline · Shift+U mouse · Ctrl+S stream · Ctrl+0 mode · Ctrl+R demo · /help"
+      "Ctrl+Enter send · Enter newline · Shift+U mouse · Ctrl+S stream · Ctrl+0 mode · Ctrl+R hold-demo · /help"
   }
 
   private activateSplitFooterMode(announce: boolean = true): void {
@@ -831,7 +849,7 @@ class SplitFooterDemo {
         "/speed <ms> - set stream interval",
         "/mode split|full|toggle - switch split/footer mode",
         "/footer <n> - set split footer height",
-        "keys: Ctrl+Enter send, Enter newline, Shift+U mouse, Ctrl+S stream",
+        "keys: Ctrl+Enter send, Enter newline, Shift+U mouse, Ctrl+S stream, Ctrl+R held demo burst",
       ].join("\n"),
       false,
     )
@@ -851,6 +869,66 @@ class SplitFooterDemo {
       false,
     )
     this.refreshStatus("demo transcript queued")
+  }
+
+  private scheduleCtrlRHoldBootSimulation(): void {
+    if (this.ctrlRBootTimer || this.destroyed) {
+      return
+    }
+
+    this.ctrlRBootTimer = setTimeout(() => {
+      this.ctrlRBootTimer = null
+      if (this.destroyed) {
+        return
+      }
+
+      this.startCtrlRHoldSimulation(CTRL_R_HOLD_DURATION_MS)
+    }, CTRL_R_HOLD_BOOT_DELAY_MS)
+  }
+
+  private runCtrlRHoldTick = (): void => {
+    if (this.destroyed || !this.isSplitCaptureMode()) {
+      this.stopCtrlRHoldSimulation(false)
+      return
+    }
+
+    if (Date.now() >= this.ctrlRHoldDeadlineMs) {
+      this.stopCtrlRHoldSimulation(true)
+      return
+    }
+
+    this.publishDemoTranscript()
+  }
+
+  private startCtrlRHoldSimulation(durationMs: number = CTRL_R_HOLD_DURATION_MS): void {
+    if (this.destroyed || !this.isSplitCaptureMode()) {
+      return
+    }
+
+    this.ctrlRHoldDeadlineMs = Math.max(this.ctrlRHoldDeadlineMs, Date.now() + durationMs)
+
+    if (this.ctrlRHoldTimer) {
+      return
+    }
+
+    this.publishDemoTranscript()
+    this.ctrlRHoldTimer = setInterval(this.runCtrlRHoldTick, CTRL_R_HOLD_REPEAT_MS)
+    this.refreshStatus("simulating Ctrl+R hold")
+  }
+
+  private stopCtrlRHoldSimulation(announceDone: boolean): void {
+    if (this.ctrlRHoldTimer) {
+      clearInterval(this.ctrlRHoldTimer)
+      this.ctrlRHoldTimer = null
+    }
+
+    this.ctrlRHoldDeadlineMs = 0
+
+    if (!announceDone || this.destroyed) {
+      return
+    }
+
+    this.refreshStatus("Ctrl+R hold simulation complete")
   }
 
   private handleCommand(commandLine: string): void {
@@ -1086,7 +1164,7 @@ class SplitFooterDemo {
 
     if (key.ctrl && key.name === "r") {
       key.preventDefault()
-      this.publishDemoTranscript()
+      this.startCtrlRHoldSimulation(CTRL_R_HOLD_DURATION_MS)
       return
     }
 
@@ -1159,6 +1237,13 @@ class SplitFooterDemo {
       this.pendingAssistantReply = null
     }
 
+    if (this.ctrlRBootTimer) {
+      clearTimeout(this.ctrlRBootTimer)
+      this.ctrlRBootTimer = null
+    }
+
+    this.stopCtrlRHoldSimulation(false)
+
     if (this.streamTimer) {
       clearInterval(this.streamTimer)
       this.streamTimer = null
@@ -1213,4 +1298,13 @@ if (import.meta.main) {
   run(renderer)
   setupCommonDemoKeys(renderer)
   renderer.start()
+
+  // Used by capture scripts to bound each run to a fixed duration.
+  if (AUTO_EXIT_MS > 0) {
+    setTimeout(() => {
+      if (!renderer.isDestroyed) {
+        renderer.destroy()
+      }
+    }, AUTO_EXIT_MS)
+  }
 }

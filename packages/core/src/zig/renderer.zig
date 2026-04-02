@@ -131,6 +131,12 @@ pub const CliRenderer = struct {
     currentOutputBuffer: []u8 = &[_]u8{},
     currentOutputLen: usize = 0,
     splitScrollback: split_scrollback.SplitScrollback = .{},
+    // Batch state for split-footer commit flushing. A single JS render tick can
+    // enqueue multiple stdout snapshots; batching keeps all of them inside one
+    // sync frame so terminals do not repeatedly enter/exit synchronized update.
+    splitBatchActive: bool = false,
+    splitBatchRedrawFooter: bool = false,
+    splitBatchDeltaTime: f64 = 0,
 
     // Hit grid for mouse event dispatch.
     //
@@ -160,6 +166,11 @@ pub const CliRenderer = struct {
     lastCursorStyleTag: ?u8 = null,
     lastCursorBlinking: ?bool = null,
     lastCursorColorRGB: ?[3]u8 = null,
+    // Cursor diff cache. If nothing changed we avoid emitting cursor restore/show
+    // sequences for no-op frames, which removes a major source of visible flicker.
+    lastCursorX: ?u32 = null,
+    lastCursorY: ?u32 = null,
+    lastCursorVisible: ?bool = null,
     lastMousePointerStyle: Terminal.MousePointerStyle = .default,
 
     // Preallocated output buffer
@@ -656,16 +667,108 @@ pub const CliRenderer = struct {
         pinned_render_offset: u32,
         force: bool,
     ) u32 {
-        const now = std.time.microTimestamp();
-        const deltaTimeMs = @as(f64, @floatFromInt(now - self.lastRenderTime));
-        const deltaTime = deltaTimeMs / 1000.0; // Convert to seconds
+        // Backward-compatible API: one call means one complete frame.
+        return self.commitSplitFooterSnapshotBatched(
+            snapshot,
+            row_columns,
+            start_on_new_line,
+            trailing_newline,
+            pinned_render_offset,
+            force,
+            true,
+            true,
+        );
+    }
 
-        self.lastRenderTime = now;
-        self.renderDebugOverlay();
+    pub fn commitSplitFooterSnapshotBatched(
+        self: *CliRenderer,
+        snapshot: *const OptimizedBuffer,
+        row_columns: u32,
+        start_on_new_line: bool,
+        trailing_newline: bool,
+        pinned_render_offset: u32,
+        force: bool,
+        begin_frame: bool,
+        finalize_frame: bool,
+    ) u32 {
+        // Batched commit protocol:
+        // - first call starts frame and appends payload
+        // - middle calls append payload only
+        // - final call renders footer diff/cursor and closes frame
+        // This avoids repeated syncSet/syncReset and cursor toggles per chunk.
+        if (begin_frame) {
+            const now = std.time.microTimestamp();
+            const deltaTimeMs = @as(f64, @floatFromInt(now - self.lastRenderTime));
+            const deltaTime = deltaTimeMs / 1000.0;
 
-        self.prepareSplitFooterSnapshotFrame(snapshot, row_columns, start_on_new_line, trailing_newline, pinned_render_offset, force);
+            self.lastRenderTime = now;
+            self.renderDebugOverlay();
 
-        self.finalizeRender(deltaTime);
+            resetActiveOutputBuffer();
+            const writer = OutputBufferWriter.writer();
+            beginRenderFrame(writer);
+
+            // Track batch lifetime so subsequent calls can append into the same
+            // output buffer without restarting frame state.
+            self.splitBatchActive = !finalize_frame;
+            self.splitBatchRedrawFooter = false;
+            self.splitBatchDeltaTime = deltaTime;
+
+            const redraw_footer = self.appendSplitFooterSnapshotCommit(
+                writer,
+                snapshot,
+                row_columns,
+                start_on_new_line,
+                trailing_newline,
+                pinned_render_offset,
+                force,
+            );
+
+            if (finalize_frame) {
+                self.prepareRenderFrame(redraw_footer, false, true);
+                self.finalizeRender(deltaTime);
+                self.splitBatchActive = false;
+                self.splitBatchRedrawFooter = false;
+                self.splitBatchDeltaTime = 0;
+            } else {
+                self.splitBatchRedrawFooter = redraw_footer;
+            }
+
+            return self.renderOffset;
+        }
+
+        // Defensive fallback: if caller forgot begin_frame, execute through the
+        // single-commit path instead of appending into undefined batch state.
+        if (!self.splitBatchActive) {
+            return self.commitSplitFooterSnapshot(
+                snapshot,
+                row_columns,
+                start_on_new_line,
+                trailing_newline,
+                pinned_render_offset,
+                force,
+            );
+        }
+
+        const writer = OutputBufferWriter.writer();
+        const redraw_footer = self.appendSplitFooterSnapshotCommit(
+            writer,
+            snapshot,
+            row_columns,
+            start_on_new_line,
+            trailing_newline,
+            pinned_render_offset,
+            force,
+        );
+        self.splitBatchRedrawFooter = self.splitBatchRedrawFooter or redraw_footer;
+
+        if (finalize_frame) {
+            self.prepareRenderFrame(self.splitBatchRedrawFooter, false, true);
+            self.finalizeRender(self.splitBatchDeltaTime);
+            self.splitBatchActive = false;
+            self.splitBatchRedrawFooter = false;
+            self.splitBatchDeltaTime = 0;
+        }
 
         return self.renderOffset;
     }
@@ -724,27 +827,15 @@ pub const CliRenderer = struct {
         pinned_render_offset: u32,
         force: bool,
     ) void {
-        resetActiveOutputBuffer();
-        var writer = OutputBufferWriter.writer();
-        beginRenderFrame(writer);
-
         const previousRenderOffset = self.renderOffset;
         const next_render_offset = self.splitScrollback.renderOffset(pinned_render_offset);
-        const previousFooterTopLine: u32 = @max(previousRenderOffset + 1, @as(u32, 1));
-        const targetFooterTopLine: u32 = @max(next_render_offset + 1, @as(u32, 1));
-        const clearTopLine: u32 = @min(previousFooterTopLine, targetFooterTopLine);
         const redraw_footer = force or previousRenderOffset != next_render_offset;
 
-        if (redraw_footer) {
-            self.renderOffset = next_render_offset;
-            ansi.ANSI.moveToOutput(writer, 1, clearTopLine) catch {};
-            writer.writeAll(ansi.ANSI.eraseBelowCursor) catch {};
-            ansi.ANSI.moveToOutput(writer, 1, targetFooterTopLine) catch {};
-        } else {
-            self.renderOffset = next_render_offset;
-        }
-
-        self.prepareRenderFrame(redraw_footer, false, true);
+        self.renderOffset = next_render_offset;
+        // Do not pre-start sync frame here. prepareRenderFrame now lazily starts
+        // frame output only when something actually changes; this prevents no-op
+        // repaint ticks from emitting hide/show cursor and sync envelopes.
+        self.prepareRenderFrame(redraw_footer, true, false);
     }
 
     fn writeSnapshotCommit(
@@ -754,6 +845,18 @@ pub const CliRenderer = struct {
         row_columns: u32,
         trailing_newline: bool,
     ) void {
+        // Terminal serialization for one split append payload.
+        //
+        // This function intentionally does not emit syncSet/syncReset or footer
+        // repaint sequences. It only writes snapshot text rows at the current output
+        // cursor. Frame boundaries are controlled by commitSplitFooterSnapshot*
+        // callers so multiple payloads can share one frame.
+        //
+        // row_columns limits the per-row emitted width. TypeScript may provide a
+        // wider buffer but a smaller logical row width for wrapped stdout chunks.
+        //
+        // trailing_newline mirrors stdout semantics: only payloads that logically
+        // ended with '\n' advance and clear the next row after the final row.
         var currentFg: ?RGBA = null;
         var currentBg: ?RGBA = null;
         var currentAttributes: i32 = -1;
@@ -837,6 +940,8 @@ pub const CliRenderer = struct {
                         }
                     }
                 } else if (gp.isContinuationChar(cell.char)) {
+                    // Snapshot payload path writes a space for continuation cells so
+                    // row clearing and column progression remain deterministic.
                     writer.writeByte(' ') catch {};
                 } else {
                     const len = std.unicode.utf8Encode(@intCast(cell.char), &utf8Buf) catch 1;
@@ -850,6 +955,7 @@ pub const CliRenderer = struct {
             }
 
             writer.writeAll(ansi.ANSI.reset) catch {};
+            // Guarantee short rows do not leave stale content from prior frame data.
             writer.writeAll(ansi.ANSI.eraseToEndOfLine) catch {};
 
             const is_last_row = @as(u32, @intCast(uy + 1)) >= snapshot.height;
@@ -858,6 +964,8 @@ pub const CliRenderer = struct {
             }
 
             if (is_last_row and trailing_newline) {
+                // After a trailing newline, clear the destination row that becomes
+                // current so old footer text cannot flash through.
                 writer.writeAll(ansi.ANSI.reset) catch {};
                 writer.writeAll(ansi.ANSI.eraseToEndOfLine) catch {};
             }
@@ -868,26 +976,32 @@ pub const CliRenderer = struct {
         }
     }
 
-    fn prepareSplitFooterSnapshotFrame(
+    fn appendSplitFooterSnapshotCommit(
         self: *CliRenderer,
+        writer: anytype,
         snapshot: *const OptimizedBuffer,
         row_columns: u32,
         start_on_new_line: bool,
         trailing_newline: bool,
         pinned_render_offset: u32,
         force: bool,
-    ) void {
-        resetActiveOutputBuffer();
-        var writer = OutputBufferWriter.writer();
-        beginRenderFrame(writer);
-
+    ) bool {
+        // Shared append path for all split payload sources. Keeping one path avoids
+        // behavior drift between API-authored snapshots and captured stdout.
+        //
+        // Contract: append payload first, then position for footer repaint in the
+        // same frame. Returning redraw_footer lets caller skip full diff work when
+        // footer position did not actually change.
         const previousRenderOffset = self.renderOffset;
         const previousOutputColumn = self.splitScrollback.tail_column;
         const snapshot_has_content = snapshot.width > 0 and snapshot.height > 0;
         const normalized_row_columns = @min(row_columns, snapshot.width);
         const starts_mid_line = previousOutputColumn > 0 and start_on_new_line;
+        const previousFooterTopLine: u32 = @max(previousRenderOffset + 1, @as(u32, 1));
 
         if (snapshot_has_content) {
+            // First update logical split scrollback state, then emit terminal I/O.
+            // Keeping model state authoritative makes repaint decisions deterministic.
             if (starts_mid_line) {
                 self.splitScrollback.noteNewline();
             }
@@ -896,22 +1010,50 @@ pub const CliRenderer = struct {
 
         const next_render_offset = self.splitScrollback.renderOffset(pinned_render_offset);
         const targetFooterTopLine: u32 = @max(next_render_offset + 1, @as(u32, 1));
+        // Footer redraw is only needed when offset changes (settling/pinning) or
+        // when an explicit force was requested by the caller.
         const redraw_footer = force or previousRenderOffset != next_render_offset;
+        // When split scrollback is settled at the pinned boundary, newlines/wraps from
+        // appended output must scroll only the upper pane. Without a temporary DECSTBM
+        // region, terminals advance into the footer rows and overwrite them in place.
+        const use_bounded_scroll_region = snapshot_has_content and
+            pinned_render_offset > 0 and
+            next_render_offset == pinned_render_offset;
 
         if (snapshot_has_content or force) {
             if (snapshot_has_content) {
-                if (pinned_render_offset > 0) {
+                // Clear rows that are transitioning from "footer surface" to scrollback before
+                // writing appended rows. If this happens after append, the clear itself is what
+                // gets scrolled and manifests as extra blank lines in history.
+                if (targetFooterTopLine > previousFooterTopLine) {
+                    var clear_line = previousFooterTopLine;
+                    while (clear_line < targetFooterTopLine) : (clear_line += 1) {
+                        ansi.ANSI.moveToOutput(writer, 1, clear_line) catch {};
+                        writer.writeAll("\x1b[2K") catch {};
+                    }
+                }
+
+                if (use_bounded_scroll_region) {
+                    // Temporarily bound scrolling to the upper pane so newline/wrap
+                    // from appended payload pushes history upward instead of stepping
+                    // through footer rows.
                     writer.print("\x1b[1;{d}r", .{pinned_render_offset}) catch {};
                 }
 
                 moveToSplitOutputCursor(writer, previousRenderOffset, previousOutputColumn, self.width);
                 if (starts_mid_line) {
+                    // The prior commit left output cursor mid-row and caller asked
+                    // for newline anchoring. Emit CRLF before payload to preserve
+                    // logical row boundaries across commit chunks.
                     writer.writeAll("\r\n") catch {};
                 }
 
+                // Serialize payload rows at current output cursor.
                 self.writeSnapshotCommit(writer, snapshot, normalized_row_columns, trailing_newline);
 
-                if (pinned_render_offset > 0) {
+                if (use_bounded_scroll_region) {
+                    // Restore default full-height scroll region for regular repaint
+                    // and cursor operations after append is complete.
                     writer.writeAll("\x1b[r") catch {};
                 }
             }
@@ -919,14 +1061,12 @@ pub const CliRenderer = struct {
             self.renderOffset = next_render_offset;
             if (redraw_footer) {
                 ansi.ANSI.moveToOutput(writer, 1, targetFooterTopLine) catch {};
-                writer.writeAll(ansi.ANSI.eraseBelowCursor) catch {};
-                ansi.ANSI.moveToOutput(writer, 1, targetFooterTopLine) catch {};
             }
         } else {
             self.renderOffset = next_render_offset;
         }
 
-        self.prepareRenderFrame(redraw_footer, false, true);
+        return redraw_footer;
     }
 
     pub fn getNextBuffer(self: *CliRenderer) *OptimizedBuffer {
@@ -951,10 +1091,10 @@ pub const CliRenderer = struct {
         }
 
         var writer = OutputBufferWriter.writer();
-
-        if (!sync_started) {
-            beginRenderFrame(writer);
-        }
+        // Lazy frame start is the core no-op suppression mechanism. If diffing,
+        // cursor state, and pointer state are unchanged, frame_started stays false
+        // and we emit nothing at all for this tick.
+        var frame_started = sync_started;
 
         var currentFg: ?RGBA = null;
         var currentBg: ?RGBA = null;
@@ -996,6 +1136,11 @@ pub const CliRenderer = struct {
                 }
 
                 const cell = nextCell.?;
+
+                if (!frame_started) {
+                    beginRenderFrame(writer);
+                    frame_started = true;
+                }
 
                 const fgMatch = currentFg != null and buf.rgbaEqual(currentFg.?, cell.fg, colorEpsilon);
                 const bgMatch = currentBg != null and buf.rgbaEqual(currentBg.?, cell.bg, colorEpsilon);
@@ -1099,10 +1244,16 @@ pub const CliRenderer = struct {
         }
 
         if (hyperlinksEnabled and currentLinkId != 0) {
+            if (!frame_started) {
+                beginRenderFrame(writer);
+                frame_started = true;
+            }
             writer.writeAll("\x1b]8;;\x1b\\") catch {};
         }
 
-        writer.writeAll(ansi.ANSI.reset) catch {};
+        if (frame_started) {
+            writer.writeAll(ansi.ANSI.reset) catch {};
+        }
 
         const cursorPos = self.terminal.getCursorPosition();
         const cursorStyle = self.terminal.getCursorStyle();
@@ -1143,32 +1294,67 @@ pub const CliRenderer = struct {
             const styleChanged = (self.lastCursorStyleTag == null or self.lastCursorStyleTag.? != styleTag) or
                 (self.lastCursorBlinking == null or self.lastCursorBlinking.? != cursorStyle.blinking);
             const colorChanged = (self.lastCursorColorRGB == null or self.lastCursorColorRGB.?[0] != cursorR or self.lastCursorColorRGB.?[1] != cursorG or self.lastCursorColorRGB.?[2] != cursorB);
+            const cursorX = cursorPos.x;
+            const cursorY = cursorPos.y + self.renderOffset;
+            const positionChanged = self.lastCursorX == null or self.lastCursorY == null or self.lastCursorX.? != cursorX or self.lastCursorY.? != cursorY;
+            const visibilityChanged = self.lastCursorVisible == null or !self.lastCursorVisible.?;
+            // If any visual output was produced this frame, we must restore cursor
+            // state (position + visibility). If frame is otherwise empty, only emit
+            // cursor sequences when some cursor property actually changed.
+            const needsCursorRestore = frame_started or styleChanged or colorChanged or positionChanged or visibilityChanged;
 
-            if (colorChanged) {
-                ansi.ANSI.cursorColorOutputWriter(writer, cursorR, cursorG, cursorB) catch {};
-                self.lastCursorColorRGB = .{ cursorR, cursorG, cursorB };
+            if (needsCursorRestore) {
+                if (!frame_started) {
+                    beginRenderFrame(writer);
+                    frame_started = true;
+                }
+
+                if (colorChanged) {
+                    ansi.ANSI.cursorColorOutputWriter(writer, cursorR, cursorG, cursorB) catch {};
+                    self.lastCursorColorRGB = .{ cursorR, cursorG, cursorB };
+                }
+                if (styleChanged) {
+                    writer.writeAll(cursorStyleCode) catch {};
+                    self.lastCursorStyleTag = styleTag;
+                    self.lastCursorBlinking = cursorStyle.blinking;
+                }
+
+                ansi.ANSI.moveToOutput(writer, cursorX, cursorY) catch {};
+                writer.writeAll(ansi.ANSI.showCursor) catch {};
             }
-            if (styleChanged) {
-                writer.writeAll(cursorStyleCode) catch {};
-                self.lastCursorStyleTag = styleTag;
-                self.lastCursorBlinking = cursorStyle.blinking;
-            }
-            ansi.ANSI.moveToOutput(writer, cursorPos.x, cursorPos.y + self.renderOffset) catch {};
-            writer.writeAll(ansi.ANSI.showCursor) catch {};
+
+            self.lastCursorX = cursorX;
+            self.lastCursorY = cursorY;
+            self.lastCursorVisible = true;
         } else {
-            writer.writeAll(ansi.ANSI.hideCursor) catch {};
+            if (!frame_started and (self.lastCursorVisible == null or self.lastCursorVisible.?)) {
+                beginRenderFrame(writer);
+                frame_started = true;
+                writer.writeAll(ansi.ANSI.hideCursor) catch {};
+            }
+
             self.lastCursorStyleTag = null;
             self.lastCursorBlinking = null;
             self.lastCursorColorRGB = null;
+            self.lastCursorX = null;
+            self.lastCursorY = null;
+            self.lastCursorVisible = false;
         }
 
         const mousePointer = self.terminal.getMousePointer();
         if (mousePointer != self.lastMousePointerStyle) {
+            if (!frame_started) {
+                beginRenderFrame(writer);
+                frame_started = true;
+            }
             ansi.ANSI.setMousePointerOutput(writer, mousePointer.toName()) catch {};
             self.lastMousePointerStyle = mousePointer;
         }
 
-        writer.writeAll(ansi.ANSI.syncReset) catch {};
+        // Only close sync if we opened it. This keeps true no-op frames empty.
+        if (frame_started) {
+            writer.writeAll(ansi.ANSI.syncReset) catch {};
+        }
 
         const renderEndTime = std.time.microTimestamp();
         const renderTime = @as(f64, @floatFromInt(renderEndTime - renderStartTime));

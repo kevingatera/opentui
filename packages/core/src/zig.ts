@@ -186,8 +186,11 @@ function getOpenTUILib(libPath?: string) {
       args: ["ptr", "u32", "bool"],
       returns: "u32",
     },
+    // Single FFI entrypoint for split commit append. beginFrame/finalizeFrame let
+    // native code decide whether this call is a standalone commit or part of a
+    // larger batched frame envelope.
     commitSplitFooterSnapshot: {
-      args: ["ptr", "ptr", "u32", "bool", "bool", "u32", "bool"],
+      args: ["ptr", "ptr", "u32", "bool", "bool", "u32", "bool", "bool", "bool"],
       returns: "u32",
     },
     getNextBuffer: {
@@ -1420,6 +1423,10 @@ export interface RenderLib {
     trailingNewline: boolean,
     pinnedRenderOffset: number,
     force: boolean,
+    // beginFrame/finalizeFrame mark commit boundaries when one JS flush contains
+    // multiple stdout snapshots. Defaults preserve old one-call behavior.
+    beginFrame?: boolean,
+    finalizeFrame?: boolean,
   ) => number
   getNextBuffer: (renderer: Pointer) => OptimizedBuffer
   getCurrentBuffer: (renderer: Pointer) => OptimizedBuffer
@@ -2476,6 +2483,8 @@ class FFIRenderLib implements RenderLib {
     trailingNewline: boolean,
     pinnedRenderOffset: number,
     force: boolean,
+    beginFrame: boolean = true,
+    finalizeFrame: boolean = true,
   ): number {
     return this.opentui.symbols.commitSplitFooterSnapshot(
       renderer,
@@ -2485,6 +2494,8 @@ class FFIRenderLib implements RenderLib {
       trailingNewline,
       pinnedRenderOffset,
       force,
+      beginFrame,
+      finalizeFrame,
     )
   }
 

@@ -293,13 +293,24 @@ class ExternalOutputQueue {
     this.commits.push(commit)
   }
 
-  claim(): ExternalOutputCommit[] {
+  claim(limit: number = Number.POSITIVE_INFINITY): ExternalOutputCommit[] {
     if (this.commits.length === 0) {
       return []
     }
 
-    const output = this.commits
-    this.commits = []
+    // Split-footer capture can enqueue many tiny commits in a burst (for example,
+    // simulated Ctrl+R hold). Taking everything at once creates very large native
+    // frames that increase visible churn. We keep claim() bounded so one render tick
+    // produces one modest frame and schedules another tick if work remains.
+    const clampedLimit = Number.isFinite(limit) ? Math.max(1, Math.trunc(limit)) : this.commits.length
+    if (clampedLimit >= this.commits.length) {
+      const output = this.commits
+      this.commits = []
+      return output
+    }
+
+    const output = this.commits.slice(0, clampedLimit)
+    this.commits = this.commits.slice(clampedLimit)
     return output
   }
 
@@ -703,6 +714,13 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
   private _splitHeight: number = 0
   private renderOffset: number = 0
+  // One-shot latch used to request a full split repaint after transitions
+  // (resize/mode/output-path changes). Cleared on first renderNative tick.
+  private forceFullRepaintRequested: boolean = false
+  // Upper bound for captured stdout commits consumed per native frame.
+  // This is a visual smoothness control: smaller batches reduce frame envelope
+  // churn and keep render latency predictable under heavy scrollback append load.
+  private readonly maxSplitCommitsPerFrame: number = 8
 
   private _terminalWidth: number = 0
   private _terminalHeight: number = 0
@@ -1324,6 +1342,29 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.lib.setKittyKeyboardFlags(this.rendererPtr, flags)
   }
 
+  // writeToScrollback is a "render to scrollback commit" API, not a direct stdout
+  // write. The callback returns a renderable tree, we render that tree into an
+  // off-screen OptimizedBuffer, then enqueue the result as one ExternalOutputCommit.
+  //
+  // Why this shape exists:
+  // - It keeps app-authored scrollback output in the same FIFO queue as captured
+  //   stdout, so ordering is deterministic even when both sources interleave.
+  // - It lets the render loop batch multiple queued commits into one native frame,
+  //   which is the key mechanism that avoids repeated sync/cursor toggles (flicker).
+  // - It reuses the normal renderable pipeline (layout, styling, grapheme shaping),
+  //   so scrollback payloads match what users see in the live UI.
+  //
+  // startOnNewLine and trailingNewline preserve newline intent when one logical
+  // write spans multiple commits. startOnNewLine adds a newline before this commit
+  // if the previous commit ended mid-row. trailingNewline adds a newline after this
+  // commit's final row.
+  //
+  // Native split append uses these flags to avoid glued rows (missing newline), and
+  // double-advance gaps (extra newline), while still appending payload and repainting
+  // footer in the same frame.
+  //
+  // Side effects: throws if split-footer capture mode is not active, transfers
+  // snapshot buffer ownership to the queue on success, and triggers async render.
   public writeToScrollback(write: ScrollbackWriter): void {
     if (this._screenMode !== "split-footer" || this._externalOutputMode !== "capture-stdout") {
       throw new Error('writeToScrollback requires screenMode "split-footer" and externalOutputMode "capture-stdout"')
@@ -1352,6 +1393,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     })
 
     try {
+      // Render through normal renderables so split scrollback output uses the same
+      // text shaping/styling pipeline as the rest of the renderer.
       snapshotRoot.add(rootRenderable)
       snapshotRoot.render(snapshotBuffer, 0)
       this.externalOutputQueue.writeSnapshot({
@@ -1381,6 +1424,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   }
 
   private createStdoutSnapshotCommit(line: string, trailingNewline: boolean): ExternalOutputCommit {
+    // Convert captured stdout into the same commit shape used by writeToScrollback.
+    // One commit format keeps split append behavior consistent across both sources.
     const snapshotContext = new ScrollbackSnapshotRenderContext(this.width, 1, this.widthMethod)
     const maxWidth = Math.max(1, this.width)
     const lineCells = [...line]
@@ -1418,6 +1463,14 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   }
 
   private splitStdoutRows(text: string): Array<{ line: string; trailingNewline: boolean }> {
+    // Captured stdout arrives as an arbitrary byte stream, but split append commits
+    // are row-based (line text + whether that row ended with '\n'). We normalize
+    // here because native split append expects already-decoded row intent, not raw
+    // control characters.
+    //
+    // '\r' must restart the in-progress row so in-place status updates (progress
+    // bars/spinners) do not accumulate stale prefixes in scrollback. '\n' commits
+    // the row and marks newline intent for the final chunk of that logical row.
     const rows: Array<{ line: string; trailingNewline: boolean }> = []
     let current = ""
 
@@ -1448,11 +1501,18 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       return []
     }
 
+    // Chunk captured stdout into width-bounded row commits so each commit is a
+    // small, deterministic append step. This keeps bursty output smooth while
+    // preserving newline ownership on the final chunk of each logical row.
     const commits: ExternalOutputCommit[] = []
+    // Split commits are row-oriented snapshots. We chunk by renderer width so each
+    // commit maps to a single logical terminal row append operation.
     const chunkWidth = Math.max(1, this.width)
     for (const row of this.splitStdoutRows(text)) {
       const rowCells = [...row.line]
       if (rowCells.length === 0) {
+        // Preserve empty-line writes: newline-only chunks still need a commit so
+        // split scrollback state advances correctly in native code.
         commits.push(this.createStdoutSnapshotCommit("", row.trailingNewline))
         continue
       }
@@ -1462,6 +1522,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
         const chunk = rowCells.slice(offset, offset + chunkWidth).join("")
         offset += chunkWidth
         const isLastChunk = offset >= rowCells.length
+        // Only the final wrapped chunk carries newline intent.
         commits.push(this.createStdoutSnapshotCommit(chunk, isLastChunk ? row.trailingNewline : false))
       }
     }
@@ -1470,14 +1531,25 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   }
 
   private flushPendingSplitCommits(forceFooterRepaint: boolean = false): void {
-    const commits = this.externalOutputQueue.claim()
+    // Drain only a bounded prefix so one JS render pass maps to one native frame.
+    // Remaining commits are intentionally left queued and rendered on subsequent
+    // ticks to avoid giant multi-thousand-cell frames that can flicker.
+    const commits = this.externalOutputQueue.claim(this.maxSplitCommitsPerFrame)
     let hasCommittedOutput = false
     const lastCommitIndex = commits.length - 1
 
     for (const [index, commit] of commits.entries()) {
+      // Force repaint only on the last commit in a frame. Repainting after every
+      // chunk negates batching and reintroduces duplicate clear/move traffic.
       const forceCommit = forceFooterRepaint && index === lastCommitIndex
+      // beginFrame/finalizeFrame tell native code whether this commit opens or
+      // closes the shared frame envelope. Intermediate commits append payload only.
+      const beginFrame = index === 0
+      const finalizeFrame = index === lastCommitIndex
 
       try {
+        // Keep split append policy in native code so every producer (captured stdout
+        // and writeToScrollback) shares the same cursor/scrollback invariants.
         this.renderOffset = this.lib.commitSplitFooterSnapshot(
           this.rendererPtr,
           commit.snapshot,
@@ -1486,6 +1558,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
           commit.trailingNewline,
           this.getSplitPinnedRenderOffset(),
           forceCommit,
+          beginFrame,
+          finalizeFrame,
         )
         hasCommittedOutput = true
       } finally {
@@ -1500,6 +1574,12 @@ export class CliRenderer extends EventEmitter implements RenderContext {
         forceFooterRepaint,
       )
     }
+
+    if (this.externalOutputQueue.size > 0) {
+      // Preserve FIFO ordering without doing unbounded work in one tick.
+      // This keeps sustained stdout bursts smooth instead of blocking on one frame.
+      this.requestRender()
+    }
   }
 
   private interceptStdoutWrite = (chunk: any, encoding?: any, callback?: any): boolean => {
@@ -1508,12 +1588,16 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     const text = typeof chunk === "string" ? chunk : (chunk?.toString(resolvedEncoding) ?? "")
 
     if (this._externalOutputMode === "capture-stdout" && this._screenMode === "split-footer" && this._splitHeight > 0) {
+      // Capture mode intentionally diverts stdout into split commit snapshots
+      // instead of writing directly to process stdout. Native flushing will append
+      // and repaint in one controlled frame, which is what avoids footer flicker.
       const commits = this.createStdoutSnapshotCommits(text)
       for (const commit of commits) {
         this.externalOutputQueue.writeSnapshot(commit)
       }
 
       if (commits.length > 0) {
+        // Defer actual terminal writes to the render loop so commits can be batched.
         this.requestRender()
       }
     }
@@ -2961,8 +3045,14 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     }
 
     if (this._splitHeight > 0 && this._externalOutputMode === "capture-stdout") {
-      this.flushPendingSplitCommits(false)
+      // forceFullRepaintRequested is a one-shot latch used when mode/geometry
+      // transitions need a complete footer refresh. Consume it once so steady-state
+      // capture path keeps using diff-based repainting.
+      const forceSplitRepaint = this.forceFullRepaintRequested
+      this.forceFullRepaintRequested = false
+      this.flushPendingSplitCommits(forceSplitRepaint)
     } else {
+      this.forceFullRepaintRequested = false
       this.lib.render(this.rendererPtr, false)
     }
     // this.dumpStdoutBuffer(Date.now())

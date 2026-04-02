@@ -1050,19 +1050,16 @@ test "renderer - commitSplitFooterSnapshot writes append before footer repaint i
     try snapshot.drawText("append-line", 0, 0, fg, .{ 0.0, 0.0, 0.0, 0.0 }, 0);
 
     const appended = "append-line";
+    // This test documents the critical ordering contract:
+    // 1) append payload is emitted in the same sync frame as repaint
+    // 2) DECSTBM is active only during append when pinned
+    // 3) footer repaint cursor move happens after append payload
     _ = cli_renderer.commitSplitFooterSnapshot(snapshot, 11, false, true, 2, false);
 
     const output = cli_renderer.getLastOutputForTest();
     const append_index = std.mem.indexOf(u8, output, appended);
     const scroll_region_set_index = std.mem.indexOf(u8, output, "\x1b[1;2r");
     const scroll_region_reset_index = std.mem.indexOf(u8, output, "\x1b[r");
-    const footer_clear_index = if (scroll_region_reset_index) |reset_start|
-        if (std.mem.indexOf(u8, output[reset_start + "\x1b[r".len ..], "\x1b[3;1H\x1b[J")) |relative|
-            reset_start + "\x1b[r".len + relative
-        else
-            null
-    else
-        null;
     const sync_index = std.mem.indexOf(u8, output, ansi.ANSI.syncSet);
     const footer_move_after_sync = if (sync_index) |sync_start|
         std.mem.indexOf(u8, output[sync_start + ansi.ANSI.syncSet.len ..], "\x1b[3;1H")
@@ -1074,10 +1071,9 @@ test "renderer - commitSplitFooterSnapshot writes append before footer repaint i
     try std.testing.expect(scroll_region_reset_index != null);
     try std.testing.expect(sync_index != null);
     try std.testing.expect(footer_move_after_sync != null);
-    try std.testing.expect(sync_index.? < scroll_region_set_index.?);
+    try std.testing.expect(sync_index.? < append_index.?);
     try std.testing.expect(scroll_region_set_index.? < append_index.?);
     try std.testing.expect(append_index.? < scroll_region_reset_index.?);
-    try std.testing.expect(footer_clear_index == null);
 
     var sync_count: usize = 0;
     var pos: usize = 0;
@@ -1123,24 +1119,77 @@ test "renderer - commitSplitFooterSnapshot settling phase moves footer downward"
     try snapshot.drawText("settle", 0, 0, fg, .{ 0.0, 0.0, 0.0, 0.0 }, 0);
 
     const appended = "settle";
+    // During settling we intentionally avoid bounded DECSTBM and instead clear rows
+    // that transition from footer surface to scrollback before append.
     _ = cli_renderer.commitSplitFooterSnapshot(snapshot, 6, false, true, 3, false);
 
     const output = cli_renderer.getLastOutputForTest();
     const settling_clear_index = std.mem.indexOf(u8, output, "\x1b[1;1H\x1b[J");
+    const stale_footer_clear_top_index = std.mem.indexOf(u8, output, "\x1b[1;1H\x1b[2K");
+    const stale_footer_clear_next_index = std.mem.indexOf(u8, output, "\x1b[2;1H\x1b[2K");
     const append_index = std.mem.indexOf(u8, output, appended);
     const scroll_region_reset_index = std.mem.indexOf(u8, output, "\x1b[r");
-    const footer_clear_index = std.mem.indexOf(u8, output, "\x1b[3;1H\x1b[J");
+    const footer_clear_index = std.mem.indexOf(u8, output, "\x1b[3;1H\x1b[2K");
+    const footer_erase_below_index = std.mem.indexOf(u8, output, "\x1b[3;1H\x1b[J");
     const sync_index = std.mem.indexOf(u8, output, ansi.ANSI.syncSet);
 
     try std.testing.expectEqual(@as(u32, 2), cli_renderer.renderOffset);
     try std.testing.expect(settling_clear_index == null);
+    try std.testing.expect(stale_footer_clear_top_index != null);
+    try std.testing.expect(stale_footer_clear_next_index != null);
     try std.testing.expect(append_index != null);
-    try std.testing.expect(scroll_region_reset_index != null);
-    try std.testing.expect(footer_clear_index != null);
+    try std.testing.expect(scroll_region_reset_index == null);
+    try std.testing.expect(footer_clear_index == null);
+    try std.testing.expect(footer_erase_below_index == null);
     try std.testing.expect(sync_index != null);
     try std.testing.expect(sync_index.? < append_index.?);
-    try std.testing.expect(append_index.? < scroll_region_reset_index.?);
-    try std.testing.expect(append_index.? < footer_clear_index.?);
+    try std.testing.expect(stale_footer_clear_top_index.? < append_index.?);
+}
+
+test "renderer - commitSplitFooterSnapshot multiline settling enables bounded scroll at pin" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+    var local_link_pool = link.LinkPool.init(std.testing.allocator);
+    defer local_link_pool.deinit();
+
+    var cli_renderer = try CliRenderer.create(
+        std.testing.allocator,
+        12,
+        3,
+        pool,
+        true,
+    );
+    defer cli_renderer.destroy();
+
+    _ = cli_renderer.resetSplitScrollback(1, 3);
+
+    const next_buffer = cli_renderer.getNextBuffer();
+    const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    try next_buffer.drawText("FOOT", 0, 0, fg, bg, 0);
+
+    var snapshot = try OptimizedBuffer.init(
+        std.testing.allocator,
+        6,
+        2,
+        .{ .pool = pool, .width_method = .unicode, .respectAlpha = false },
+    );
+    defer snapshot.deinit();
+
+    try snapshot.clear(.{ 0.0, 0.0, 0.0, 0.0 }, 32);
+    try snapshot.drawText("line-a", 0, 0, fg, .{ 0.0, 0.0, 0.0, 0.0 }, 0);
+    try snapshot.drawText("line-b", 0, 1, fg, .{ 0.0, 0.0, 0.0, 0.0 }, 0);
+
+    _ = cli_renderer.commitSplitFooterSnapshot(snapshot, 6, false, true, 3, false);
+
+    const output = cli_renderer.getLastOutputForTest();
+    const expanded_region_index = std.mem.indexOf(u8, output, "\x1b[1;3r");
+    const collapsed_region_index = std.mem.indexOf(u8, output, "\x1b[r");
+
+    try std.testing.expectEqual(@as(u32, 3), cli_renderer.renderOffset);
+    try std.testing.expect(expanded_region_index != null);
+    try std.testing.expect(collapsed_region_index != null);
+    try std.testing.expect(expanded_region_index.? < collapsed_region_index.?);
 }
 
 test "renderer - repaintSplitFooter repaints footer without append payload" {
@@ -1168,12 +1217,16 @@ test "renderer - repaintSplitFooter repaints footer without append payload" {
     _ = cli_renderer.repaintSplitFooter(2, true);
 
     const output = cli_renderer.getLastOutputForTest();
-    const footer_clear_index = std.mem.indexOf(u8, output, "\x1b[3;1H\x1b[J");
+    const footer_text_index = std.mem.indexOf(u8, output, "FOOT");
+    const footer_clear_index = std.mem.indexOf(u8, output, "\x1b[3;1H\x1b[2K");
+    const footer_erase_below_index = std.mem.indexOf(u8, output, "\x1b[3;1H\x1b[J");
     const sync_index = std.mem.indexOf(u8, output, ansi.ANSI.syncSet);
 
-    try std.testing.expect(footer_clear_index != null);
+    try std.testing.expect(footer_text_index != null);
+    try std.testing.expect(footer_clear_index == null);
+    try std.testing.expect(footer_erase_below_index == null);
     try std.testing.expect(sync_index != null);
-    try std.testing.expect(sync_index.? < footer_clear_index.?);
+    try std.testing.expect(sync_index.? < footer_text_index.?);
 }
 
 test "renderer - commitSplitFooterSnapshot appends styled snapshot before footer repaint" {
@@ -1217,7 +1270,7 @@ test "renderer - commitSplitFooterSnapshot appends styled snapshot before footer
     const orange_fg_index = std.mem.indexOf(u8, output, "\x1b[38;2;255;128;0m");
     const bold_index = std.mem.indexOf(u8, output, "\x1b[1m");
     const sync_index = std.mem.indexOf(u8, output, ansi.ANSI.syncSet);
-    const footer_clear_index = std.mem.indexOf(u8, output, "\x1b[3;1H\x1b[J");
+    const footer_clear_index = std.mem.indexOf(u8, output, "\x1b[3;1H\x1b[2K");
 
     try std.testing.expect(snapshot_text_index != null);
     try std.testing.expect(orange_fg_index != null);
@@ -1267,4 +1320,102 @@ test "renderer - commitSplitFooterSnapshot does not emit NUL padding for short r
     try std.testing.expect(std.mem.indexOfScalar(u8, output, 0) == null);
     try std.testing.expect(std.mem.indexOf(u8, output, ansi.ANSI.eraseToEndOfLine) != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "\r\n\x1b[0m\x1b[K") != null);
+}
+
+test "renderer - batched split commits share single sync frame" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+    var local_link_pool = link.LinkPool.init(std.testing.allocator);
+    defer local_link_pool.deinit();
+
+    var cli_renderer = try CliRenderer.create(
+        std.testing.allocator,
+        16,
+        4,
+        pool,
+        true,
+    );
+    defer cli_renderer.destroy();
+
+    _ = cli_renderer.resetSplitScrollback(2, 2);
+
+    const next_buffer = cli_renderer.getNextBuffer();
+    const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    try next_buffer.drawText("FOOT", 0, 0, fg, bg, 0);
+
+    var first_snapshot = try OptimizedBuffer.init(
+        std.testing.allocator,
+        10,
+        1,
+        .{ .pool = pool, .width_method = .unicode, .respectAlpha = false },
+    );
+    defer first_snapshot.deinit();
+    try first_snapshot.clear(.{ 0.0, 0.0, 0.0, 0.0 }, 32);
+    try first_snapshot.drawText("FIRST", 0, 0, fg, .{ 0.0, 0.0, 0.0, 0.0 }, 0);
+
+    var second_snapshot = try OptimizedBuffer.init(
+        std.testing.allocator,
+        10,
+        1,
+        .{ .pool = pool, .width_method = .unicode, .respectAlpha = false },
+    );
+    defer second_snapshot.deinit();
+    try second_snapshot.clear(.{ 0.0, 0.0, 0.0, 0.0 }, 32);
+    try second_snapshot.drawText("SECOND", 0, 0, fg, .{ 0.0, 0.0, 0.0, 0.0 }, 0);
+
+    _ = cli_renderer.commitSplitFooterSnapshotBatched(
+        first_snapshot,
+        10,
+        true,
+        true,
+        2,
+        false,
+        true,
+        false,
+    );
+
+    _ = cli_renderer.commitSplitFooterSnapshotBatched(
+        second_snapshot,
+        10,
+        true,
+        true,
+        2,
+        false,
+        false,
+        true,
+    );
+
+    const output = cli_renderer.getLastOutputForTest();
+    // Batching should keep both commits inside one synchronized update envelope.
+    try std.testing.expect(std.mem.indexOf(u8, output, "FIRST") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "SECOND") != null);
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, output, ansi.ANSI.syncSet));
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, output, ansi.ANSI.syncReset));
+}
+
+test "renderer - unchanged frame with unchanged cursor emits no output" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+    var local_link_pool = link.LinkPool.init(std.testing.allocator);
+    defer local_link_pool.deinit();
+
+    var cli_renderer = try CliRenderer.create(
+        std.testing.allocator,
+        12,
+        4,
+        pool,
+        true,
+    );
+    defer cli_renderer.destroy();
+
+    cli_renderer.terminal.setCursorPosition(3, 2, true);
+    cli_renderer.render(false);
+
+    cli_renderer.render(false);
+    const output = cli_renderer.getLastOutputForTest();
+
+    // No-op frames must be byte-empty; otherwise repeated sync/cursor toggles can
+    // produce visible shimmer in terminals that animate cursor or repaint eagerly.
+    try std.testing.expectEqual(@as(usize, 0), output.len);
 }

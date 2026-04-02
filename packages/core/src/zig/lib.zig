@@ -296,8 +296,29 @@ export fn commitSplitFooterSnapshot(
     trailingNewline: bool,
     pinnedRenderOffset: u32,
     force: bool,
+    beginFrame: bool,
+    finalizeFrame: bool,
 ) u32 {
-    return rendererPtr.commitSplitFooterSnapshot(snapshotBufferPtr, rowColumns, startOnNewLine, trailingNewline, pinnedRenderOffset, force);
+    // JS passes rowColumns/startOnNewLine/trailingNewline per commit from
+    // writeToScrollback or captured stdout chunking. This entrypoint is the ABI
+    // boundary where that metadata enters the native split append algorithm.
+    // Preserve the original fast path for single-commit calls (begin+finalize in
+    // one invocation), but route multi-commit frames through the batched renderer
+    // path so sync/cursor framing happens exactly once per JS flush cycle.
+    if (beginFrame and finalizeFrame) {
+        return rendererPtr.commitSplitFooterSnapshot(snapshotBufferPtr, rowColumns, startOnNewLine, trailingNewline, pinnedRenderOffset, force);
+    }
+
+    return rendererPtr.commitSplitFooterSnapshotBatched(
+        snapshotBufferPtr,
+        rowColumns,
+        startOnNewLine,
+        trailingNewline,
+        pinnedRenderOffset,
+        force,
+        beginFrame,
+        finalizeFrame,
+    );
 }
 
 export fn createOptimizedBuffer(width: u32, height: u32, respectAlpha: bool, widthMethod: u8, idPtr: [*]const u8, idLen: usize) ?*buffer.OptimizedBuffer {
