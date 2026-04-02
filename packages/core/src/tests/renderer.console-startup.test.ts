@@ -832,6 +832,34 @@ test("CliRenderer split-footer renderNative repaints footer frame with no pendin
   splitCommitSpy.mockRestore()
 })
 
+test("CliRenderer split-footer forwards forced repaint flag to final pending commit", async () => {
+  const result = await createTestRenderer({
+    screenMode: "split-footer",
+    footerHeight: 6,
+    externalOutputMode: "capture-stdout",
+    consoleMode: "disabled",
+  })
+
+  renderer = result.renderer
+  const lib = (renderer as any).lib
+  const originalCommitSplitFooterSnapshot = lib.commitSplitFooterSnapshot.bind(lib)
+  const forceFlags: boolean[] = []
+
+  lib.commitSplitFooterSnapshot = (...args: any[]) => {
+    forceFlags.push(args[6] as boolean)
+    return originalCommitSplitFooterSnapshot(...args)
+  }
+
+  ;(renderer as any).stdout.write("line-1\nline-2\n")
+  ;(renderer as any).forceFullRepaintRequested = true
+
+  await result.renderOnce()
+
+  expect(forceFlags).toEqual([false, true])
+
+  lib.commitSplitFooterSnapshot = originalCommitSplitFooterSnapshot
+})
+
 test("CliRenderer split-footer defers first native frame while startup cursor seed is pending", async () => {
   const result = await createTestRenderer({
     screenMode: "split-footer",

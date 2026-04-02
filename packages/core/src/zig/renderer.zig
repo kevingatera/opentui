@@ -52,6 +52,25 @@ fn moveToSplitOutputCursor(writer: anytype, render_offset: u32, output_column: u
     ansi.ANSI.moveToOutput(writer, column, row) catch {};
 }
 
+fn snapshotRowEnd(snapshot: *const OptimizedBuffer, row: u32, limit: u32) u32 {
+    var x = limit;
+    while (x > 0) {
+        const cell = snapshot.get(x - 1, row) orelse {
+            x -= 1;
+            continue;
+        };
+
+        if (cell.char == 0 or gp.isContinuationChar(cell.char)) {
+            x -= 1;
+            continue;
+        }
+
+        return x;
+    }
+
+    return 0;
+}
+
 pub const CliRenderer = struct {
     width: u32,
     height: u32,
@@ -604,7 +623,7 @@ pub const CliRenderer = struct {
         self.lastRenderTime = now;
         self.renderDebugOverlay();
 
-        self.prepareRenderFrame(force, true);
+        self.prepareRenderFrame(force, true, false);
 
         self.finalizeRender(deltaTime);
     }
@@ -706,15 +725,17 @@ pub const CliRenderer = struct {
         force: bool,
     ) void {
         resetActiveOutputBuffer();
+        var writer = OutputBufferWriter.writer();
+        beginRenderFrame(writer);
 
         const previousRenderOffset = self.renderOffset;
         const next_render_offset = self.splitScrollback.renderOffset(pinned_render_offset);
         const previousFooterTopLine: u32 = @max(previousRenderOffset + 1, @as(u32, 1));
         const targetFooterTopLine: u32 = @max(next_render_offset + 1, @as(u32, 1));
         const clearTopLine: u32 = @min(previousFooterTopLine, targetFooterTopLine);
+        const redraw_footer = force or previousRenderOffset != next_render_offset;
 
-        if (force or previousRenderOffset != next_render_offset) {
-            var writer = OutputBufferWriter.writer();
+        if (redraw_footer) {
             self.renderOffset = next_render_offset;
             ansi.ANSI.moveToOutput(writer, 1, clearTopLine) catch {};
             writer.writeAll(ansi.ANSI.eraseBelowCursor) catch {};
@@ -723,7 +744,7 @@ pub const CliRenderer = struct {
             self.renderOffset = next_render_offset;
         }
 
-        self.prepareRenderFrame(force, false);
+        self.prepareRenderFrame(redraw_footer, false, true);
     }
 
     fn writeSnapshotCommit(
@@ -745,8 +766,9 @@ pub const CliRenderer = struct {
 
         for (0..snapshot.height) |uy| {
             const y = @as(u32, @intCast(uy));
+            const row_end = snapshotRowEnd(snapshot, y, render_columns);
 
-            for (0..render_columns) |ux| {
+            for (0..row_end) |ux| {
                 const x = @as(u32, @intCast(ux));
                 const cell = snapshot.get(x, y) orelse continue;
 
@@ -796,7 +818,9 @@ pub const CliRenderer = struct {
                     ansi.TextAttributes.applyAttributesOutputWriter(writer, cell.attributes) catch {};
                 }
 
-                if (gp.isGraphemeChar(cell.char)) {
+                if (cell.char == 0) {
+                    writer.writeByte(' ') catch {};
+                } else if (gp.isGraphemeChar(cell.char)) {
                     const gid: u32 = gp.graphemeIdFromChar(cell.char);
                     const bytes = self.pool.get(gid) catch {
                         writer.writeByte(' ') catch {};
@@ -820,20 +844,27 @@ pub const CliRenderer = struct {
                 }
             }
 
+            if (hyperlinksEnabled and currentLinkId != 0) {
+                writer.writeAll("\x1b]8;;\x1b\\") catch {};
+                currentLinkId = 0;
+            }
+
+            writer.writeAll(ansi.ANSI.reset) catch {};
+            writer.writeAll(ansi.ANSI.eraseToEndOfLine) catch {};
+
             const is_last_row = @as(u32, @intCast(uy + 1)) >= snapshot.height;
             if (!is_last_row or trailing_newline) {
                 writer.writeAll("\r\n") catch {};
             }
 
-            writer.writeAll(ansi.ANSI.reset) catch {};
+            if (is_last_row and trailing_newline) {
+                writer.writeAll(ansi.ANSI.reset) catch {};
+                writer.writeAll(ansi.ANSI.eraseToEndOfLine) catch {};
+            }
+
             currentFg = null;
             currentBg = null;
             currentAttributes = -1;
-
-            if (hyperlinksEnabled and currentLinkId != 0) {
-                writer.writeAll("\x1b]8;;\x1b\\") catch {};
-                currentLinkId = 0;
-            }
         }
     }
 
@@ -847,6 +878,8 @@ pub const CliRenderer = struct {
         force: bool,
     ) void {
         resetActiveOutputBuffer();
+        var writer = OutputBufferWriter.writer();
+        beginRenderFrame(writer);
 
         const previousRenderOffset = self.renderOffset;
         const previousOutputColumn = self.splitScrollback.tail_column;
@@ -862,16 +895,11 @@ pub const CliRenderer = struct {
         }
 
         const next_render_offset = self.splitScrollback.renderOffset(pinned_render_offset);
-        const previousFooterTopLine: u32 = @max(previousRenderOffset + 1, @as(u32, 1));
         const targetFooterTopLine: u32 = @max(next_render_offset + 1, @as(u32, 1));
+        const redraw_footer = force or previousRenderOffset != next_render_offset;
 
         if (snapshot_has_content or force) {
-            var writer = OutputBufferWriter.writer();
-
             if (snapshot_has_content) {
-                ansi.ANSI.moveToOutput(writer, 1, previousFooterTopLine) catch {};
-                writer.writeAll(ansi.ANSI.eraseBelowCursor) catch {};
-
                 if (pinned_render_offset > 0) {
                     writer.print("\x1b[1;{d}r", .{pinned_render_offset}) catch {};
                 }
@@ -889,14 +917,16 @@ pub const CliRenderer = struct {
             }
 
             self.renderOffset = next_render_offset;
-            ansi.ANSI.moveToOutput(writer, 1, targetFooterTopLine) catch {};
-            writer.writeAll(ansi.ANSI.eraseBelowCursor) catch {};
-            ansi.ANSI.moveToOutput(writer, 1, targetFooterTopLine) catch {};
+            if (redraw_footer) {
+                ansi.ANSI.moveToOutput(writer, 1, targetFooterTopLine) catch {};
+                writer.writeAll(ansi.ANSI.eraseBelowCursor) catch {};
+                ansi.ANSI.moveToOutput(writer, 1, targetFooterTopLine) catch {};
+            }
         } else {
             self.renderOffset = next_render_offset;
         }
 
-        self.prepareRenderFrame(force, false);
+        self.prepareRenderFrame(redraw_footer, false, true);
     }
 
     pub fn getNextBuffer(self: *CliRenderer) *OptimizedBuffer {
@@ -907,7 +937,12 @@ pub const CliRenderer = struct {
         return self.currentRenderBuffer;
     }
 
-    fn prepareRenderFrame(self: *CliRenderer, force: bool, reset_output_buffer: bool) void {
+    fn beginRenderFrame(writer: anytype) void {
+        writer.writeAll(ansi.ANSI.syncSet) catch {};
+        writer.writeAll(ansi.ANSI.hideCursor) catch {};
+    }
+
+    fn prepareRenderFrame(self: *CliRenderer, force: bool, reset_output_buffer: bool, sync_started: bool) void {
         const renderStartTime = std.time.microTimestamp();
         var cellsUpdated: u32 = 0;
 
@@ -917,8 +952,9 @@ pub const CliRenderer = struct {
 
         var writer = OutputBufferWriter.writer();
 
-        writer.writeAll(ansi.ANSI.syncSet) catch {};
-        writer.writeAll(ansi.ANSI.hideCursor) catch {};
+        if (!sync_started) {
+            beginRenderFrame(writer);
+        }
 
         var currentFg: ?RGBA = null;
         var currentBg: ?RGBA = null;
