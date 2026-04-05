@@ -288,4 +288,29 @@ describe("runtime plugin", () => {
     expect(result.exitCode).toBe(0)
     expect(stdout).toContain("errorContainsMissingBareDependency=true")
   })
+
+  it("rewrites runtime specifiers when Bun canonicalizes a symlinked import path", () => {
+    const fixturePath = join(import.meta.dir, "runtime-plugin-path-alias.fixture.ts")
+    const result = Bun.spawnSync([process.execPath, fixturePath], {
+      cwd: join(import.meta.dir, "..", ".."),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: process.env,
+    })
+
+    const stdout = result.stdout.toString().trim()
+    const stderr = result.stderr.toString().trim()
+
+    if (stdout) {
+      console.debug(`[runtime-plugin-path-alias.fixture] stdout:\n${stdout}`)
+    }
+
+    if (stderr) {
+      console.debug(`[runtime-plugin-path-alias.fixture] stderr:\n${stderr}`)
+    }
+
+    expect(result.exitCode).toBe(0)
+    expect(stdout).toContain("aliasPathCanonicalized=true")
+    expect(stdout).toContain("marker=resolved-from-path-alias")
+  })
 })

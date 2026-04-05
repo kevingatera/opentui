@@ -53,10 +53,9 @@ const exactSpecifierFilter = (specifier: string): RegExp => {
   return new RegExp(`^${escapeRegExp(specifier)}$`)
 }
 
-const candidatePathFilter = (targetPath: string): RegExp => {
-  const suffixSegments = sourcePath(targetPath).split(/[/\\]+/).filter(Boolean).slice(-3)
-  const suffixPattern = suffixSegments.map(escapeRegExp).join("[/\\\\]")
-  return new RegExp(`(?:^|[/\\\\])${suffixPattern}(?:[?#].*)?$`)
+const exactPathFilter = (paths: string[]): RegExp => {
+  const candidates = [...new Set(paths.map(sourcePath))]
+  return new RegExp(`^(?:${candidates.map(escapeRegExp).join("|")})(?:[?#].*)?$`)
 }
 
 export const runtimeModuleIdForSpecifier = (specifier: string): string => {
@@ -321,11 +320,11 @@ const resolveSourcePathFromSpecifier = (specifier: string, importer: string): st
   }
 
   if (specifier.startsWith("file:")) {
-    return normalizeSourcePath(fileURLToPath(specifier))
+    return sourcePath(fileURLToPath(specifier))
   }
 
   if (isAbsolute(specifier)) {
-    return normalizeSourcePath(specifier)
+    return sourcePath(specifier)
   }
 
   const resolvedSpecifier = resolveFromParent(specifier, importer)
@@ -334,11 +333,11 @@ const resolveSourcePathFromSpecifier = (specifier: string, importer: string): st
   }
 
   if (resolvedSpecifier.startsWith("file:")) {
-    return normalizeSourcePath(fileURLToPath(resolvedSpecifier))
+    return sourcePath(fileURLToPath(resolvedSpecifier))
   }
 
   if (isAbsolute(resolvedSpecifier)) {
-    return normalizeSourcePath(resolvedSpecifier)
+    return sourcePath(resolvedSpecifier)
   }
 
   return null
@@ -413,19 +412,20 @@ export function createRuntimePlugin(input: CreateRuntimePluginOptions = {}): Bun
       const nodeModulesRuntimeRewritePathsByPath = new Map<string, string[]>()
 
       const installRewriteLoader = (path: string): void => {
-        const targetPath = normalizeSourcePath(path)
-        if (installedRewriteLoaders.has(targetPath)) {
+        const resolvedTargetPath = sourcePath(path)
+        const canonicalTargetPath = normalizeSourcePath(resolvedTargetPath)
+
+        if (installedRewriteLoaders.has(canonicalTargetPath)) {
           return
         }
 
-        installedRewriteLoaders.add(targetPath)
+        installedRewriteLoaders.add(canonicalTargetPath)
 
-        // The regex only identifies likely candidates. Bun may call us back with a
-        // different absolute spelling of the same file, so we normalize `args.path`
-        // and compare it to the canonical target path before loading.
-        build.onLoad({ filter: candidatePathFilter(targetPath) }, async (args) => {
+        // Register both the resolved path spelling and its canonical realpath so Bun
+        // can reach the loader even if it reports the same file through a different alias.
+        build.onLoad({ filter: exactPathFilter([resolvedTargetPath, canonicalTargetPath]) }, async (args) => {
           const loadedPath = normalizeSourcePath(args.path)
-          if (loadedPath !== targetPath) {
+          if (loadedPath !== canonicalTargetPath) {
             return undefined
           }
 
