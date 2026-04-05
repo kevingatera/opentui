@@ -332,4 +332,23 @@ describe("runtime plugin", () => {
     expect(stdout).toContain("aliasPathCanonicalized=true")
     expect(stdout).toContain("marker=resolved-from-path-alias")
   })
+
+  it("rewrites runtime specifiers for file URL imports on Windows", () => {
+    if (process.platform !== "win32") {
+      return
+    }
+
+    const fixturePath = join(import.meta.dir, "runtime-plugin-windows-file-url.fixture.ts")
+    const result = Bun.spawnSync([process.execPath, fixturePath], {
+      cwd: join(import.meta.dir, "..", ".."),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: process.env,
+    })
+
+    const stdout = result.stdout.toString().trim()
+
+    expect(result.exitCode).toBe(0)
+    expect(stdout).toContain("marker=resolved-from-windows-file-url")
+  })
 })
