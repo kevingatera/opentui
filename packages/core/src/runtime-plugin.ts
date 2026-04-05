@@ -53,20 +53,10 @@ const exactSpecifierFilter = (specifier: string): RegExp => {
   return new RegExp(`^${escapeRegExp(specifier)}$`)
 }
 
-const exactPathFilter = (path: string): RegExp => {
-  const variants = new Set<string>([sourcePath(path), normalizeSourcePath(path)])
-
-  for (const variant of [...variants]) {
-    if (variant.startsWith("/var/")) {
-      variants.add(`/private${variant}`)
-    }
-
-    if (variant.startsWith("/private/var/")) {
-      variants.add(variant.slice("/private".length))
-    }
-  }
-
-  return new RegExp(`^(?:${[...variants].map(escapeRegExp).join("|")})(?:[?#].*)?$`)
+const candidatePathFilter = (path: string): RegExp => {
+  const suffixSegments = sourcePath(path).split(/[/\\]+/).filter(Boolean).slice(-3)
+  const suffixPattern = suffixSegments.map(escapeRegExp).join("[/\\\\]")
+  return new RegExp(`(?:^|[/\\\\])${suffixPattern}(?:[?#].*)?$`)
 }
 
 export const runtimeModuleIdForSpecifier = (specifier: string): string => {
@@ -430,8 +420,14 @@ export function createRuntimePlugin(input: CreateRuntimePluginOptions = {}): Bun
 
         installedRewriteLoaders.add(normalizedPath)
 
-        build.onLoad({ filter: exactPathFilter(normalizedPath) }, async (args) => {
+        // Match a short path suffix, then compare normalized paths in the callback so
+        // symlinked or aliased absolute prefixes still land on the right loader.
+        build.onLoad({ filter: candidatePathFilter(normalizedPath) }, async (args) => {
           const path = normalizeSourcePath(args.path)
+          if (path !== normalizedPath) {
+            return undefined
+          }
+
           const nodeModulesPath = isNodeModulesPath(path)
           const shouldRewriteRuntimeSpecifiers = !nodeModulesPath || rewriteOptions.nodeModulesRuntimeSpecifiers
           const shouldRewriteBareSpecifiers = !nodeModulesPath || rewriteOptions.nodeModulesBareSpecifiers
