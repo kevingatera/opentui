@@ -296,6 +296,89 @@ test("CliRenderer writeToScrollback passes width and widthMethod to the scrollba
   expect(writeContext.widthMethod).toBe(result.renderer.widthMethod)
 })
 
+test("CliRenderer writeToScrollback runs snapshot teardown after enqueueing", async () => {
+  const result = await createTestRenderer({
+    width: 40,
+    height: 10,
+    screenMode: "split-footer",
+    footerHeight: 4,
+    externalOutputMode: "capture-stdout",
+    consoleMode: "disabled",
+  })
+
+  renderer = result.renderer
+  let teardownCalls = 0
+  let snapshotRoot: TextRenderable | null = null
+
+  renderer.writeToScrollback((ctx) => {
+    const root = new TextRenderable(ctx.renderContext, {
+      id: "scrollback-teardown-success",
+      position: "absolute",
+      left: 0,
+      top: 0,
+      width: 4,
+      height: 1,
+      content: "done",
+    })
+    snapshotRoot = root
+
+    return {
+      root,
+      width: 4,
+      height: 1,
+      teardown: () => {
+        teardownCalls += 1
+      },
+    }
+  })
+
+  expect(teardownCalls).toBe(1)
+  expect(snapshotRoot?.isDestroyed).toBe(true)
+  expect((renderer as any).externalOutputQueue.size).toBe(1)
+})
+
+test("CliRenderer writeToScrollback runs snapshot teardown when snapshot validation fails", async () => {
+  const result = await createTestRenderer({
+    width: 40,
+    height: 10,
+    screenMode: "split-footer",
+    footerHeight: 4,
+    externalOutputMode: "capture-stdout",
+    consoleMode: "disabled",
+  })
+
+  renderer = result.renderer
+  let teardownCalls = 0
+  let snapshotRoot: TextRenderable | null = null
+
+  expect(() => {
+    renderer.writeToScrollback((ctx) => {
+      const root = new TextRenderable(ctx.renderContext, {
+        id: "scrollback-teardown-failure",
+        position: "absolute",
+        left: 0,
+        top: 0,
+        width: 4,
+        height: 1,
+        content: "fail",
+      })
+      snapshotRoot = root
+
+      return {
+        root,
+        width: Number.NaN,
+        height: 1,
+        teardown: () => {
+          teardownCalls += 1
+        },
+      }
+    })
+  }).toThrow("writeToScrollback produced a non-finite width")
+
+  expect(teardownCalls).toBe(1)
+  expect(snapshotRoot?.isDestroyed).toBe(true)
+})
+
 test("CliRenderer preserves append order when writeToScrollback and stdout capture are interleaved", async () => {
   const result = await createTestRenderer({
     screenMode: "split-footer",

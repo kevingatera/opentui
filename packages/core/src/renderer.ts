@@ -222,6 +222,7 @@ export interface ScrollbackSnapshot {
   rowColumns?: number
   startOnNewLine?: boolean
   trailingNewline?: boolean
+  teardown?: () => void
 }
 
 export type ScrollbackWriter = (ctx: ScrollbackRenderContext) => ScrollbackSnapshot
@@ -1369,7 +1370,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   // footer in the same frame.
   //
   // Side effects: throws if split-footer capture mode is not active, transfers
-  // snapshot buffer ownership to the queue on success, and triggers async render.
+  // snapshot buffer ownership to the queue on success, triggers async render,
+  // and invokes snapshot teardown when cleanup runs.
   public writeToScrollback(write: ScrollbackWriter): void {
     if (this._screenMode !== "split-footer" || this._externalOutputMode !== "capture-stdout") {
       throw new Error('writeToScrollback requires screenMode "split-footer" and externalOutputMode "capture-stdout"')
@@ -1386,18 +1388,23 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       throw new Error("writeToScrollback must return a snapshot root renderable")
     }
 
-    const rootRenderable = snapshot.root
-    const snapshotWidth = this.getSnapshotDimension(snapshot.width, rootRenderable.width, "width")
-    const snapshotHeight = this.getSnapshotDimension(snapshot.height, rootRenderable.height, "height")
-    const snapshotRowColumns = Math.min(Math.max(Math.trunc(snapshot.rowColumns ?? snapshotWidth), 0), snapshotWidth)
-    const startOnNewLine = snapshot.startOnNewLine ?? true
-    const trailingNewline = snapshot.trailingNewline ?? true
-    const snapshotRoot = new RootRenderable(snapshotContext)
-    const snapshotBuffer = OptimizedBuffer.create(snapshotWidth, snapshotHeight, this.widthMethod, {
-      id: "scrollback-snapshot-commit",
-    })
+    let renderFailed = false
+    let snapshotRoot: RootRenderable | null = null
+    let snapshotBuffer: OptimizedBuffer | null = null
 
     try {
+      const rootRenderable = snapshot.root
+      const snapshotWidth = this.getSnapshotDimension(snapshot.width, rootRenderable.width, "width")
+      const snapshotHeight = this.getSnapshotDimension(snapshot.height, rootRenderable.height, "height")
+      const snapshotRowColumns = Math.min(Math.max(Math.trunc(snapshot.rowColumns ?? snapshotWidth), 0), snapshotWidth)
+      const startOnNewLine = snapshot.startOnNewLine ?? true
+      const trailingNewline = snapshot.trailingNewline ?? true
+
+      snapshotRoot = new RootRenderable(snapshotContext)
+      snapshotBuffer = OptimizedBuffer.create(snapshotWidth, snapshotHeight, this.widthMethod, {
+        id: "scrollback-snapshot-commit",
+      })
+
       // Render through normal renderables so split scrollback output uses the same
       // text shaping/styling pipeline as the rest of the renderer.
       snapshotRoot.add(rootRenderable)
@@ -1410,10 +1417,33 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       })
       this.requestRender()
     } catch (error) {
-      snapshotBuffer.destroy()
+      renderFailed = true
+      snapshotBuffer?.destroy()
       throw error
     } finally {
-      snapshotRoot.destroyRecursively()
+      let cleanupError: unknown | null = null
+
+      try {
+        if (snapshotRoot) {
+          snapshotRoot.destroyRecursively()
+        } else {
+          snapshot.root.destroyRecursively()
+        }
+      } catch (error) {
+        cleanupError = error
+      }
+
+      try {
+        snapshot.teardown?.()
+      } catch (error) {
+        if (cleanupError === null) {
+          cleanupError = error
+        }
+      }
+
+      if (!renderFailed && cleanupError) {
+        throw cleanupError
+      }
     }
   }
 
