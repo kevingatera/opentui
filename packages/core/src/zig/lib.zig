@@ -1034,6 +1034,10 @@ export fn textBufferViewSetWrapMode(view: *text_buffer_view.UnifiedTextBufferVie
     view.setWrapMode(wrapMode);
 }
 
+export fn textBufferViewSetFirstLineOffset(view: *text_buffer_view.UnifiedTextBufferView, offset: u32) void {
+    view.setFirstLineOffset(offset);
+}
+
 export fn textBufferViewSetViewportSize(view: *text_buffer_view.UnifiedTextBufferView, width: u32, height: u32) void {
     view.setViewportSize(width, height);
 }

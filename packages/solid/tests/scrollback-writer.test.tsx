@@ -11,7 +11,9 @@ type QueuedSnapshotCommit = {
   snapshot: {
     height: number
     getRealCharBytes: (addLineBreaks?: boolean) => Uint8Array
-    getSpanLines: () => Array<{ spans: Array<{ text: string; attributes: number; fg: ReturnType<typeof parseColor> }> }>
+    getSpanLines: () => Array<{
+      spans: Array<{ text: string; attributes: number; fg: ReturnType<typeof parseColor> }>
+    }>
     destroy: () => void
     buffers: {
       attributes: Uint32Array
@@ -53,6 +55,10 @@ function claimSingleCommit(renderer: Awaited<ReturnType<typeof createTestRendere
   }
 
   return commit
+}
+
+function claimCommits(renderer: Awaited<ReturnType<typeof createTestRenderer>>["renderer"]): QueuedSnapshotCommit[] {
+  return (renderer as any).externalOutputQueue.claim() as QueuedSnapshotCommit[]
 }
 
 afterEach(() => {
@@ -210,6 +216,59 @@ describe("createScrollbackWriter", () => {
       expect(commit.trailingNewline).toBe(false)
     } finally {
       commit.snapshot.destroy()
+    }
+  })
+
+  it("wraps a continued first line using the queued tail column", async () => {
+    const setup = await createTestRenderer({
+      width: 20,
+      height: 10,
+      screenMode: "split-footer",
+      footerHeight: 4,
+      externalOutputMode: "capture-stdout",
+      consoleMode: "disabled",
+    })
+    testSetup = setup
+
+    writeSolidToScrollback(setup.renderer, () => <text>12345678901234567</text>, {
+      width: 20,
+      startOnNewLine: false,
+      trailingNewline: false,
+    })
+
+    writeSolidToScrollback(
+      setup.renderer,
+      (ctx) => {
+        expect(ctx.tailColumn).toBe(17)
+        return <text> located</text>
+      },
+      {
+        width: 20,
+        startOnNewLine: false,
+        trailingNewline: false,
+      },
+    )
+
+    const commits = claimCommits(setup.renderer)
+    expect(commits).toHaveLength(2)
+
+    for (const commit of commits) {
+      expect(commit).toBeDefined()
+    }
+
+    const second = commits[1]
+    if (!second) {
+      throw new Error("expected second queued scrollback commit")
+    }
+
+    try {
+      const text = decoder.decode(second.snapshot.getRealCharBytes(true))
+      expect(second.snapshot.height).toBe(2)
+      expect(text).toContain("\nlocated")
+    } finally {
+      for (const commit of commits) {
+        commit?.snapshot.destroy()
+      }
     }
   })
 })

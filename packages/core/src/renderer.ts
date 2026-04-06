@@ -212,6 +212,7 @@ export type PixelResolution = {
 export interface ScrollbackRenderContext {
   width: number
   widthMethod: WidthMethod
+  tailColumn: number
   renderContext: RenderContext
 }
 
@@ -322,6 +323,9 @@ class ExternalOutputQueue {
     this.commits = []
   }
 }
+
+const CHAR_FLAG_CONTINUATION = 0xc0000000 >>> 0
+const CHAR_FLAG_MASK = 0xc0000000 >>> 0
 
 class ScrollbackSnapshotRenderContext extends EventEmitter implements RenderContext {
   public width: number
@@ -720,6 +724,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
   private _splitHeight: number = 0
   private renderOffset: number = 0
+  private splitTailColumn: number = 0
   // One-shot latch used to request a full split repaint after transitions
   // (resize/mode/output-path changes). Cleared on first renderNative tick.
   private forceFullRepaintRequested: boolean = false
@@ -1381,6 +1386,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     const snapshot = write({
       width: this.width,
       widthMethod: this.widthMethod,
+      tailColumn: this.splitTailColumn,
       renderContext: snapshotContext,
     })
 
@@ -1409,7 +1415,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       // text shaping/styling pipeline as the rest of the renderer.
       snapshotRoot.add(rootRenderable)
       snapshotRoot.render(snapshotBuffer, 0)
-      this.externalOutputQueue.writeSnapshot({
+      this.enqueueSplitCommit({
         snapshot: snapshotBuffer,
         rowColumns: snapshotRowColumns,
         startOnNewLine,
@@ -1456,6 +1462,75 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
     const maxDimension = axis === "width" ? Math.max(this.width, 1) : Math.max(this._terminalHeight, 1)
     return Math.min(Math.max(Math.trunc(rawValue), 1), maxDimension)
+  }
+
+  private getSnapshotRowWidths(snapshot: OptimizedBuffer, rowColumns: number): number[] {
+    const widths: number[] = []
+    const limit = Math.min(Math.max(Math.trunc(rowColumns), 0), snapshot.width)
+    const chars = snapshot.buffers.char
+
+    for (let y = 0; y < snapshot.height; y += 1) {
+      let x = limit
+
+      while (x > 0) {
+        const cp = chars[y * snapshot.width + x - 1]
+        if (cp === 0 || (cp & CHAR_FLAG_MASK) === CHAR_FLAG_CONTINUATION) {
+          x -= 1
+          continue
+        }
+
+        break
+      }
+
+      widths.push(x)
+    }
+
+    return widths
+  }
+
+  private publishSplitTailColumns(columns: number): void {
+    if (columns <= 0) {
+      return
+    }
+
+    const width = Math.max(this.width, 1)
+    let tail = this.splitTailColumn
+    let remaining = columns
+
+    while (remaining > 0) {
+      if (tail >= width) {
+        tail = 0
+      }
+
+      const step = Math.min(remaining, width - tail)
+      tail += step
+      remaining -= step
+
+      if (remaining > 0 && tail >= width) {
+        tail = 0
+      }
+    }
+
+    this.splitTailColumn = tail
+  }
+
+  private recordSplitCommit(commit: ExternalOutputCommit): void {
+    if (commit.startOnNewLine && this.splitTailColumn > 0) {
+      this.splitTailColumn = 0
+    }
+
+    const rowWidths = this.getSnapshotRowWidths(commit.snapshot, commit.rowColumns)
+    for (const [index, rowWidth] of rowWidths.entries()) {
+      this.publishSplitTailColumns(rowWidth)
+      if (index < rowWidths.length - 1 || commit.trailingNewline) {
+        this.splitTailColumn = 0
+      }
+    }
+  }
+
+  private enqueueSplitCommit(commit: ExternalOutputCommit): void {
+    this.recordSplitCommit(commit)
+    this.externalOutputQueue.writeSnapshot(commit)
   }
 
   private createStdoutSnapshotCommit(line: string, trailingNewline: boolean): ExternalOutputCommit {
@@ -1628,7 +1703,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       // and repaint in one controlled frame, which is what avoids footer flicker.
       const commits = this.createStdoutSnapshotCommits(text)
       for (const commit of commits) {
-        this.externalOutputQueue.writeSnapshot(commit)
+        this.enqueueSplitCommit(commit)
       }
 
       if (commits.length > 0) {
@@ -1671,6 +1746,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   }
 
   private resetSplitScrollback(seedRows: number = 0): void {
+    this.splitTailColumn = 0
     this.renderOffset = this.lib.resetSplitScrollback(this.rendererPtr, seedRows, this.getSplitPinnedRenderOffset())
   }
 
@@ -1682,6 +1758,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     const splitActive = this._screenMode === "split-footer" && this._splitHeight > 0
 
     if (!splitActive) {
+      this.splitTailColumn = 0
       this.lib.resetSplitScrollback(this.rendererPtr, 0, 0)
       this.renderOffset = 0
       this.lib.setRenderOffset(this.rendererPtr, this.renderOffset)
@@ -1691,6 +1768,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     if (this._externalOutputMode === "capture-stdout") {
       this.syncSplitScrollback()
     } else {
+      this.splitTailColumn = 0
       this.lib.resetSplitScrollback(this.rendererPtr, 0, 0)
       this.renderOffset = this.getSplitPinnedRenderOffset()
       this.lib.setRenderOffset(this.rendererPtr, this.renderOffset)

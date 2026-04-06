@@ -49,10 +49,12 @@ function createSnapshotRendererValue(
   root: BoxRenderable,
   width: number,
   height: number,
+  firstLineOffset: number,
 ): SnapshotRendererBinding {
   const [snapshotWidth] = createSignal(width)
   const [snapshotHeight, setSnapshotHeight] = createSignal(height)
   const renderer = Object.create(renderContext) as CliRenderer
+  let offset = firstLineOffset
 
   Object.defineProperties(renderer, {
     root: {
@@ -67,6 +69,15 @@ function createSnapshotRendererValue(
     },
     height: {
       get: snapshotHeight,
+      enumerable: true,
+      configurable: true,
+    },
+    claimFirstLineOffset: {
+      value: () => {
+        const out = offset
+        offset = 0
+        return out
+      },
       enumerable: true,
       configurable: true,
     },
@@ -138,6 +149,12 @@ export function createScrollbackWriter(
   return (ctx: ScrollbackRenderContext): ScrollbackSnapshot => {
     const width = normalizeSnapshotDimension(options.width, "width") ?? Math.max(1, Math.trunc(ctx.width))
     const height = normalizeSnapshotDimension(options.height, "height")
+    const startOnNewLine = options.startOnNewLine ?? true
+    const firstLineWidth =
+      !startOnNewLine && ctx.tailColumn > 0 && ctx.tailColumn < ctx.width
+        ? Math.min(width, ctx.width - ctx.tailColumn)
+        : width
+    const firstLineOffset = width - firstLineWidth
     const root = new BoxRenderable(ctx.renderContext, {
       id: `solid-scrollback-root-${solidScrollbackRootCounter++}`,
       position: "absolute",
@@ -155,6 +172,7 @@ export function createScrollbackWriter(
       root,
       width,
       height ?? Math.max(1, ctx.renderContext.height),
+      firstLineOffset,
     )
 
     let dispose: DisposeFn | undefined
@@ -188,7 +206,7 @@ export function createScrollbackWriter(
         width,
         height: height ?? resolveSnapshotHeight(ctx.renderContext, root, snapshotRenderer),
         rowColumns: options.rowColumns,
-        startOnNewLine: options.startOnNewLine,
+        startOnNewLine,
         trailingNewline: options.trailingNewline,
         teardown,
       }

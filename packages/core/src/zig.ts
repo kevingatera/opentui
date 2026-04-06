@@ -687,6 +687,10 @@ function getOpenTUILib(libPath?: string) {
       args: ["ptr", "u8"],
       returns: "void",
     },
+    textBufferViewSetFirstLineOffset: {
+      args: ["ptr", "u32"],
+      returns: "void",
+    },
     textBufferViewSetViewportSize: {
       args: ["ptr", "u32", "u32"],
       returns: "void",
@@ -1677,6 +1681,7 @@ export interface RenderLib {
   textBufferViewResetLocalSelection: (view: Pointer) => void
   textBufferViewSetWrapWidth: (view: Pointer, width: number) => void
   textBufferViewSetWrapMode: (view: Pointer, mode: "none" | "char" | "word") => void
+  textBufferViewSetFirstLineOffset: (view: Pointer, offset: number) => void
   textBufferViewSetViewportSize: (view: Pointer, width: number, height: number) => void
   textBufferViewSetViewport: (view: Pointer, x: number, y: number, width: number, height: number) => void
   textBufferViewGetLineInfo: (view: Pointer) => LineInfo
@@ -2954,6 +2959,10 @@ class FFIRenderLib implements RenderLib {
   public textBufferViewSetWrapMode(view: Pointer, mode: "none" | "char" | "word"): void {
     const modeValue = mode === "none" ? 0 : mode === "char" ? 1 : 2
     this.opentui.symbols.textBufferViewSetWrapMode(view, modeValue)
+  }
+
+  public textBufferViewSetFirstLineOffset(view: Pointer, offset: number): void {
+    this.opentui.symbols.textBufferViewSetFirstLineOffset(view, offset)
   }
 
   public textBufferViewSetViewportSize(view: Pointer, width: number, height: number): void {
