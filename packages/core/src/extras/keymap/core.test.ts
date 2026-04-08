@@ -912,4 +912,449 @@ describe("keymap", () => {
 
     expect(seen).toEqual([{ target: "ctx-parent", args: "one,two", mode: "normal" }])
   })
+
+  test("orders key hooks by priority, exposes getData, and cleans them up", () => {
+    const manager = getKeymapManager(renderer)
+    const calls: string[] = []
+
+    manager.setData("vim.mode", "normal")
+
+    const offLow = manager.onKeyInput(
+      ({ event, getData }) => {
+        if (event.name !== "x") {
+          return
+        }
+
+        calls.push(`low:${String(getData("vim.mode"))}`)
+      },
+      { priority: 1 },
+    )
+
+    manager.onKeyInput(
+      ({ event }) => {
+        if (event.name === "x") {
+          calls.push("high:first")
+        }
+      },
+      { priority: 10 },
+    )
+
+    manager.onKeyInput(
+      ({ event }) => {
+        if (event.name === "x") {
+          calls.push("high:second")
+        }
+      },
+      { priority: 10 },
+    )
+
+    mockInput.pressKey("x")
+
+    expect(calls).toEqual(["high:first", "high:second", "low:normal"])
+
+    offLow()
+    calls.length = 0
+
+    mockInput.pressKey("x")
+
+    expect(calls).toEqual(["high:first", "high:second"])
+  })
+
+  test("orders raw hooks by priority and cleans them up", () => {
+    const manager = getKeymapManager(renderer)
+    const calls: string[] = []
+
+    const offLow = manager.onRawInput(
+      ({ sequence }) => {
+        calls.push(`low:${sequence}`)
+      },
+      { priority: 1 },
+    )
+
+    manager.onRawInput(
+      ({ sequence }) => {
+        calls.push(`high:first:${sequence}`)
+      },
+      { priority: 10 },
+    )
+
+    manager.onRawInput(
+      ({ sequence }) => {
+        calls.push(`high:second:${sequence}`)
+      },
+      { priority: 10 },
+    )
+
+    renderer.stdin.emit("data", Buffer.from("x"))
+
+    expect(calls).toEqual(["high:first:x", "high:second:x", "low:x"])
+
+    offLow()
+    calls.length = 0
+
+    renderer.stdin.emit("data", Buffer.from("y"))
+
+    expect(calls).toEqual(["high:first:y", "high:second:y"])
+  })
+
+  test("prefers higher-priority layers and newer layers within the same scope", () => {
+    const manager = getKeymapManager(renderer)
+    const calls: string[] = []
+
+    manager.registerCommands([
+      {
+        name: "global-low",
+        run() {
+          calls.push("global-low")
+        },
+      },
+      {
+        name: "global-high",
+        run() {
+          calls.push("global-high")
+        },
+      },
+      {
+        name: "older",
+        run() {
+          calls.push("older")
+        },
+      },
+      {
+        name: "newer",
+        run() {
+          calls.push("newer")
+        },
+      },
+    ])
+
+    manager.registerLayer({
+      scope: "global",
+      priority: 1,
+      bindings: [{ key: "x", cmd: "global-low" }],
+    })
+    manager.registerLayer({
+      scope: "global",
+      priority: 2,
+      bindings: [{ key: "x", cmd: "global-high" }],
+    })
+    manager.registerLayer({
+      scope: "global",
+      bindings: [{ key: "y", cmd: "older" }],
+    })
+    manager.registerLayer({
+      scope: "global",
+      bindings: [{ key: "y", cmd: "newer" }],
+    })
+
+    mockInput.pressKey("x")
+    mockInput.pressKey("y")
+
+    expect(calls).toEqual(["global-high", "newer"])
+  })
+
+  test("lets commands decline handling so lower layers can continue", () => {
+    const manager = getKeymapManager(renderer)
+    const calls: string[] = []
+    let renderableCount = 0
+    let laterGlobalCount = 0
+
+    const target = createFocusableBox("decline-target")
+    target.onKeyDown = () => {
+      renderableCount += 1
+    }
+    renderer.root.add(target)
+
+    renderer.keyInput.on("keypress", () => {
+      laterGlobalCount += 1
+    })
+
+    manager.registerCommands([
+      {
+        name: "local-decline",
+        run() {
+          calls.push("local")
+          return false
+        },
+      },
+      {
+        name: "global-handle",
+        run() {
+          calls.push("global")
+        },
+      },
+    ])
+
+    manager.registerLayer({
+      target,
+      bindings: [{ key: "x", cmd: "local-decline" }],
+    })
+    manager.registerLayer({
+      scope: "global",
+      bindings: [{ key: "x", cmd: "global-handle" }],
+    })
+
+    target.focus()
+    mockInput.pressKey("x")
+
+    expect(calls).toEqual(["local", "global"])
+    expect(renderableCount).toBe(0)
+    expect(laterGlobalCount).toBe(0)
+  })
+
+  test("consumes async command bindings immediately", async () => {
+    const manager = getKeymapManager(renderer)
+    const calls: string[] = []
+    let laterGlobalCount = 0
+    let renderableCount = 0
+
+    const target = createFocusableBox("async-target")
+    target.onKeyDown = () => {
+      renderableCount += 1
+    }
+    renderer.root.add(target)
+
+    renderer.keyInput.on("keypress", () => {
+      laterGlobalCount += 1
+    })
+
+    manager.registerCommands([
+      {
+        name: "async-command",
+        async run() {
+          await Bun.sleep(0)
+          calls.push("async")
+        },
+      },
+    ])
+
+    manager.registerLayer({
+      target,
+      bindings: [{ key: "x", cmd: "async-command" }],
+    })
+
+    target.focus()
+    mockInput.pressKey("x")
+
+    expect(renderableCount).toBe(0)
+    expect(laterGlobalCount).toBe(0)
+
+    await Bun.sleep(0)
+
+    expect(calls).toEqual(["async"])
+  })
+
+  test("clears pending sequences when a layer is disposed", () => {
+    const manager = getKeymapManager(renderer)
+
+    manager.registerCommands([{ name: "delete-line", run() {} }])
+
+    const offLayer = manager.registerLayer({
+      scope: "global",
+      bindings: [{ key: "dd", cmd: "delete-line" }],
+    })
+
+    mockInput.pressKey("d")
+    expect(manager.getPendingSequence()).toHaveLength(1)
+
+    offLayer()
+
+    expect(manager.getPendingSequence()).toEqual([])
+  })
+
+  test("clears pending sequences when the owning layer becomes disabled", () => {
+    const manager = getKeymapManager(renderer)
+    let enabled = true
+
+    manager.registerCommands([{ name: "delete-line", run() {} }])
+    manager.registerLayer({
+      scope: "global",
+      enabled: () => enabled,
+      bindings: [{ key: "dd", cmd: "delete-line" }],
+    })
+
+    mockInput.pressKey("d")
+    expect(manager.getPendingSequence()).toHaveLength(1)
+
+    enabled = false
+
+    expect(manager.getPendingSequence()).toEqual([])
+  })
+
+  test("can unsubscribe pending sequence listeners", () => {
+    const manager = getKeymapManager(renderer)
+    const changes: string[] = []
+
+    manager.registerCommands([{ name: "delete-ca", run() {} }])
+    manager.registerLayer({
+      scope: "global",
+      bindings: [{ key: "dca", cmd: "delete-ca" }],
+    })
+
+    const off = manager.onPendingSequenceChange((sequence) => {
+      changes.push(sequence.map((stroke) => stroke.name).join(""))
+    })
+
+    mockInput.pressKey("d")
+    off()
+    mockInput.pressKey("c")
+    manager.clearPendingSequence()
+
+    expect(changes).toEqual(["d"])
+  })
+
+  test("can dispose tokens and binding field registrations", () => {
+    const manager = getKeymapManager(renderer)
+
+    const offToken = manager.registerToken({
+      token: "<leader>",
+      key: { name: "x", ctrl: true },
+    })
+    offToken()
+
+    expect(() => {
+      manager.registerLayer({
+        scope: "global",
+        bindings: [{ key: "<leader>a", cmd: "leader-action" }],
+      })
+    }).toThrow('Unknown keymap token "<leader>"')
+
+    const offBindingFields = manager.registerBindingFields({
+      mode(value, ctx) {
+        ctx.require("vim.mode", value)
+      },
+    })
+    offBindingFields()
+
+    expect(() => {
+      manager.registerLayer({
+        scope: "global",
+        bindings: [{ key: "x", mode: "normal", cmd: "noop" }] as any,
+      })
+    }).toThrow('Unknown keymap binding field "mode"')
+  })
+
+  test("merges active keys across layers and falls back to canonical display when labels conflict", () => {
+    const manager = getKeymapManager(renderer)
+
+    manager.registerToken({
+      token: "<leader>",
+      key: { name: "x", ctrl: true },
+    })
+
+    manager.registerCommands([
+      { name: "plain", run() {} },
+      { name: "leader", run() {} },
+    ])
+
+    manager.registerLayer({
+      scope: "global",
+      priority: 1,
+      bindings: [{ key: "ctrl+x", cmd: "plain" }],
+    })
+    manager.registerLayer({
+      scope: "global",
+      bindings: [{ key: "<leader>a", cmd: "leader" }],
+    })
+
+    const activeKey = manager
+      .getActiveKeys()
+      .find((candidate) => candidate.stroke.name === "x" && candidate.stroke.ctrl)
+
+    expect(activeKey?.commands.map((command) => command.input).sort()).toEqual(["leader", "plain"])
+    expect(activeKey?.continues).toBe(true)
+    expect(activeKey?.display).toBe("ctrl+x")
+  })
+
+  test("validates command names and command inputs", () => {
+    const manager = getKeymapManager(renderer)
+
+    expect(() => {
+      manager.registerCommands([{ name: "", run() {} }])
+    }).toThrow("Invalid keymap command name: name cannot be empty")
+
+    expect(() => {
+      manager.registerCommands([{ name: "bad name", run() {} }])
+    }).toThrow('Invalid keymap command name "bad name": command names cannot contain whitespace')
+
+    expect(() => {
+      manager.registerLayer({
+        scope: "global",
+        bindings: [{ key: "x", cmd: "   " }],
+      })
+    }).toThrow("Invalid keymap command: command cannot be empty")
+  })
+
+  test("parses special and modifier keys and rejects invalid key sequences", () => {
+    const manager = getKeymapManager(renderer)
+    const leaderToken = new Map([["<leader>", { name: "x", ctrl: true, shift: false, meta: false, super: false }]])
+
+    expect(parseKeySequenceLike("+")).toEqual([
+      {
+        stroke: { name: "+", ctrl: false, shift: false, meta: false, super: false },
+        display: "+",
+      },
+    ])
+    expect(parseKeySequenceLike(" ")).toEqual([
+      {
+        stroke: { name: "space", ctrl: false, shift: false, meta: false, super: false },
+        display: "space",
+      },
+    ])
+    expect(parseKeySequenceLike({ name: " " })).toEqual([
+      {
+        stroke: { name: "space", ctrl: false, shift: false, meta: false, super: false },
+        display: "space",
+      },
+    ])
+    expect(parseKeySequenceLike("ctrl+shift+alt+super+x")).toEqual([
+      {
+        stroke: { name: "x", ctrl: true, shift: true, meta: true, super: true },
+        display: "ctrl+shift+meta+super+x",
+      },
+    ])
+    expect(stringifyKeyStroke(parseKeySequenceLike("meta+super+x")[0]!)).toBe("meta+super+x")
+    expect(parseKeySequenceLike("zz")).toEqual([
+      {
+        stroke: { name: "z", ctrl: false, shift: false, meta: false, super: false },
+        display: "z",
+      },
+      {
+        stroke: { name: "z", ctrl: false, shift: false, meta: false, super: false },
+        display: "z",
+      },
+    ])
+    expect(parseKeySequenceLike("   ")).toEqual([
+      {
+        stroke: { name: "space", ctrl: false, shift: false, meta: false, super: false },
+        display: "space",
+      },
+      {
+        stroke: { name: "space", ctrl: false, shift: false, meta: false, super: false },
+        display: "space",
+      },
+      {
+        stroke: { name: "space", ctrl: false, shift: false, meta: false, super: false },
+        display: "space",
+      },
+    ])
+    expect(parseKeySequenceLike("<leader>", leaderToken)).toEqual([
+      {
+        stroke: { name: "x", ctrl: true, shift: false, meta: false, super: false },
+        display: "<leader>",
+      },
+    ])
+
+    expect(() => parseKeySequenceLike("")).toThrow("Invalid key sequence: sequence cannot be empty")
+    expect(() => parseKeySequenceLike("<leader")).toThrow('Invalid key sequence "<leader": unterminated token')
+    expect(() => parseKeySequenceLike("ctrl+shift")).toThrow('Invalid key "ctrl+shift": missing key name')
+    expect(() => parseKeySequenceLike("ctrl+a+b")).toThrow(
+      'Invalid key "ctrl+a+b": multiple key names are not supported',
+    )
+    expect(() => parseKeySequenceLike({ name: "   " } as any)).toThrow("Invalid key name: key name cannot be empty")
+
+    expect(() => {
+      manager.registerToken({ token: "<leader>", key: "dd" })
+    }).toThrow('Invalid key "dd": expected a single key stroke')
+  })
 })
