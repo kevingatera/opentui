@@ -309,6 +309,8 @@ pub const CliRenderer = struct {
         self.useAlternateScreen = useAlternateScreen;
         self.terminalSetup = true;
 
+        self.setupTerminalWithoutDetection(useAlternateScreen);
+
         var stdoutWriter = std.fs.File.stdout().writer(&self.stdoutBuffer);
         const writer = &stdoutWriter.interface;
 
@@ -316,8 +318,6 @@ pub const CliRenderer = struct {
             logger.warn("Failed to query terminal capabilities", .{});
         };
         writer.flush() catch {};
-
-        self.setupTerminalWithoutDetection(useAlternateScreen);
     }
 
     fn setupTerminalWithoutDetection(self: *CliRenderer, useAlternateScreen: bool) void {
