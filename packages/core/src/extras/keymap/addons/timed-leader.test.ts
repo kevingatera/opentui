@@ -82,4 +82,38 @@ describe("timed leader addon", () => {
     expect(calls).toEqual([])
     expect(states).toEqual(["armed", "disarmed"])
   })
+
+  test("disarms when disposed while armed", async () => {
+    const manager = getKeymapManager(renderer)
+    const states: string[] = []
+
+    const off = registerTimedLeader(manager, {
+      trigger: { name: "x", ctrl: true },
+      timeoutMs: 5,
+      onArm() {
+        states.push("armed")
+      },
+      onDisarm() {
+        states.push("disarmed")
+      },
+    })
+
+    manager.registerCommands([
+      {
+        name: "leader-action",
+        run() {},
+      },
+    ])
+
+    manager.registerLayer({
+      scope: "global",
+      bindings: [{ key: "<leader>a", cmd: "leader-action" }],
+    })
+
+    mockInput.pressKey("x", { ctrl: true })
+    off()
+    await Bun.sleep(20)
+
+    expect(states).toEqual(["armed", "disarmed"])
+  })
 })

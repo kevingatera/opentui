@@ -73,4 +73,85 @@ describe("ex commands addon", () => {
 
     expect(calls).toEqual(["fallback", "write:file.txt"])
   })
+
+  test("supports colon-prefixed names and each nargs mode", () => {
+    const manager = getKeymapManager(renderer)
+    const calls: string[] = []
+    let passthroughCount = 0
+
+    registerExCommands(manager, [
+      {
+        name: ":quit",
+        nargs: "0",
+        run() {
+          calls.push("quit")
+        },
+      },
+      {
+        name: "maybe",
+        nargs: "?",
+        run({ args }) {
+          calls.push(`maybe:${args.join(",")}`)
+        },
+      },
+      {
+        name: "many",
+        nargs: "*",
+        run({ args }) {
+          calls.push(`many:${args.join(",")}`)
+        },
+      },
+      {
+        name: "plus",
+        nargs: "+",
+        run({ args }) {
+          calls.push(`plus:${args.join(",")}`)
+        },
+      },
+      {
+        name: "free",
+        run({ args }) {
+          calls.push(`free:${args.join(",")}`)
+        },
+      },
+    ])
+
+    const target = createFocusableBox("nargs-target")
+    target.onKeyDown = () => {
+      passthroughCount += 1
+    }
+    renderer.root.add(target)
+
+    manager.registerLayer({
+      target,
+      bindings: [
+        { key: "a", cmd: ":quit" },
+        { key: "b", cmd: ":quit now" },
+        { key: "c", cmd: ":maybe" },
+        { key: "d", cmd: ":maybe one" },
+        { key: "e", cmd: ":maybe one two" },
+        { key: "f", cmd: ":many" },
+        { key: "g", cmd: ":many one two" },
+        { key: "h", cmd: ":plus" },
+        { key: "i", cmd: ":plus one" },
+        { key: "j", cmd: ":free one two" },
+      ],
+    })
+
+    target.focus()
+
+    mockInput.pressKey("a")
+    mockInput.pressKey("b")
+    mockInput.pressKey("c")
+    mockInput.pressKey("d")
+    mockInput.pressKey("e")
+    mockInput.pressKey("f")
+    mockInput.pressKey("g")
+    mockInput.pressKey("h")
+    mockInput.pressKey("i")
+    mockInput.pressKey("j")
+
+    expect(calls).toEqual(["quit", "maybe:", "maybe:one", "many:", "many:one,two", "plus:one", "free:one,two"])
+    expect(passthroughCount).toBe(3)
+  })
 })
