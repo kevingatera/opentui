@@ -1715,6 +1715,26 @@ pub const OptimizedBuffer = struct {
         return borderChars[@intFromEnum(BorderCharIndex.cross)];
     }
 
+    inline fn isSingleWidthBorderChar(char: u32) bool {
+        if (char == 0) return true;
+        if (char > MAX_UNICODE_CODEPOINT) return false;
+        return utf8.eastAsianWidth(@intCast(char)) == 1;
+    }
+
+    inline fn canUseTransparentBorderFastPath(self: *const OptimizedBuffer, borderChars: [*]const u32, borderColor: RGBA, backgroundColor: RGBA) bool {
+        return self.getCurrentOpacity() == 1.0 and
+            borderColor[3] == 1.0 and
+            backgroundColor[3] == 0.0 and
+            !self.grapheme_tracker.hasAny() and
+            !self.link_tracker.hasAny() and
+            isSingleWidthBorderChar(borderChars[@intFromEnum(BorderCharIndex.topLeft)]) and
+            isSingleWidthBorderChar(borderChars[@intFromEnum(BorderCharIndex.topRight)]) and
+            isSingleWidthBorderChar(borderChars[@intFromEnum(BorderCharIndex.bottomLeft)]) and
+            isSingleWidthBorderChar(borderChars[@intFromEnum(BorderCharIndex.bottomRight)]) and
+            isSingleWidthBorderChar(borderChars[@intFromEnum(BorderCharIndex.horizontal)]) and
+            isSingleWidthBorderChar(borderChars[@intFromEnum(BorderCharIndex.vertical)]);
+    }
+
     /// Draw a box with borders and optional fill
     pub fn drawBox(
         self: *OptimizedBuffer,
@@ -1778,6 +1798,7 @@ pub const OptimizedBuffer = struct {
 
         const extendVerticalsToTop = leftBorderOnly or rightBorderOnly or bottomOnlyWithVerticals;
         const extendVerticalsToBottom = leftBorderOnly or rightBorderOnly or topOnlyWithVerticals;
+        const useTransparentBorderFastPath = canUseTransparentBorderFastPath(self, borderChars, borderColor, backgroundColor);
 
         // Draw horizontal borders
         if (borderSides.top or borderSides.bottom) {
@@ -1799,7 +1820,14 @@ pub const OptimizedBuffer = struct {
                             char = if (borderSides.right) borderChars[@intFromEnum(BorderCharIndex.topRight)] else borderChars[@intFromEnum(BorderCharIndex.horizontal)];
                         }
 
-                        try self.setCellWithAlphaBlending(@intCast(drawX), @intCast(startY), char, borderColor, backgroundColor, 0);
+                        if (useTransparentBorderFastPath) {
+                            const index = self.coordsToIndex(@intCast(drawX), @intCast(startY));
+                            self.buffer.char[index] = char;
+                            self.buffer.fg[index] = borderColor;
+                            self.buffer.attributes[index] = 0;
+                        } else {
+                            try self.setCellWithAlphaBlending(@intCast(drawX), @intCast(startY), char, borderColor, backgroundColor, 0);
+                        }
                     }
                 }
             }
@@ -1822,7 +1850,14 @@ pub const OptimizedBuffer = struct {
                             char = if (borderSides.right) borderChars[@intFromEnum(BorderCharIndex.bottomRight)] else borderChars[@intFromEnum(BorderCharIndex.horizontal)];
                         }
 
-                        try self.setCellWithAlphaBlending(@intCast(drawX), @intCast(endY), char, borderColor, backgroundColor, 0);
+                        if (useTransparentBorderFastPath) {
+                            const index = self.coordsToIndex(@intCast(drawX), @intCast(endY));
+                            self.buffer.char[index] = char;
+                            self.buffer.fg[index] = borderColor;
+                            self.buffer.attributes[index] = 0;
+                        } else {
+                            try self.setCellWithAlphaBlending(@intCast(drawX), @intCast(endY), char, borderColor, backgroundColor, 0);
+                        }
                     }
                 }
             }
@@ -1837,12 +1872,26 @@ pub const OptimizedBuffer = struct {
             while (drawY <= verticalEndY) : (drawY += 1) {
                 // Left border
                 if (borderSides.left and isAtActualLeft and startX >= 0 and startX < @as(i32, @intCast(self.width))) {
-                    try self.setCellWithAlphaBlending(@intCast(startX), @intCast(drawY), borderChars[@intFromEnum(BorderCharIndex.vertical)], borderColor, backgroundColor, 0);
+                    if (useTransparentBorderFastPath) {
+                        const index = self.coordsToIndex(@intCast(startX), @intCast(drawY));
+                        self.buffer.char[index] = borderChars[@intFromEnum(BorderCharIndex.vertical)];
+                        self.buffer.fg[index] = borderColor;
+                        self.buffer.attributes[index] = 0;
+                    } else {
+                        try self.setCellWithAlphaBlending(@intCast(startX), @intCast(drawY), borderChars[@intFromEnum(BorderCharIndex.vertical)], borderColor, backgroundColor, 0);
+                    }
                 }
 
                 // Right border
                 if (borderSides.right and isAtActualRight and endX >= 0 and endX < @as(i32, @intCast(self.width))) {
-                    try self.setCellWithAlphaBlending(@intCast(endX), @intCast(drawY), borderChars[@intFromEnum(BorderCharIndex.vertical)], borderColor, backgroundColor, 0);
+                    if (useTransparentBorderFastPath) {
+                        const index = self.coordsToIndex(@intCast(endX), @intCast(drawY));
+                        self.buffer.char[index] = borderChars[@intFromEnum(BorderCharIndex.vertical)];
+                        self.buffer.fg[index] = borderColor;
+                        self.buffer.attributes[index] = 0;
+                    } else {
+                        try self.setCellWithAlphaBlending(@intCast(endX), @intCast(drawY), borderChars[@intFromEnum(BorderCharIndex.vertical)], borderColor, backgroundColor, 0);
+                    }
                 }
             }
         }
