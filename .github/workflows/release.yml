@@ -153,6 +153,7 @@ jobs:
           path: artifacts/npm
 
       - name: Extract Windows DLL artifacts
+        if: needs.prepare.outputs.isDryRun != 'true'
         shell: pwsh
         run: |
           $artifactRoot = Join-Path $env:GITHUB_WORKSPACE "artifacts"
@@ -165,7 +166,21 @@ jobs:
           Expand-Archive -Path (Join-Path $artifactRoot "native\native-windows-arm64.zip") -DestinationPath $signedNativeRoot -Force
           Expand-Archive -Path (Join-Path $artifactRoot "npm\npm-packages.zip") -DestinationPath $signedNpmRoot -Force
 
+      - name: Prepare dry-run artifact passthrough
+        if: needs.prepare.outputs.isDryRun == 'true'
+        shell: pwsh
+        run: |
+          $signedNativeRoot = Join-Path $env:GITHUB_WORKSPACE "signed-native"
+          $signedNpmRoot = Join-Path $env:GITHUB_WORKSPACE "signed-npm-packages"
+          New-Item -ItemType Directory -Force -Path $signedNativeRoot | Out-Null
+          New-Item -ItemType Directory -Force -Path $signedNpmRoot | Out-Null
+
+          Copy-Item -Path (Join-Path $env:GITHUB_WORKSPACE "artifacts\native\native-windows-x64.zip") -Destination (Join-Path $signedNativeRoot "native-windows-x64.zip") -Force
+          Copy-Item -Path (Join-Path $env:GITHUB_WORKSPACE "artifacts\native\native-windows-arm64.zip") -Destination (Join-Path $signedNativeRoot "native-windows-arm64.zip") -Force
+          Copy-Item -Path (Join-Path $env:GITHUB_WORKSPACE "artifacts\npm\npm-packages.zip") -Destination (Join-Path $signedNpmRoot "npm-packages.zip") -Force
+
       - name: Azure login
+        if: needs.prepare.outputs.isDryRun != 'true'
         uses: azure/login@v2
         with:
           client-id: ${{ env.AZURE_CLIENT_ID }}
@@ -173,6 +188,7 @@ jobs:
           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
       - name: Sign Windows DLLs
+        if: needs.prepare.outputs.isDryRun != 'true'
         uses: azure/artifact-signing-action@v1
         with:
           endpoint: ${{ env.AZURE_TRUSTED_SIGNING_ENDPOINT }}
@@ -196,6 +212,7 @@ jobs:
           exclude-interactive-browser-credential: true
 
       - name: Verify Windows DLL signatures
+        if: needs.prepare.outputs.isDryRun != 'true'
         shell: pwsh
         run: |
           $files = @(
@@ -211,6 +228,7 @@ jobs:
           }
 
       - name: Copy signed DLLs into npm packages
+        if: needs.prepare.outputs.isDryRun != 'true'
         shell: pwsh
         run: |
           $pairs = @(
@@ -236,6 +254,7 @@ jobs:
           }
 
       - name: Repack signed native Windows artifacts
+        if: needs.prepare.outputs.isDryRun != 'true'
         working-directory: signed-native
         shell: pwsh
         run: |
@@ -243,6 +262,7 @@ jobs:
           Compress-Archive -Path "native-windows-arm64" -DestinationPath "native-windows-arm64.zip" -Force
 
       - name: Repack signed npm packages artifact
+        if: needs.prepare.outputs.isDryRun != 'true'
         working-directory: signed-npm-packages
         shell: pwsh
         run: |
