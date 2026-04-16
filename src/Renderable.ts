@@ -254,6 +254,9 @@ export abstract class Renderable extends BaseRenderable {
   private childrenSortedByPrimaryAxis: Renderable[] = []
   private _shouldUpdateBefore: Set<Renderable> = new Set()
 
+  // Frame id of the last updateFromLayout(); -1 ensures the first call runs.
+  private _lastLayoutFrame: number = -1
+
   public onLifecyclePass: (() => void) | null = null
 
   public renderBefore?: (this: Renderable, buffer: OptimizedBuffer, deltaTime: number) => void
@@ -1063,6 +1066,11 @@ export abstract class Renderable extends BaseRenderable {
   }
 
   public updateFromLayout(): void {
+    // Yoga layout is stable within a frame; skip the FFI round-trip on repeat calls.
+    const frameId = this._ctx.frameId
+    if (this._lastLayoutFrame === frameId) return
+    this._lastLayoutFrame = frameId
+
     const layout = this.yogaNode.getComputedLayout()
 
     const oldX = this._x
@@ -1405,13 +1413,18 @@ export abstract class Renderable extends BaseRenderable {
         child.updateLayout(deltaTime, renderList)
       }
     } else {
+      // Refresh every child's layout before culling reads their screen
+      // coordinates; otherwise culling runs against last frame's positions
+      // and drops content that shifted this frame. The per-frame guard in
+      // updateFromLayout keeps this at one FFI call per child per frame.
+      for (const child of this._childrenInZIndexOrder) {
+        if (child.isDestroyed) continue
+        child.updateFromLayout()
+      }
       const visibleChildren = this._getVisibleChildren()
       const visibleChildSet = new Set(visibleChildren)
       for (const child of this._childrenInZIndexOrder) {
-        if (!visibleChildSet.has(child.num)) {
-          child.updateFromLayout()
-          continue
-        }
+        if (!visibleChildSet.has(child.num)) continue
         child.updateLayout(deltaTime, renderList)
       }
     }

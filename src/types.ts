@@ -74,6 +74,8 @@ export interface RenderContext extends EventEmitter {
   clearHitGridScissorRects: () => void
   width: number
   height: number
+  /** Monotonic, bumped once per `loop()` iteration. Lets renderables dedupe per-frame work. */
+  frameId: number
   requestRender: () => void
   setCursorPosition: (x: number, y: number, visible: boolean) => void
   setCursorStyle: (options: CursorStyleOptions) => void

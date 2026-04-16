@@ -531,6 +531,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private renderTimeout: TimerHandle | null = null
   private lastTime: number = 0
   private frameCount: number = 0
+  // Bumped once per loop() iteration; see RenderContext.frameId.
+  private _frameId: number = 0
   private lastFpsTime: number = 0
   private currentFps: number = 0
   private targetFrameTime: number = 1000 / this._targetFps
@@ -943,6 +945,10 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   public get widthMethod(): WidthMethod {
     const caps = this.capabilities
     return caps?.unicode === "wcwidth" ? "wcwidth" : "unicode"
+  }
+
+  public get frameId(): number {
+    return this._frameId
   }
 
   private writeOut(chunk: any, encoding?: any, callback?: any): boolean {
@@ -2339,6 +2345,9 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       this.renderTimeout = null
     }
     try {
+      // Bump before any work so all callers this iteration see the new id.
+      this._frameId++
+
       const now = this.normalizeClockTime(this.clock.now(), this.lastTime)
       const elapsed = this.getElapsedMs(now, this.lastTime)
 
