@@ -1,4 +1,4 @@
-export { getKeymapManager } from "./manager.js"
+export { getKeymapManager, KeymapManager } from "./manager.js"
 export {
   defaultBindingParser,
   defaultBindingSyntax,
@@ -54,7 +54,6 @@ export type {
   KeymapLayerFields,
   KeymapLayer,
   KeymapLogger,
-  KeymapManager,
   KeymapManagerOptions,
   KeymapParsedCommand,
   KeymapRawInputContext,

@@ -1,6 +1,7 @@
 import type { Renderable } from "../../Renderable.js"
 import type { KeyEvent } from "../../lib/KeyHandler.js"
 import type { CliRenderer } from "../../renderer.js"
+import type { KeymapManager } from "./manager.js"
 
 export type KeymapEventData = Record<string, unknown>
 
@@ -262,40 +263,7 @@ export interface KeymapManagerOptions {
   logger?: KeymapLogger
 }
 
-export interface KeymapManager {
-  readonly renderer: CliRenderer
-  destroy(): void
-  setData(name: string, value: unknown): void
-  getData(name: string): unknown
-  invalidateRuntimeKey(name: string): void
-  hasPendingSequence(): boolean
-  getPendingSequence(): readonly ParsedKeyStroke[]
-  getPendingSequenceParts(): readonly ParsedKeyPart[]
-  clearPendingSequence(): void
-  popPendingSequence(): boolean
-  getActiveKeys(options?: KeymapActiveKeyOptions): readonly KeymapActiveKey[]
-  hook<TName extends KeymapHookName>(name: TName, fn: KeymapHookListener<KeymapHooks[TName]>): () => void
-  registerLayer(layer: KeymapLayer): () => void
-  registerLayerFields(fields: Record<string, KeymapLayerFieldCompiler>): () => void
-  registerToken(token: KeymapToken): () => void
-  prependBindingExpander(expander: KeymapBindingExpander): () => void
-  appendBindingExpander(expander: KeymapBindingExpander): () => void
-  clearBindingExpanders(): void
-  prependBindingParser(parser: KeymapBindingParser): () => void
-  appendBindingParser(parser: KeymapBindingParser): () => void
-  clearBindingParsers(): void
-  registerBindingCompiler(compiler: KeymapBindingCompiler): () => void
-  registerBindingFields(fields: Record<string, KeymapBindingFieldCompiler>): () => void
-  registerCommandFields(fields: Record<string, KeymapCommandFieldCompiler>): () => void
-  registerCommandResolver(resolver: KeymapCommandResolver): () => void
-  setBindingSyntax(syntax: KeymapBindingSyntax): void
-  clearBindingSyntax(): void
-  registerEventMatchResolver(resolver: KeymapEventMatchResolver): () => void
-  clearEventMatchResolvers(): void
-  onKeyInput(fn: (ctx: KeymapKeyInputContext) => void, options?: { priority?: number; release?: boolean }): () => void
-  onRawInput(fn: (ctx: KeymapRawInputContext) => void, options?: { priority?: number }): () => void
-  registerCommands(commands: KeymapCommand[]): () => void
-}
+export type { KeymapManager }
 
 export interface RuntimeMatcher {
   source: string
