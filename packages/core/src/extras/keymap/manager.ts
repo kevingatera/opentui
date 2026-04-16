@@ -38,7 +38,6 @@ import type {
   KeymapLayer,
   KeymapLayerFieldCompiler,
   KeymapLogger,
-  KeymapManager,
   KeymapManagerOptions,
   KeymapRawInputContext,
   KeymapResolvedBindingCommand,
@@ -77,7 +76,7 @@ import {
 import { defaultBindingParser, defaultBindingSyntax, defaultEventMatchResolver } from "./default-parser.js"
 import { Emitter, OrderedEmitter, RegistrationList } from "./emitter.js"
 
-const keymapManagersByRenderer = new WeakMap<CliRenderer, KeymapManagerImpl>()
+const keymapManagersByRenderer = new WeakMap<CliRenderer, KeymapManager>()
 
 const NOOP_KEYMAP_LOGGER: ResolvedKeymapLogger = {
   warn() {},
@@ -261,7 +260,7 @@ function resolveKeymapLogger(logger?: KeymapLogger): ResolvedKeymapLogger {
   }
 }
 
-class KeymapManagerImpl implements KeymapManager {
+export class KeymapManager {
   public readonly renderer: CliRenderer
   private logger: ResolvedKeymapLogger
 
@@ -2743,7 +2742,7 @@ export function getKeymapManager(renderer: CliRenderer, options?: KeymapManagerO
     }
   }
 
-  const manager = new KeymapManagerImpl(renderer, options)
+  const manager = new KeymapManager(renderer, options)
   keymapManagersByRenderer.set(renderer, manager)
 
   renderer.once("destroy", () => {
