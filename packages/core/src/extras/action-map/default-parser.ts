@@ -10,11 +10,11 @@ import type {
 } from "./types.js"
 import {
   buildBindingKey,
-  cloneStroke,
   createParsedKeyPart,
   normalizeEventKeyStroke,
   normalizeKeyName,
   normalizeKeyStroke,
+  snapshotStroke,
 } from "./utils.js"
 import { namedSingleStrokeKeys } from "./named-keys.js"
 
@@ -263,7 +263,7 @@ export function parseKeyLike(key: KeyLike, extraNames?: ReadonlySet<string>): Pa
     throw new Error(`Invalid key "${key}": expected a single key stroke`)
   }
 
-  return cloneStroke(part.stroke)
+  return snapshotStroke(part.stroke)
 }
 
 export function parseKeySequenceLike(

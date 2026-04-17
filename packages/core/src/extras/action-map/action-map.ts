@@ -63,17 +63,18 @@ import type {
   ActionMapWarningEvent,
 } from "./types.js"
 import {
-  cloneDataValue,
-  cloneStroke,
   createParsedKeyPart,
   createSequenceNode,
-  freezeAttributes,
   getErrorMessage,
   isPromiseLike,
   mergeAttribute,
   mergeRequirement,
   normalizeBindingCommand,
+  snapshotAttributes,
   snapshotBindingInputs,
+  snapshotDataValue,
+  snapshotParsedBindingInput,
+  snapshotStroke,
   sortByPriorityAndOrder,
   stringifyKeySequence,
   stringifyKeyStroke,
@@ -141,13 +142,6 @@ function createSyntheticCommandEvent(): KeyEvent {
     eventType: "press",
     source: "raw",
   })
-}
-
-function cloneParsedBindingInput(binding: ActionMapParsedBindingInput): ActionMapParsedBindingInput {
-  return {
-    ...binding,
-    sequence: binding.sequence.map((part) => createParsedKeyPart(part.stroke, part.display, part.matchKey)),
-  }
 }
 
 function expandBindingInputWithExpanders(
@@ -1338,7 +1332,7 @@ export class ActionMap {
         continue
       }
 
-      compileFields[fieldName] = cloneDataValue(value)
+      compileFields[fieldName] = snapshotDataValue(value)
 
       const compiler = this.layerFields.get(fieldName)
       if (!compiler) {
@@ -1819,13 +1813,13 @@ export class ActionMap {
               })
             }
 
-            const attrs = freezeAttributes(mergedAttrs)
+            const attrs = snapshotAttributes(mergedAttrs)
             const command = normalizeBindingCommand(compiledInput.cmd)
             const compiledBinding: CompiledBinding = {
               sequence,
               command,
               event,
-              sourceBinding: cloneParsedBindingInput(compiledInput),
+              sourceBinding: snapshotParsedBindingInput(compiledInput),
               sourceScope,
               sourceTarget,
               sourceLayerOrder,
@@ -1898,7 +1892,7 @@ export class ActionMap {
         compiler(parsedBinding, {
           layer,
           add: (nextBinding) => {
-            extraBindings.push(cloneParsedBindingInput(nextBinding))
+            extraBindings.push(snapshotParsedBindingInput(nextBinding))
           },
           skipOriginal: () => {
             keepOriginal = false
@@ -2337,7 +2331,7 @@ export class ActionMap {
   }
 
   private collectSequenceStrokesFromNode(node: SequenceNode): ParsedKeyStroke[] {
-    return this.collectSequencePartsFromNode(node).map((part) => cloneStroke(part.stroke))
+    return this.collectSequencePartsFromNode(node).map((part) => snapshotStroke(part.stroke))
   }
 
   private getMatchingBindings(bindings: readonly CompiledBinding[]): CompiledBinding[] {
@@ -2638,7 +2632,7 @@ export class ActionMap {
     }
 
     const activeKey: ActionMapActiveKey = {
-      stroke: cloneStroke(state.stroke),
+      stroke: snapshotStroke(state.stroke),
       display: state.display,
       continues: state.continues,
     }
@@ -3075,7 +3069,7 @@ export class ActionMap {
 
     const context: ActionMapUnresolvedCommandContext = {
       command,
-      binding: cloneParsedBindingInput(binding.sourceBinding),
+      binding: snapshotParsedBindingInput(binding.sourceBinding),
       scope: binding.sourceScope,
       target: binding.sourceTarget,
     }

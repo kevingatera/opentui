@@ -2,6 +2,7 @@ import type { KeyEvent } from "../../lib/KeyHandler.js"
 import type {
   ActionMapAttributes,
   ActionMapBindingCommand,
+  ActionMapParsedBindingInput,
   KeyStroke,
   ActionMapBindingInput,
   ActionMapBindings,
@@ -13,7 +14,7 @@ import type {
   SequenceNode,
 } from "./types.js"
 
-export interface CloneDataValueOptions {
+export interface SnapshotDataValueOptions {
   deep?: boolean
   freeze?: boolean
   preserveNonPlainObjects?: boolean
@@ -34,7 +35,7 @@ export function normalizeKeyName(name: string): string {
   return next
 }
 
-export function cloneStroke(stroke: ParsedKeyStroke): ParsedKeyStroke {
+export function snapshotStroke(stroke: ParsedKeyStroke): ParsedKeyStroke {
   return {
     name: stroke.name,
     ctrl: stroke.ctrl,
@@ -72,13 +73,13 @@ function isPlainObject(value: object): boolean {
 
 // This is intentionally narrower than `structuredClone(...)`: some action-map
 // metadata needs to preserve opaque values such as functions or class instances.
-export function cloneDataValue(value: unknown, options?: CloneDataValueOptions): unknown {
+export function snapshotDataValue(value: unknown, options?: SnapshotDataValueOptions): unknown {
   const deep = options?.deep === true
   const freeze = options?.freeze === true
   const preserveNonPlainObjects = options?.preserveNonPlainObjects === true
 
   if (Array.isArray(value)) {
-    const cloned = deep ? value.map((entry) => cloneDataValue(entry, options)) : [...value]
+    const cloned = deep ? value.map((entry) => snapshotDataValue(entry, options)) : [...value]
     return freeze ? Object.freeze(cloned) : cloned
   }
 
@@ -89,7 +90,7 @@ export function cloneDataValue(value: unknown, options?: CloneDataValueOptions):
 
     const cloned: Record<string, unknown> = {}
     for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-      cloned[key] = deep ? cloneDataValue(entry, options) : entry
+      cloned[key] = deep ? snapshotDataValue(entry, options) : entry
     }
 
     return freeze ? Object.freeze(cloned) : cloned
@@ -150,18 +151,25 @@ export function mergeAttribute(target: ActionMapAttributes, name: string, value:
   target[name] = value
 }
 
-export function freezeAttributes(attrs: ActionMapAttributes): Readonly<ActionMapAttributes> | undefined {
+export function snapshotAttributes(attrs: ActionMapAttributes): Readonly<ActionMapAttributes> | undefined {
   if (Object.keys(attrs).length === 0) {
     return undefined
   }
 
-  return cloneDataValue(attrs, { freeze: true }) as Readonly<ActionMapAttributes>
+  return snapshotDataValue(attrs, { freeze: true }) as Readonly<ActionMapAttributes>
 }
 
-export function cloneBindingInput(binding: ActionMapBindingInput): ActionMapBindingInput {
+export function snapshotBindingInput(binding: ActionMapBindingInput): ActionMapBindingInput {
   return {
     ...binding,
     key: typeof binding.key === "string" ? binding.key : { ...binding.key },
+  }
+}
+
+export function snapshotParsedBindingInput(binding: ActionMapParsedBindingInput): ActionMapParsedBindingInput {
+  return {
+    ...binding,
+    sequence: binding.sequence.map((part) => createParsedKeyPart(part.stroke, part.display, part.matchKey)),
   }
 }
 
@@ -181,7 +189,7 @@ export function normalizeBindingCommand(
 }
 
 export function snapshotBindingInputs(bindings: ActionMapBindings): ActionMapBindingInput[] {
-  return normalizeBindingInputs(bindings).map((binding) => cloneBindingInput(binding))
+  return normalizeBindingInputs(bindings).map((binding) => snapshotBindingInput(binding))
 }
 
 function hasDisplayStroke(
@@ -221,7 +229,7 @@ export function createParsedKeyPart(
   display = stringifyCanonicalStroke(stroke),
   matchKey?: string,
 ): ParsedKeyPart {
-  const cloned = cloneStroke(stroke)
+  const cloned = snapshotStroke(stroke)
 
   return {
     stroke: cloned,

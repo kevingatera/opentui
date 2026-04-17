@@ -6,11 +6,11 @@ import type {
   ActionMapCommandRecord,
   RegisteredCommand,
 } from "./types.js"
-import { cloneDataValue, getErrorMessage, mergeAttribute, normalizeCommandName } from "./utils.js"
+import { getErrorMessage, mergeAttribute, normalizeCommandName, snapshotDataValue } from "./utils.js"
 
 const RESERVED_COMMAND_FIELDS = new Set(["name", "run"])
-const CLONE_COMMAND_METADATA_OPTIONS = Object.freeze({ deep: true, preserveNonPlainObjects: true })
-const CLONE_FROZEN_COMMAND_METADATA_OPTIONS = Object.freeze({
+const SNAPSHOT_COMMAND_METADATA_OPTIONS = Object.freeze({ deep: true, preserveNonPlainObjects: true })
+const SNAPSHOT_FROZEN_COMMAND_METADATA_OPTIONS = Object.freeze({
   deep: true,
   freeze: true,
   preserveNonPlainObjects: true,
@@ -56,7 +56,7 @@ export function normalizeRegisteredCommands(options: NormalizeRegisteredCommands
           continue
         }
 
-        mergedFields[fieldName] = cloneDataValue(value, CLONE_COMMAND_METADATA_OPTIONS)
+        mergedFields[fieldName] = snapshotDataValue(value, SNAPSHOT_COMMAND_METADATA_OPTIONS)
 
         const compiler = options.commandFields.get(fieldName)
         if (!compiler) {
@@ -96,7 +96,7 @@ function createCommandFieldContext(mergedAttrs: ActionMapAttributes, fieldName: 
       mergeAttribute(
         mergedAttrs,
         name,
-        cloneDataValue(attributeValue, CLONE_COMMAND_METADATA_OPTIONS),
+        snapshotDataValue(attributeValue, SNAPSHOT_COMMAND_METADATA_OPTIONS),
         `field ${fieldName}`,
       )
     },
@@ -110,7 +110,9 @@ export function getRegisteredCommandRecord(command: RegisteredCommand): ActionMa
 
   let fields = EMPTY_COMMAND_FIELDS
   if (command.fields !== EMPTY_COMMAND_FIELDS && Object.keys(command.fields).length > 0) {
-    fields = cloneDataValue(command.fields, CLONE_FROZEN_COMMAND_METADATA_OPTIONS) as Readonly<Record<string, unknown>>
+    fields = snapshotDataValue(command.fields, SNAPSHOT_FROZEN_COMMAND_METADATA_OPTIONS) as Readonly<
+      Record<string, unknown>
+    >
   }
 
   let record: ActionMapCommandRecord
@@ -118,7 +120,10 @@ export function getRegisteredCommandRecord(command: RegisteredCommand): ActionMa
     record = Object.freeze({
       name: command.name,
       fields,
-      attrs: cloneDataValue(command.attrs, CLONE_FROZEN_COMMAND_METADATA_OPTIONS) as Readonly<ActionMapAttributes>,
+      attrs: snapshotDataValue(
+        command.attrs,
+        SNAPSHOT_FROZEN_COMMAND_METADATA_OPTIONS,
+      ) as Readonly<ActionMapAttributes>,
     })
   } else {
     record = Object.freeze({
