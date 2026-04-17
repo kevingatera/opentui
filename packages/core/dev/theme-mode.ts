@@ -7,19 +7,24 @@ let titleText: TextRenderable | null = null
 let themeText: TextRenderable | null = null
 let statusText: TextRenderable | null = null
 let eventCountText: TextRenderable | null = null
+let firstDrawText: TextRenderable | null = null
 let historyText: TextRenderable | null = null
 let helpText: TextRenderable | null = null
 let themeModeEventCount = 0
+let firstDrawStartedAt = 0
+let timeToFirstDrawMs: number | null = null
 const updateThemeHistory: string[] = []
 
 function updateThemeDisplay() {
   if (!renderer || renderer.isDestroyed) return
-  if (!titleText || !themeText || !statusText || !eventCountText || !historyText || !helpText) return
+  if (!titleText || !themeText || !statusText || !eventCountText || !firstDrawText || !historyText || !helpText) return
 
   const currentTheme = renderer.themeMode
   updateThemeHistory.push(`updateThemeDisplay ${updateThemeHistory.length + 1}: themeMode=${currentTheme ?? "null"}`)
 
   eventCountText.content = `theme_mode events: ${themeModeEventCount}`
+  firstDrawText.content =
+    timeToFirstDrawMs === null ? "time to first draw: pending" : `time to first draw: ${timeToFirstDrawMs.toFixed(1)}ms`
   historyText.content = `updateThemeDisplay history:
 ${updateThemeHistory.join("\n")}`
 
@@ -30,6 +35,7 @@ ${updateThemeHistory.join("\n")}`
     statusText.content = "Terminal is in dark mode"
     statusText.fg = parseColor("#D7DBE0")
     eventCountText.fg = parseColor("#B8C0CC")
+    firstDrawText.fg = parseColor("#B8C0CC")
     historyText.fg = parseColor("#B8C0CC")
     helpText.fg = parseColor("#8F9BA8")
     renderer.setBackgroundColor("#1a1a2e")
@@ -40,6 +46,7 @@ ${updateThemeHistory.join("\n")}`
     statusText.content = "Terminal is in light mode"
     statusText.fg = parseColor("#1F2937")
     eventCountText.fg = parseColor("#374151")
+    firstDrawText.fg = parseColor("#374151")
     historyText.fg = parseColor("#374151")
     helpText.fg = parseColor("#4B5563")
     renderer.setBackgroundColor("#f5f5f0")
@@ -50,6 +57,7 @@ ${updateThemeHistory.join("\n")}`
     statusText.content = "Theme mode not detected. Try switching your terminal theme."
     statusText.fg = parseColor("#D7DBE0")
     eventCountText.fg = parseColor("#B8C0CC")
+    firstDrawText.fg = parseColor("#B8C0CC")
     historyText.fg = parseColor("#B8C0CC")
     helpText.fg = parseColor("#8F9BA8")
     renderer.setBackgroundColor("#2d2d2d")
@@ -57,6 +65,8 @@ ${updateThemeHistory.join("\n")}`
 }
 
 async function main() {
+  firstDrawStartedAt = performance.now()
+
   renderer = await createCliRenderer({
     exitOnCtrlC: true,
     targetFps: 30,
@@ -98,6 +108,12 @@ async function main() {
     marginBottom: 2,
   })
 
+  firstDrawText = new TextRenderable(renderer, {
+    id: "first-draw",
+    content: "time to first draw: pending",
+    marginBottom: 2,
+  })
+
   historyText = new TextRenderable(renderer, {
     id: "history",
     content: "updateThemeDisplay history:\n(none)",
@@ -114,6 +130,7 @@ async function main() {
   mainContainer.add(themeText)
   mainContainer.add(statusText)
   mainContainer.add(eventCountText)
+  mainContainer.add(firstDrawText)
   mainContainer.add(historyText)
   mainContainer.add(helpText)
 
@@ -128,6 +145,18 @@ async function main() {
   if (themeModeEventCount === 0) {
     updateThemeDisplay()
   }
+
+  const handleFirstDraw = async () => {
+    if (!renderer || !firstDrawText || timeToFirstDrawMs !== null) {
+      return
+    }
+
+    timeToFirstDrawMs = performance.now() - firstDrawStartedAt
+    renderer.removeFrameCallback(handleFirstDraw)
+    updateThemeDisplay()
+  }
+
+  renderer.setFrameCallback(handleFirstDraw)
 
   renderer.requestRender()
 }
