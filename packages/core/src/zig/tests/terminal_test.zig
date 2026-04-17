@@ -694,6 +694,48 @@ test "queryTerminalSend - sends OSC 66 queries when OPENTUI_FORCE_EXPLICIT_WIDTH
     try testing.expect(!term.skip_explicit_width_query);
 }
 
+test "enableDetectedFeatures - sends initial theme queries" {
+    var env = std.process.EnvMap.init(testing.allocator);
+    defer env.deinit();
+
+    var term = Terminal.init(.{ .env_map = &env });
+    var writer = TestWriter.init(testing.allocator);
+    defer writer.deinit();
+
+    try term.enableDetectedFeatures(&writer, false);
+
+    const output = writer.getWritten();
+
+    try testing.expect(std.mem.indexOf(u8, output, ansi.ANSI.colorSchemeSet) != null);
+    try testing.expect(std.mem.indexOf(u8, output, ansi.ANSI.colorSchemeRequest) != null);
+    try testing.expect(std.mem.indexOf(u8, output, "\x1b]10;?\x07") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "\x1b]11;?\x07") != null);
+    try testing.expect(term.theme_queries_pending);
+    try testing.expect(term.state.theme_queries_sent);
+}
+
+test "sendPendingQueries - sends wrapped OSC theme queries after tmux detected via xtversion" {
+    var term = Terminal.init(.{});
+    term.in_tmux = false;
+    term.theme_queries_pending = true;
+
+    term.term_info.from_xtversion = true;
+    term.term_info.name_len = 4;
+    @memcpy(term.term_info.name[0..4], "tmux");
+
+    var writer = TestWriter.init(testing.allocator);
+    defer writer.deinit();
+
+    const did_send = try term.sendPendingQueries(&writer);
+
+    try testing.expect(did_send);
+
+    const output = writer.getWritten();
+    try testing.expect(std.mem.indexOf(u8, output, "\x1bPtmux;\x1b\x1b]10;?\x07") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "\x1b\x1b]11;?\x07") != null);
+    try testing.expect(!term.theme_queries_pending);
+}
+
 test "setMouseMode - enable without movement keeps click/drag only" {
     var term = Terminal.init(.{});
     var writer = TestWriter.init(testing.allocator);

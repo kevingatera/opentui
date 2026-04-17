@@ -1671,6 +1671,79 @@ test("multiple DECRPM responses in sequence", async () => {
   expect(keypresses).toHaveLength(0)
 })
 
+test("OSC 10/11 fallback sets initial theme mode once both colors arrive", () => {
+  const themeModes: string[] = []
+  currentRenderer.on("theme_mode", (mode) => {
+    themeModes.push(mode)
+  })
+
+  currentRenderer.stdin.emit("data", Buffer.from("\x1b]10;#ffffff\x07"))
+  advanceCurrentClock()
+
+  expect(currentRenderer.themeMode).toBeNull()
+  expect(themeModes).toEqual([])
+
+  currentRenderer.stdin.emit("data", Buffer.from("\x1b]11;#000000\x07"))
+  advanceCurrentClock()
+
+  expect(currentRenderer.themeMode).toBe("dark")
+  expect(themeModes).toEqual(["dark"])
+})
+
+test("CSI 997 overrides OSC fallback when the reported mode differs", () => {
+  const themeModes: string[] = []
+  currentRenderer.on("theme_mode", (mode) => {
+    themeModes.push(mode)
+  })
+
+  currentRenderer.stdin.emit("data", Buffer.from("\x1b]10;#ffffff\x07"))
+  currentRenderer.stdin.emit("data", Buffer.from("\x1b]11;#000000\x07"))
+  advanceCurrentClock()
+
+  expect(currentRenderer.themeMode).toBe("dark")
+  expect(themeModes).toEqual(["dark"])
+
+  currentRenderer.stdin.emit("data", Buffer.from("\x1b[?997;2n"))
+  advanceCurrentClock()
+
+  expect(currentRenderer.themeMode).toBe("light")
+  expect(themeModes).toEqual(["dark", "light"])
+})
+
+test("CSI 997 with the same mode as OSC fallback does not emit twice", () => {
+  const themeModes: string[] = []
+  currentRenderer.on("theme_mode", (mode) => {
+    themeModes.push(mode)
+  })
+
+  currentRenderer.stdin.emit("data", Buffer.from("\x1b]10;#ffffff\x07"))
+  currentRenderer.stdin.emit("data", Buffer.from("\x1b]11;#000000\x07"))
+  advanceCurrentClock()
+
+  currentRenderer.stdin.emit("data", Buffer.from("\x1b[?997;1n"))
+  advanceCurrentClock()
+
+  expect(currentRenderer.themeMode).toBe("dark")
+  expect(themeModes).toEqual(["dark"])
+})
+
+test("OSC fallback does not override CSI 997", () => {
+  const themeModes: string[] = []
+  currentRenderer.on("theme_mode", (mode) => {
+    themeModes.push(mode)
+  })
+
+  currentRenderer.stdin.emit("data", Buffer.from("\x1b[?997;2n"))
+  advanceCurrentClock()
+
+  currentRenderer.stdin.emit("data", Buffer.from("\x1b]10;#ffffff\x07"))
+  currentRenderer.stdin.emit("data", Buffer.from("\x1b]11;#000000\x07"))
+  advanceCurrentClock()
+
+  expect(currentRenderer.themeMode).toBe("light")
+  expect(themeModes).toEqual(["light"])
+})
+
 test("pixel resolution response should not trigger keypress", async () => {
   const keypresses: KeyEvent[] = []
   currentRenderer.keyInput.on("keypress", (event) => {

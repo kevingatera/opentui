@@ -73,7 +73,7 @@ pub const ANSI = struct {
     pub const restoreCursorState = "\x1b[u";
 
     pub fn setMousePointerOutput(writer: anytype, shape: []const u8) AnsiError!void {
-        writer.print("\x1b]22;{s}\x07", .{ shape }) catch return AnsiError.WriteFailed;
+        writer.print("\x1b]22;{s}\x07", .{shape}) catch return AnsiError.WriteFailed;
     }
 
     pub const switchToAlternateScreen = "\x1b[?1049h";
@@ -161,6 +161,8 @@ pub const ANSI = struct {
     pub const colorSchemeRequest = "\x1b[?996n";
     pub const colorSchemeSet = "\x1b[?2031h";
     pub const colorSchemeReset = "\x1b[?2031l";
+    pub const oscThemeQueries = "\x1b]10;?\x07\x1b]11;?\x07";
+    pub const oscThemeQueriesTmux = wrapForTmux(oscThemeQueries);
 
     // Key encoding
     pub const csiUPush = "\x1b[>{d}u";

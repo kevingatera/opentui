@@ -39,6 +39,35 @@ import { type Clock, type TimerHandle, SystemClock } from "./lib/clock.js"
 import { StdinParser, type StdinEvent, type StdinParserProtocolContext } from "./lib/stdin-parser.js"
 import { matchesKeyBinding } from "./lib/keymapping.js"
 
+const OSC_THEME_RESPONSE =
+  /\x1b](10|11);(?:(?:rgb:)([0-9a-fA-F]+)\/([0-9a-fA-F]+)\/([0-9a-fA-F]+)|#([0-9a-fA-F]{6}))(?:\x07|\x1b\\)/g
+
+function scaleOscThemeComponent(component: string): string {
+  const value = parseInt(component, 16)
+  const maxValue = (1 << (4 * component.length)) - 1
+  return Math.round((value / maxValue) * 255)
+    .toString(16)
+    .padStart(2, "0")
+}
+
+function oscThemeColorToHex(r?: string, g?: string, b?: string, hex6?: string): string {
+  if (hex6) {
+    return `#${hex6.toLowerCase()}`
+  }
+
+  if (r && g && b) {
+    return `#${scaleOscThemeComponent(r)}${scaleOscThemeComponent(g)}${scaleOscThemeComponent(b)}`
+  }
+
+  return "#000000"
+}
+
+function inferThemeModeFromBackgroundColor(color: string): ThemeMode {
+  const [r, g, b] = parseColor(color).toInts()
+  const brightness = (r * 299 + g * 587 + b * 114) / 1000
+  return brightness > 128 ? "light" : "dark"
+}
+
 registerEnvVar({
   name: "OTUI_DUMP_CAPTURES",
   description: "Dump captured stdout and console caches when the renderer exit handler runs.",
@@ -627,6 +656,10 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private _paletteDetectionPromise: Promise<TerminalColors> | null = null
   private _onDestroy?: () => void
   private _themeMode: ThemeMode | null = null
+  private _themeModeSource: "none" | "osc" | "csi" = "none"
+  private _themeFallbackPending: boolean = true
+  private _themeOscForeground: string | null = null
+  private _themeOscBackground: string | null = null
   private _terminalFocusState: boolean | null = null
 
   private sequenceHandlers: ((sequence: string) => boolean)[] = []
@@ -1447,21 +1480,61 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
   private themeModeHandler: (sequence: string) => boolean = ((sequence: string) => {
     if (sequence === "\x1b[?997;1n") {
-      if (this._themeMode !== "dark") {
-        this._themeMode = "dark"
-        this.emit(CliRenderEvents.THEME_MODE, "dark")
-      }
+      this.applyThemeMode("dark", "csi")
+      this._themeFallbackPending = false
       return true
     }
     if (sequence === "\x1b[?997;2n") {
-      if (this._themeMode !== "light") {
-        this._themeMode = "light"
-        this.emit(CliRenderEvents.THEME_MODE, "light")
-      }
+      this.applyThemeMode("light", "csi")
+      this._themeFallbackPending = false
       return true
     }
-    return false
+
+    let handledOscThemeResponse = false
+    let match: RegExpExecArray | null
+
+    OSC_THEME_RESPONSE.lastIndex = 0
+    while ((match = OSC_THEME_RESPONSE.exec(sequence))) {
+      handledOscThemeResponse = true
+      const color = oscThemeColorToHex(match[2], match[3], match[4], match[5])
+
+      if (match[1] === "10") {
+        this._themeOscForeground = color
+      } else {
+        this._themeOscBackground = color
+      }
+    }
+
+    if (!handledOscThemeResponse) {
+      return false
+    }
+
+    if (!this._themeFallbackPending) {
+      return true
+    }
+
+    if (this._themeOscForeground && this._themeOscBackground) {
+      this.applyThemeMode(inferThemeModeFromBackgroundColor(this._themeOscBackground), "osc")
+      this._themeFallbackPending = false
+    }
+
+    return true
   }).bind(this)
+
+  private applyThemeMode(mode: ThemeMode, source: "osc" | "csi"): void {
+    if (source === "osc" && this._themeModeSource === "csi") {
+      return
+    }
+
+    const changed = this._themeMode !== mode
+
+    this._themeMode = mode
+    this._themeModeSource = source
+
+    if (changed) {
+      this.emit(CliRenderEvents.THEME_MODE, mode)
+    }
+  }
 
   private dispatchSequenceHandlers(sequence: string): boolean {
     if (this._debugModeEnabled) {
