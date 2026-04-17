@@ -5,12 +5,21 @@ import { parseColor } from "../src/lib/RGBA.js"
 let renderer: CliRenderer | null = null
 let themeText: TextRenderable | null = null
 let statusText: TextRenderable | null = null
+let eventCountText: TextRenderable | null = null
+let historyText: TextRenderable | null = null
+let themeModeEventCount = 0
+const updateThemeHistory: string[] = []
 
 function updateThemeDisplay() {
   if (!renderer || renderer.isDestroyed) return
-  if (!themeText || !statusText) return
+  if (!themeText || !statusText || !eventCountText || !historyText) return
 
   const currentTheme = renderer.themeMode
+  updateThemeHistory.push(`updateThemeDisplay ${updateThemeHistory.length + 1}: themeMode=${currentTheme ?? "null"}`)
+
+  eventCountText.content = `theme_mode events: ${themeModeEventCount}`
+  historyText.content = `updateThemeDisplay history:
+${updateThemeHistory.join("\n")}`
 
   if (currentTheme === "dark") {
     themeText.content = "🌙 Dark Mode"
@@ -67,6 +76,20 @@ async function main() {
     marginBottom: 2,
   })
 
+  eventCountText = new TextRenderable(renderer, {
+    id: "event-count",
+    content: "theme_mode events: 0",
+    dim: true,
+    marginBottom: 2,
+  })
+
+  historyText = new TextRenderable(renderer, {
+    id: "history",
+    content: "updateThemeDisplay history:\n(none)",
+    dim: true,
+    marginBottom: 2,
+  })
+
   const helpText = new TextRenderable(renderer, {
     id: "help",
     content: "Press Ctrl+C to exit. Try switching your terminal's light/dark theme to see updates.",
@@ -77,6 +100,8 @@ async function main() {
   mainContainer.add(titleText)
   mainContainer.add(themeText)
   mainContainer.add(statusText)
+  mainContainer.add(eventCountText)
+  mainContainer.add(historyText)
   mainContainer.add(helpText)
 
   // Initial display
@@ -84,6 +109,7 @@ async function main() {
 
   // Listen for theme mode changes from the terminal
   renderer.on("theme_mode", () => {
+    themeModeEventCount++
     updateThemeDisplay()
   })
 
