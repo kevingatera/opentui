@@ -237,8 +237,14 @@ test "queryTerminalSend - sends unwrapped queries when not in tmux" {
 
     const output = writer.getWritten();
 
+    const idx_color_scheme_request = std.mem.indexOf(u8, output, ansi.ANSI.colorSchemeRequest).?;
+    const idx_osc_theme_queries = std.mem.indexOf(u8, output, ansi.ANSI.oscThemeQueries).?;
+    const idx_xtversion = std.mem.indexOf(u8, output, "\x1b[>0q").?;
+
     // Should contain xtversion
     try testing.expect(std.mem.indexOf(u8, output, "\x1b[>0q") != null);
+    try testing.expect(idx_color_scheme_request < idx_xtversion);
+    try testing.expect(idx_osc_theme_queries < idx_xtversion);
 
     // Should contain unwrapped DECRQM queries (single ESC)
     try testing.expect(std.mem.indexOf(u8, output, "\x1b[?1016$p") != null);
@@ -250,6 +256,7 @@ test "queryTerminalSend - sends unwrapped queries when not in tmux" {
 
     // Should mark capability queries as pending
     try testing.expect(term.capability_queries_pending);
+    try testing.expect(term.theme_queries_pending);
 }
 
 test "queryTerminalSend - sends DCS wrapped queries when in tmux" {
@@ -268,8 +275,14 @@ test "queryTerminalSend - sends DCS wrapped queries when in tmux" {
 
     const output = writer.getWritten();
 
+    const idx_color_scheme_request = std.mem.indexOf(u8, output, ansi.ANSI.colorSchemeRequest).?;
+    const idx_osc_theme_queries = std.mem.indexOf(u8, output, ansi.ANSI.oscThemeQueriesTmux).?;
+    const idx_xtversion = std.mem.indexOf(u8, output, "\x1b[>0q").?;
+
     // Should contain xtversion (unwrapped - used for detection)
     try testing.expect(std.mem.indexOf(u8, output, "\x1b[>0q") != null);
+    try testing.expect(idx_color_scheme_request < idx_xtversion);
+    try testing.expect(idx_osc_theme_queries < idx_xtversion);
 
     // Should contain tmux DCS wrapper start and doubled ESC for queries
     // wrapForTmux wraps all queries together with one DCS envelope
@@ -277,6 +290,7 @@ test "queryTerminalSend - sends DCS wrapped queries when in tmux" {
 
     // Should NOT mark capability queries as pending (already sent wrapped)
     try testing.expect(!term.capability_queries_pending);
+    try testing.expect(!term.theme_queries_pending);
 }
 
 test "sendPendingQueries - sends wrapped queries after tmux detected via xtversion" {
@@ -692,6 +706,48 @@ test "queryTerminalSend - sends OSC 66 queries when OPENTUI_FORCE_EXPLICIT_WIDTH
     // Verify the capability was forced on
     try testing.expect(term.caps.explicit_width);
     try testing.expect(!term.skip_explicit_width_query);
+}
+
+test "enableDetectedFeatures - sends initial theme queries" {
+    var env = std.process.EnvMap.init(testing.allocator);
+    defer env.deinit();
+
+    var term = Terminal.init(.{ .env_map = &env });
+    var writer = TestWriter.init(testing.allocator);
+    defer writer.deinit();
+
+    try term.enableDetectedFeatures(&writer, false);
+
+    const output = writer.getWritten();
+
+    try testing.expect(std.mem.indexOf(u8, output, ansi.ANSI.colorSchemeSet) != null);
+    try testing.expect(std.mem.indexOf(u8, output, ansi.ANSI.colorSchemeRequest) != null);
+    try testing.expect(std.mem.indexOf(u8, output, "\x1b]10;?\x07") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "\x1b]11;?\x07") != null);
+    try testing.expect(term.theme_queries_pending);
+    try testing.expect(term.state.theme_queries_sent);
+}
+
+test "sendPendingQueries - sends wrapped OSC theme queries after tmux detected via xtversion" {
+    var term = Terminal.init(.{});
+    term.in_tmux = false;
+    term.theme_queries_pending = true;
+
+    term.term_info.from_xtversion = true;
+    term.term_info.name_len = 4;
+    @memcpy(term.term_info.name[0..4], "tmux");
+
+    var writer = TestWriter.init(testing.allocator);
+    defer writer.deinit();
+
+    const did_send = try term.sendPendingQueries(&writer);
+
+    try testing.expect(did_send);
+
+    const output = writer.getWritten();
+    try testing.expect(std.mem.indexOf(u8, output, "\x1bPtmux;\x1b\x1b]10;?\x07") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "\x1b\x1b]11;?\x07") != null);
+    try testing.expect(!term.theme_queries_pending);
 }
 
 test "setMouseMode - enable without movement keeps click/drag only" {
