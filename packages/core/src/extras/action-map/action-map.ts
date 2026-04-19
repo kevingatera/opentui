@@ -28,11 +28,11 @@ import type {
   RawInterceptOptions,
   RawInputContext,
   EventMatchResolver,
-  StringifiableKey,
-  Token,
+  KeyStringifyInput,
+  KeyToken,
   KeyLike,
-  ParsedKeyPart,
-  ParsedKeyToken,
+  KeySequencePart,
+  ResolvedKeyToken,
 } from "./types.js"
 import { buildBindingKey, getErrorMessage, normalizeBindingInputs, normalizeKeyStroke } from "./lib/utils.js"
 import { RESERVED_BINDING_FIELDS, RESERVED_COMMAND_FIELDS, RESERVED_LAYER_FIELDS } from "./schema.js"
@@ -55,7 +55,7 @@ type DiagnosticEvents = Pick<Events, "warning" | "error">
 
 type FieldKind = "layer" | "binding" | "command"
 
-function getKeyMatchKey(input: StringifiableKey): string {
+function getKeyMatchKey(input: KeyStringifyInput): string {
   if ("matchKey" in input) {
     return input.matchKey
   }
@@ -238,11 +238,11 @@ export class ActionMap {
     return this.projection.ensureValidPendingSequence() !== undefined
   }
 
-  public getPendingSequence(): readonly ParsedKeyPart[] {
+  public getPendingSequence(): readonly KeySequencePart[] {
     return this.projection.getPendingSequence()
   }
 
-  public createKeyMatcher(key: KeyLike): (input: StringifiableKey | null | undefined) => boolean {
+  public createKeyMatcher(key: KeyLike): (input: KeyStringifyInput | null | undefined) => boolean {
     const matchKey = this.compiler.parseTokenKey(key).matchKey
 
     return (input) => {
@@ -394,7 +394,7 @@ export class ActionMap {
     this.state.config.bindingSyntax = undefined
   }
 
-  public registerToken(token: Token): () => void {
+  public registerToken(token: KeyToken): () => void {
     let normalizedToken: string
 
     try {
@@ -409,7 +409,7 @@ export class ActionMap {
       return NOOP
     }
 
-    let parsedToken: ParsedKeyPart
+    let parsedToken: KeySequencePart
 
     try {
       parsedToken = this.compiler.parseTokenKey(token.key)
@@ -418,7 +418,7 @@ export class ActionMap {
       return NOOP
     }
 
-    const registeredToken: ParsedKeyToken = {
+    const registeredToken: ResolvedKeyToken = {
       stroke: parsedToken.stroke,
       matchKey: parsedToken.matchKey,
     }
@@ -540,7 +540,7 @@ export class ActionMap {
     this.notify.emitError(message, cause)
   }
 
-  private applyTokenState(nextTokens: Map<string, ParsedKeyToken>): void {
+  private applyTokenState(nextTokens: Map<string, ResolvedKeyToken>): void {
     this.layers.applyTokenState(nextTokens)
   }
 

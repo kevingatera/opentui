@@ -3,10 +3,10 @@ import type {
   BindingSyntax,
   EventMatchResolver,
   KeyLike,
-  KeyStroke,
-  ParsedKeyPart,
-  ParsedKeyToken,
-  ParsedKeyStroke,
+  KeyStrokeInput,
+  KeySequencePart,
+  ResolvedKeyToken,
+  NormalizedKeyStroke,
 } from "../types.js"
 import {
   buildBindingKey,
@@ -18,7 +18,7 @@ import {
 } from "./utils.js"
 import { namedSingleStrokeKeys } from "./named-keys.js"
 
-const emptyTokens = new Map<string, ParsedKeyToken>()
+const emptyTokens = new Map<string, ResolvedKeyToken>()
 
 export const defaultBindingSyntax: BindingSyntax = {
   normalizeTokenName(token) {
@@ -29,7 +29,7 @@ export const defaultBindingSyntax: BindingSyntax = {
 
     return normalized
   },
-  parseObjectKey(key: KeyStroke) {
+  parseObjectKey(key: KeyStrokeInput) {
     return createParsedKeyPart(normalizeKeyStroke(key))
   },
 }
@@ -53,7 +53,7 @@ function isNamedSingleStrokeKey(input: string, extraNames?: ReadonlySet<string>)
 
 function isSingleStrokeString(
   input: string,
-  tokens: ReadonlyMap<string, ParsedKeyToken>,
+  tokens: ReadonlyMap<string, ResolvedKeyToken>,
   extraNames?: ReadonlySet<string>,
 ): boolean {
   if (input === " " || input === "+") {
@@ -75,7 +75,7 @@ function isSingleStrokeString(
   return isNamedSingleStrokeKey(input, extraNames)
 }
 
-function parseStringKeyPart(input: string): ParsedKeyPart {
+function parseStringKeyPart(input: string): KeySequencePart {
   if (input === " ") {
     return createParsedKeyPart({ name: "space", ctrl: false, shift: false, meta: false, super: false }, "space")
   }
@@ -160,9 +160,9 @@ function parseStringKeyPart(input: string): ParsedKeyPart {
 
 function parseKeySequenceWithDefaultParser(
   key: KeyLike,
-  tokens: ReadonlyMap<string, ParsedKeyToken> = emptyTokens,
+  tokens: ReadonlyMap<string, ResolvedKeyToken> = emptyTokens,
   extraNames?: ReadonlySet<string>,
-): ParsedKeyPart[] {
+): KeySequencePart[] {
   if (typeof key !== "string") {
     return [defaultBindingSyntax.parseObjectKey(key)]
   }
@@ -181,7 +181,7 @@ function parseKeySequenceWithDefaultParser(
     return [parseStringKeyPart(key)]
   }
 
-  const parts: ParsedKeyPart[] = []
+  const parts: KeySequencePart[] = []
   let index = 0
 
   while (index < key.length) {
@@ -258,7 +258,7 @@ export const defaultBindingParser: BindingParser = ({ input, index, tokens }) =>
   }
 }
 
-export function parseKeyLike(key: KeyLike, extraNames?: ReadonlySet<string>): ParsedKeyStroke {
+export function parseKeyLike(key: KeyLike, extraNames?: ReadonlySet<string>): NormalizedKeyStroke {
   const parts = parseKeySequenceWithDefaultParser(key, emptyTokens, extraNames)
   const [part] = parts
   if (!part) {
@@ -274,9 +274,9 @@ export function parseKeyLike(key: KeyLike, extraNames?: ReadonlySet<string>): Pa
 
 export function parseKeySequenceLike(
   key: KeyLike,
-  tokens: ReadonlyMap<string, ParsedKeyToken> = emptyTokens,
+  tokens: ReadonlyMap<string, ResolvedKeyToken> = emptyTokens,
   extraNames?: ReadonlySet<string>,
-): ParsedKeyPart[] {
+): KeySequencePart[] {
   return parseKeySequenceWithDefaultParser(key, tokens, extraNames)
 }
 

@@ -12,7 +12,7 @@ import type {
   Layer,
   LayerAnalysisContext,
   Scope,
-  ParsedKeyToken,
+  ResolvedKeyToken,
   RegisteredCommand,
   RegisteredLayer,
   RegisteredLayerBucket,
@@ -213,7 +213,7 @@ export class LayerService {
     })
   }
 
-  public applyTokenState(nextTokens: Map<string, ParsedKeyToken>): void {
+  public applyTokenState(nextTokens: Map<string, ResolvedKeyToken>): void {
     this.notify.runWithStateChangeBatch(() => {
       const nextCompilations = new Map<RegisteredLayer, CompiledBindingsResult>()
 

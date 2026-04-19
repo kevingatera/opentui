@@ -16,7 +16,7 @@ import {
   type LayerFields,
   type ActionMap,
   type ReactiveMatcher,
-  type ParsedKeyPart,
+  type KeySequencePart,
 } from "@opentui/core/extras"
 import {
   createContext,
@@ -207,7 +207,7 @@ export const useActiveKeys = (options?: ActiveKeyOptions): Accessor<readonly Act
   })
 }
 
-export const usePendingSequence = (): Accessor<readonly ParsedKeyPart[]> => {
+export const usePendingSequence = (): Accessor<readonly KeySequencePart[]> => {
   const actionMap = useActionMap()
   const version = useActionMapStateVersion(actionMap)
 

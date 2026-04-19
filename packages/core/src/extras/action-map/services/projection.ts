@@ -21,8 +21,8 @@ import type {
   CommandResolverContext,
   CompiledBinding,
   Hooks,
-  ParsedKeyPart,
-  ParsedKeyStroke,
+  KeySequencePart,
+  NormalizedKeyStroke,
   PendingSequenceState,
   RegisteredCommand,
   RegisteredLayer,
@@ -129,7 +129,7 @@ export class ProjectionService {
     return this.state.projection.pendingSequence ?? undefined
   }
 
-  public getPendingSequence(): readonly ParsedKeyPart[] {
+  public getPendingSequence(): readonly KeySequencePart[] {
     const projections = this.state.projection
     const derivedStateVersion = this.state.notify.derivedStateVersion
 
@@ -332,11 +332,11 @@ export class ProjectionService {
     }
   }
 
-  private collectSequenceStrokesFromNode(node: SequenceNode): ParsedKeyStroke[] {
+  private collectSequenceStrokesFromNode(node: SequenceNode): NormalizedKeyStroke[] {
     return this.collectSequencePartsFromNode(node).map((part) => snapshotStroke(part.stroke))
   }
 
-  private collectSequencePartsFromNode(node: SequenceNode): ParsedKeyPart[] {
+  private collectSequencePartsFromNode(node: SequenceNode): KeySequencePart[] {
     const nodes: SequenceNode[] = []
     let current: SequenceNode | null = node
 
@@ -654,7 +654,7 @@ export class ProjectionService {
   }
 
   private createActiveKeyState(
-    stroke: ParsedKeyStroke,
+    stroke: NormalizedKeyStroke,
     selection: ActiveKeySelection,
     includeBindings: boolean,
   ): ActiveKeyState {

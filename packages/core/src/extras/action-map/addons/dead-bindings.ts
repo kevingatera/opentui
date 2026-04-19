@@ -1,7 +1,7 @@
-import type { ActionMap, CompiledBinding, LayerAnalysisContext, ParsedKeyPart, SequenceNode } from "../types.js"
+import type { ActionMap, CompiledBinding, LayerAnalysisContext, KeySequencePart, SequenceNode } from "../types.js"
 import { stringifyKeySequence, stringifyKeyStroke } from "../index.js"
 
-function getSequenceNode(root: SequenceNode, sequence: readonly ParsedKeyPart[]): SequenceNode | undefined {
+function getSequenceNode(root: SequenceNode, sequence: readonly KeySequencePart[]): SequenceNode | undefined {
   let node: SequenceNode | undefined = root
 
   for (const part of sequence) {
