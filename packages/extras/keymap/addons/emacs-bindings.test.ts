@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { createTestRenderer, type MockInput, type TestRenderer } from "../../../testing.js"
+import { createTestRenderer, type MockInput, type TestRenderer } from "@opentui/core/testing"
 import { getKeymap, stringifyKeySequence } from "../index.js"
 import { registerEmacsBindings } from "./emacs-bindings.js"
 

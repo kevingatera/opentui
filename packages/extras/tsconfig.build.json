@@ -6,12 +6,12 @@
     "emitDeclarationOnly": true,
     "outDir": "./dist",
     "noEmit": false,
-    "rootDir": "./src",
+    "rootDir": ".",
     "types": ["bun", "node"],
     "skipLibCheck": true,
     "module": "ESNext",
     "moduleResolution": "bundler"
   },
-  "include": ["src/**/*"],
+  "include": ["index.ts", "src/**/*", "keymap/**/*"],
   "exclude": ["**/*.test.ts", "**/*.spec.ts", "tests/**/*", "node_modules/**/*"]
 }

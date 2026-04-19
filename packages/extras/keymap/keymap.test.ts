@@ -1,8 +1,7 @@
 import { Buffer } from "node:buffer"
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { KeyEvent } from "../../lib/KeyHandler.js"
-import { BoxRenderable } from "../../renderables/Box.js"
-import { createTestRenderer, type MockInput, type TestRenderer } from "../../testing.js"
+import { BoxRenderable, KeyEvent } from "@opentui/core"
+import { createTestRenderer, type MockInput, type TestRenderer } from "@opentui/core/testing"
 import {
   defaultBindingParser,
   defaultBindingSyntax,
@@ -6020,9 +6019,7 @@ describe("keymap", () => {
 
     target.focus()
 
-    const activeKey = keymap
-      .getActiveKeys()
-      .find((candidate) => candidate.stroke.name === "x" && candidate.stroke.ctrl)
+    const activeKey = keymap.getActiveKeys().find((candidate) => candidate.stroke.name === "x" && candidate.stroke.ctrl)
 
     expect(activeKey?.command).toBeUndefined()
     expect(activeKey?.continues).toBe(true)

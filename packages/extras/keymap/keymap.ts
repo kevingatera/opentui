@@ -1,6 +1,4 @@
-import type { Renderable } from "../../Renderable.js"
-import { CliRenderEvents, type CliRenderer } from "../../renderer.js"
-import { KeyEvent } from "../../lib/KeyHandler.js"
+import { CliRenderEvents, KeyEvent, type CliRenderer, type Renderable } from "@opentui/core"
 import type {
   ActiveKey,
   ActiveKeyOptions,

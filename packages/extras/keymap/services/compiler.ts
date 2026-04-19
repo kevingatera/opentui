@@ -1,4 +1,4 @@
-import type { Renderable } from "../../../Renderable.js"
+import type { Renderable } from "@opentui/core"
 import type { CommandService } from "./commands.js"
 import type { ConditionService } from "./conditions.js"
 import type { State } from "./state.js"

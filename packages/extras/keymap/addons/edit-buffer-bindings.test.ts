@@ -1,8 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { BoxRenderable } from "../../../renderables/Box.js"
-import { InputRenderable, InputRenderableEvents } from "../../../renderables/Input.js"
-import { TextareaRenderable } from "../../../renderables/Textarea.js"
-import { createTestRenderer, type MockInput, type TestRenderer } from "../../../testing.js"
+import { BoxRenderable, InputRenderable, InputRenderableEvents, TextareaRenderable } from "@opentui/core"
+import { createTestRenderer, type MockInput, type TestRenderer } from "@opentui/core/testing"
 import { getKeymap } from "../index.js"
 import {
   createTextareaBindings,
@@ -412,9 +410,7 @@ describe("edit buffer bindings addon", () => {
       bindings: [{ key: "x", cmd: "delete-line" }],
     })
 
-    const activeKey = keymap
-      .getActiveKeys({ includeMetadata: true })
-      .find((candidate) => candidate.stroke.name === "x")
+    const activeKey = keymap.getActiveKeys({ includeMetadata: true }).find((candidate) => candidate.stroke.name === "x")
 
     expect(activeKey?.commandAttrs).toEqual({ desc: "Supprimer la ligne" })
   })

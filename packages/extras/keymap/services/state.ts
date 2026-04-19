@@ -1,4 +1,4 @@
-import type { Renderable } from "../../../Renderable.js"
+import type { Renderable } from "@opentui/core"
 import type {
   ActiveKey,
   BindingExpander,

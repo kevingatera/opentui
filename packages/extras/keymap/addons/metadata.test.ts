@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { createTestRenderer, type TestRenderer } from "../../../testing.js"
+import { createTestRenderer, type TestRenderer } from "@opentui/core/testing"
 import { getKeymap } from "../index.js"
 import { registerMetadataFields } from "./metadata.js"
 
@@ -37,9 +37,7 @@ describe("metadata addon", () => {
       bindings: [{ key: "x", cmd: "save-file", desc: "Write current file", group: "File" }],
     })
 
-    const activeKey = keymap
-      .getActiveKeys({ includeBindings: true })
-      .find((candidate) => candidate.stroke.name === "x")
+    const activeKey = keymap.getActiveKeys({ includeBindings: true }).find((candidate) => candidate.stroke.name === "x")
 
     expect(activeKey?.bindings?.[0]?.attrs).toEqual({ desc: "Write current file", group: "File" })
     expect(activeKey?.command).toBe("save-file")
@@ -68,9 +66,7 @@ describe("metadata addon", () => {
       bindings: [{ key: "x", cmd: "save-file", desc: "Write current file", group: "File" }],
     })
 
-    const activeKey = keymap
-      .getActiveKeys({ includeMetadata: true })
-      .find((candidate) => candidate.stroke.name === "x")
+    const activeKey = keymap.getActiveKeys({ includeMetadata: true }).find((candidate) => candidate.stroke.name === "x")
 
     expect(activeKey?.bindings).toBeUndefined()
     expect(activeKey?.command).toBe("save-file")
@@ -136,9 +132,7 @@ describe("metadata addon", () => {
       bindings: [{ key: "x", cmd: "save-file", desc: "  Write file  ", group: "  File  " }],
     })
 
-    const activeKey = keymap
-      .getActiveKeys({ includeBindings: true })
-      .find((candidate) => candidate.stroke.name === "x")
+    const activeKey = keymap.getActiveKeys({ includeBindings: true }).find((candidate) => candidate.stroke.name === "x")
     expect(activeKey?.bindings?.[0]?.attrs).toEqual({ desc: "Write file", group: "File" })
     expect(activeKey?.command).toBe("save-file")
     expect(activeKey?.bindings?.[0]?.commandAttrs).toEqual({ desc: "Save file", title: "Save", category: "File" })

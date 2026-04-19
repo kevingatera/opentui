@@ -1,9 +1,33 @@
-import { keyBindingToString } from "../../../lib/keybinding.internal.js"
-import { CliRenderEvents } from "../../../renderer.js"
-import { InputRenderable } from "../../../renderables/Input.js"
-import { TextareaRenderable, defaultTextareaKeyBindings, type TextareaAction } from "../../../renderables/Textarea.js"
-import type { EditBufferRenderable } from "../../../renderables/EditBufferRenderable.js"
+import {
+  CliRenderEvents,
+  InputRenderable,
+  TextareaRenderable,
+  defaultTextareaKeyBindings,
+  type EditBufferRenderable,
+  type TextareaAction,
+} from "@opentui/core"
 import type { BindingInput, Bindings, CommandDefinition, CommandContext, Layer, Keymap } from "../types.js"
+
+interface KeyBindingLike {
+  name: string
+  ctrl?: boolean
+  shift?: boolean
+  meta?: boolean
+  super?: boolean
+}
+
+function keyBindingToString(binding: KeyBindingLike): string {
+  const parts: string[] = []
+
+  if (binding.ctrl) parts.push("ctrl")
+  if (binding.shift) parts.push("shift")
+  if (binding.meta) parts.push("meta")
+  if (binding.super) parts.push("super")
+
+  parts.push(binding.name)
+
+  return parts.join("+")
+}
 
 const editBufferCommandNames = [
   "move-left",

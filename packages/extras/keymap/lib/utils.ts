@@ -1,4 +1,4 @@
-import type { KeyEvent } from "../../../lib/KeyHandler.js"
+import type { KeyEvent } from "@opentui/core"
 import type {
   Attributes,
   BindingCommand,
@@ -381,9 +381,7 @@ export function normalizeBindingInputs(bindings: Bindings): BindingInput[] {
   const normalized: BindingInput[] = []
   for (const [key, cmd] of Object.entries(bindings)) {
     if (typeof cmd !== "string" && typeof cmd !== "function") {
-      throw new Error(
-        `Invalid keymap binding for "${key}": shorthand bindings must map to string or function commands`,
-      )
+      throw new Error(`Invalid keymap binding for "${key}": shorthand bindings must map to string or function commands`)
     }
 
     normalized.push({ key, cmd })
