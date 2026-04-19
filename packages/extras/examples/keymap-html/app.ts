@@ -117,6 +117,61 @@ interface ExSuggestion {
   insert: string
   usage: string
   desc: string
+  expectsArgs: boolean
+}
+
+function normalizeExPromptName(name: string): string {
+  const trimmed = name.trim()
+  if (!trimmed) {
+    return ":"
+  }
+
+  return trimmed.startsWith(":") ? trimmed : `:${trimmed}`
+}
+
+function parseExPromptInput(input: string): { raw: string; name: string; args: string[] } | null {
+  const normalized = normalizeExPromptName(input)
+  if (normalized === ":") {
+    return null
+  }
+
+  const parts = normalized.split(/\s+/)
+  const [name, ...args] = parts
+  if (!name) {
+    return null
+  }
+
+  return {
+    raw: normalized,
+    name,
+    args,
+  }
+}
+
+function getCommandNargs(record: ReturnType<typeof keymap.getCommands>[number]): string | undefined {
+  const value = record.fields.nargs
+  if (value === "0" || value === "1" || value === "?" || value === "*" || value === "+") {
+    return value
+  }
+
+  return undefined
+}
+
+function buildCommandSuggestions(): ExSuggestion[] {
+  const records = keymap.getCommands({ namespace: "excommands" })
+  return records.map((record) => {
+    const label = normalizeExPromptName(record.name)
+    const usage = getText(record.fields.usage) ?? label
+    const desc = getText(record.attrs?.desc) ?? getText(record.fields.desc) ?? ""
+
+    return {
+      label,
+      insert: label,
+      usage,
+      desc,
+      expectsArgs: getCommandNargs(record) !== "0",
+    }
+  })
 }
 
 function appendLog(message: string): void {
@@ -171,29 +226,16 @@ function getText(value: unknown): string | undefined {
 }
 
 function getCommandSuggestions(): ExSuggestion[] {
-  const records = keymap.getCommands({ namespace: "excommands" })
-  const input = commandInput.value.trim()
-  const query = input.includes(" ") ? input.slice(0, input.indexOf(" ")) : input
-  const normalizedQuery = query === ":" ? "" : query
+  const normalized = normalizeExPromptName(commandInput.value)
+  const spaceIndex = normalized.indexOf(" ")
+  const query = spaceIndex === -1 ? normalized : normalized.slice(0, spaceIndex)
+  const suggestions = buildCommandSuggestions()
 
-  const suggestions = records.map((record) => {
-    const label = record.name.startsWith(":") ? record.name : `:${record.name}`
-    const usage = getText(record.fields.usage) ?? label
-    const desc = getText(record.attrs?.desc) ?? getText(record.fields.desc) ?? ""
-
-    return {
-      label,
-      insert: label,
-      usage,
-      desc,
-    }
-  })
-
-  if (!normalizedQuery) {
+  if (query === ":") {
     return suggestions.slice(0, 6)
   }
 
-  return suggestions.filter((suggestion) => suggestion.label.startsWith(normalizedQuery)).slice(0, 6)
+  return suggestions.filter((suggestion) => suggestion.label.startsWith(query)).slice(0, 6)
 }
 
 function applySuggestion(delta: number): void {
@@ -213,7 +255,12 @@ function completeSuggestion(): void {
     return
   }
 
-  commandInput.value = suggestion.insert
+  const normalized = normalizeExPromptName(commandInput.value)
+  const spaceIndex = normalized.indexOf(" ")
+  const rest = spaceIndex === -1 ? "" : normalized.slice(spaceIndex + 1).trimStart()
+  const nextValue = rest ? `${suggestion.insert} ${rest}` : suggestion.expectsArgs ? `${suggestion.insert} ` : suggestion.insert
+
+  commandInput.value = nextValue
   commandInput.setSelectionRange(commandInput.value.length, commandInput.value.length)
   renderPrompt()
 }
@@ -265,25 +312,25 @@ function closePrompt(): void {
 }
 
 function runPromptCommand(): void {
-  const command = commandInput.value.trim()
-  if (!command || command === ":") {
+  const parsed = parseExPromptInput(commandInput.value)
+  if (!parsed) {
     closePrompt()
     return
   }
 
   debug("run prompt command", {
-    command,
+    command: parsed.raw,
     focused: getCurrentFocusedTarget()?.id ?? "none",
   })
 
-  const result = keymap.runCommand(command)
+  const result = keymap.runCommand(parsed.raw)
   if (result.ok) {
-    appendLog(`Ran ${command}`)
+    appendLog(`Ran ${parsed.raw}`)
     closePrompt()
     return
   }
 
-  appendLog(`Command failed: ${command} (${result.reason})`)
+  appendLog(`Command failed: ${parsed.raw} (${result.reason})`)
   renderPrompt()
 }
 
