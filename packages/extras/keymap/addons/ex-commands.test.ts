@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { BoxRenderable } from "../../../renderables/Box.js"
-import { createTestRenderer, type MockInput, type TestRenderer } from "../../../testing.js"
+import { BoxRenderable } from "@opentui/core"
+import { createTestRenderer, type MockInput, type TestRenderer } from "@opentui/core/testing"
 import { getKeymap } from "../index.js"
 import { registerExCommands } from "./ex-commands.js"
 
@@ -191,8 +191,7 @@ describe("ex commands addon", () => {
     })
 
     expect(
-      keymap.getActiveKeys({ includeMetadata: true }).find((candidate) => candidate.stroke.name === "x")
-        ?.commandAttrs,
+      keymap.getActiveKeys({ includeMetadata: true }).find((candidate) => candidate.stroke.name === "x")?.commandAttrs,
     ).toEqual({
       desc: "Write the current buffer",
       title: "Write Buffer",

@@ -1,5 +1,4 @@
-import type { Renderable } from "../../../Renderable.js"
-import { KeyEvent } from "../../../lib/KeyHandler.js"
+import { KeyEvent, type Renderable } from "@opentui/core"
 import type { Keymap } from "../keymap.js"
 import type { Emitter } from "../lib/emitter.js"
 import { RESERVED_COMMAND_FIELDS } from "../schema.js"

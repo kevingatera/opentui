@@ -1,5 +1,4 @@
-import type { Renderable } from "../../Renderable.js"
-import type { KeyEvent } from "../../lib/KeyHandler.js"
+import type { KeyEvent, Renderable } from "@opentui/core"
 import type { Keymap } from "./keymap.js"
 
 export type EventData = Record<string, unknown>

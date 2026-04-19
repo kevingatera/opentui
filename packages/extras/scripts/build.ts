@@ -65,8 +65,10 @@ const externalDeps: string[] = [
   ...Object.keys(packageJson.peerDependencies || {}),
 ]
 
+const keymapEntrypoint = join(rootDir, "keymap/index.ts")
+
 const buildResult = await Bun.build({
-  entrypoints: [join(rootDir, packageJson.module)],
+  entrypoints: [join(rootDir, packageJson.module), keymapEntrypoint],
   target: "bun",
   format: "esm",
   outdir: distDir,
@@ -102,6 +104,11 @@ const exports = {
     types: "./index.d.ts",
     import: "./index.js",
     require: "./index.js",
+  },
+  "./keymap": {
+    types: "./keymap/index.d.ts",
+    import: "./keymap/index.js",
+    require: "./keymap/index.js",
   },
 }
 

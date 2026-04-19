@@ -22,7 +22,7 @@ import {
   type Keymap,
   stringifyKeySequence,
   stringifyKeyStroke,
-} from "../extras.js"
+} from "@opentui/extras/keymap"
 import { setupCommonDemoKeys } from "./lib/standalone-keys.js"
 
 const P = {

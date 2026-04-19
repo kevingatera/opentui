@@ -12,7 +12,7 @@ import {
   stringifyKeyStroke,
   type KeymapActiveKey,
   type KeymapCommandRecord,
-} from "@opentui/core/extras"
+} from "@opentui/extras/keymap"
 import { render, useActiveKeys, useBindings, useKeymap, usePendingSequence, useRenderer } from "@opentui/solid"
 import { createMemo, createSignal, For, onCleanup, onMount, Show, type Accessor, type JSX } from "solid-js"
 
@@ -981,9 +981,7 @@ export default function KeymapDemo() {
                   <span style={{ fg: palette.text }}>{String(editor().plainText.length)}</span>
                   <span style={{ fg: palette.separator }}>{"  |  "}</span>
                   <span style={{ fg: palette.textDim }}>Keys: </span>
-                  <span style={{ fg: palette.command }}>
-                    {editor().traits.suspend === true ? "keymap" : "local"}
-                  </span>
+                  <span style={{ fg: palette.command }}>{editor().traits.suspend === true ? "keymap" : "local"}</span>
                 </>
               )}
             </Show>
@@ -1033,7 +1031,7 @@ export default function KeymapDemo() {
           flexShrink={0}
           flexDirection="column"
         >
-            <text id="keymap-demo-wk-header-text" fg={palette.text} height={1}>
+          <text id="keymap-demo-wk-header-text" fg={palette.text} height={1}>
             <span style={{ fg: palette.accent, attributes: TextAttributes.BOLD }}>Which Key</span>
             <span style={{ fg: palette.textDim }}>{`  ${whichKeyPrefix()}`}</span>
           </text>

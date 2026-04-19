@@ -8,21 +8,28 @@
     "url": "https://github.com/anomalyco/opentui",
     "directory": "packages/extras"
   },
-  "module": "src/index.ts",
+  "module": "index.ts",
   "type": "module",
   "private": true,
-  "main": "src/index.ts",
-  "types": "src/index.ts",
+  "main": "index.ts",
+  "types": "index.ts",
   "exports": {
     ".": {
-      "import": "./src/index.ts",
-      "types": "./src/index.ts"
+      "import": "./index.ts",
+      "types": "./index.ts"
+    },
+    "./keymap": {
+      "import": "./keymap/index.ts",
+      "types": "./keymap/index.ts"
     }
   },
   "scripts": {
     "build": "bun run scripts/build.ts",
     "publish": "bun run scripts/publish.ts",
     "test": "bun test"
+  },
+  "dependencies": {
+    "@opentui/core": "workspace:*"
   },
   "devDependencies": {
     "@types/bun": "latest",

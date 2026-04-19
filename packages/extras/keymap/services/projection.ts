@@ -1,5 +1,4 @@
-import type { Renderable } from "../../../Renderable.js"
-import type { CliRenderer } from "../../../renderer.js"
+import type { CliRenderer, Renderable } from "@opentui/core"
 import type { Emitter } from "../lib/emitter.js"
 import {
   createParsedKeyPart,
