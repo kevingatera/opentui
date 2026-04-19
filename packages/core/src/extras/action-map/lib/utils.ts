@@ -8,14 +8,14 @@ import type {
   CommandHandler,
   CommandRecord,
   EventData,
-  KeyStroke,
-  ParsedKeyPart,
+  KeyStrokeInput,
+  KeySequencePart,
   ParsedBindingInput,
-  ParsedKeyStroke,
+  NormalizedKeyStroke,
   RegisteredCommand,
   ResolvedBindingCommand,
   SequenceNode,
-  StringifiableKey,
+  KeyStringifyInput,
   StringifyOptions,
 } from "../types.js"
 
@@ -53,7 +53,7 @@ export function normalizeKeyName(name: string): string {
   return next
 }
 
-export function snapshotStroke(stroke: ParsedKeyStroke): ParsedKeyStroke {
+export function snapshotStroke(stroke: NormalizedKeyStroke): NormalizedKeyStroke {
   return {
     name: stroke.name,
     ctrl: stroke.ctrl,
@@ -133,13 +133,13 @@ export function sortByPriorityAndOrder<T extends { priority: number; order: numb
   })
 }
 
-export function buildBindingKey(stroke: ParsedKeyStroke): string {
+export function buildBindingKey(stroke: NormalizedKeyStroke): string {
   return `${stroke.name}:${stroke.ctrl ? 1 : 0}:${stroke.shift ? 1 : 0}:${stroke.meta ? 1 : 0}:${stroke.super ? 1 : 0}:${stroke.hyper ? 1 : 0}`
 }
 
 export function createSequenceNode(
   parent: SequenceNode | null,
-  stroke: ParsedKeyStroke | null,
+  stroke: NormalizedKeyStroke | null,
   matchKey: string | null,
 ): SequenceNode {
   return {
@@ -209,12 +209,12 @@ export function snapshotBindingInputs(bindings: Bindings): BindingInput[] {
 }
 
 function hasDisplayStroke(
-  input: StringifiableKey,
-): input is ParsedKeyPart | { stroke: ParsedKeyStroke; display?: string } {
+  input: KeyStringifyInput,
+): input is KeySequencePart | { stroke: NormalizedKeyStroke; display?: string } {
   return "stroke" in input
 }
 
-function stringifyCanonicalStroke(stroke: ParsedKeyStroke): string {
+function stringifyCanonicalStroke(stroke: NormalizedKeyStroke): string {
   const parts: string[] = []
   if (stroke.ctrl) {
     parts.push("ctrl")
@@ -241,10 +241,10 @@ function stringifyCanonicalStroke(stroke: ParsedKeyStroke): string {
 }
 
 export function createParsedKeyPart(
-  stroke: ParsedKeyStroke,
+  stroke: NormalizedKeyStroke,
   display = stringifyCanonicalStroke(stroke),
   matchKey?: string,
-): ParsedKeyPart {
+): KeySequencePart {
   const cloned = snapshotStroke(stroke)
 
   return {
@@ -254,7 +254,7 @@ export function createParsedKeyPart(
   }
 }
 
-export function stringifyKeyStroke(input: StringifiableKey, options?: StringifyOptions): string {
+export function stringifyKeyStroke(input: KeyStringifyInput, options?: StringifyOptions): string {
   if (hasDisplayStroke(input)) {
     if (options?.preferDisplay && input.display) {
       return input.display
@@ -266,11 +266,11 @@ export function stringifyKeyStroke(input: StringifiableKey, options?: StringifyO
   return stringifyCanonicalStroke(normalizeKeyStroke(input))
 }
 
-export function stringifyKeySequence(input: readonly StringifiableKey[], options?: StringifyOptions): string {
+export function stringifyKeySequence(input: readonly KeyStringifyInput[], options?: StringifyOptions): string {
   return input.map((part) => stringifyKeyStroke(part, options)).join("")
 }
 
-export function normalizeKeyStroke(input: KeyStroke): ParsedKeyStroke {
+export function normalizeKeyStroke(input: KeyStrokeInput): NormalizedKeyStroke {
   return {
     name: normalizeKeyName(input.name),
     ctrl: input.ctrl ?? false,
@@ -281,7 +281,7 @@ export function normalizeKeyStroke(input: KeyStroke): ParsedKeyStroke {
   }
 }
 
-export function normalizeEventKeyStroke(event: KeyEvent): ParsedKeyStroke {
+export function normalizeEventKeyStroke(event: KeyEvent): NormalizedKeyStroke {
   return {
     name: normalizeKeyName(event.name),
     ctrl: event.ctrl,

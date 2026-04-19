@@ -6,7 +6,7 @@ export type EventData = Record<string, unknown>
 
 export type Attributes = Record<string, unknown>
 
-export interface KeyStroke {
+export interface KeyStrokeInput {
   name: string
   ctrl?: boolean
   shift?: boolean
@@ -15,7 +15,7 @@ export interface KeyStroke {
   hyper?: boolean
 }
 
-export interface ParsedKeyStroke extends KeyStroke {
+export interface NormalizedKeyStroke extends KeyStrokeInput {
   ctrl: boolean
   shift: boolean
   meta: boolean
@@ -28,13 +28,13 @@ export interface EventMatchResolverContext {
 
 export type EventMatchResolver = (event: KeyEvent, ctx: EventMatchResolverContext) => readonly string[] | undefined
 
-export interface ParsedKeyToken {
-  stroke: ParsedKeyStroke
+export interface ResolvedKeyToken {
+  stroke: NormalizedKeyStroke
   matchKey: string
 }
 
-export interface ParsedKeyPart {
-  stroke: ParsedKeyStroke
+export interface KeySequencePart {
+  stroke: NormalizedKeyStroke
   display: string
   matchKey: string
 }
@@ -43,13 +43,17 @@ export interface StringifyOptions {
   preferDisplay?: boolean
 }
 
-export type StringifiableKey = KeyStroke | ParsedKeyStroke | ParsedKeyPart | { stroke: ParsedKeyStroke; display?: string }
+export type KeyStringifyInput =
+  | KeyStrokeInput
+  | NormalizedKeyStroke
+  | KeySequencePart
+  | { stroke: NormalizedKeyStroke; display?: string }
 
-export type KeyLike = string | KeyStroke
+export type KeyLike = string | KeyStrokeInput
 
 export interface BindingSyntax {
   normalizeTokenName(token: string): string
-  parseObjectKey(key: KeyStroke): ParsedKeyPart
+  parseObjectKey(key: KeyStrokeInput): KeySequencePart
 }
 
 /**
@@ -192,13 +196,13 @@ export interface CommandDefinition {
   [key: string]: unknown
 }
 
-export interface Token {
+export interface KeyToken {
   name: string
   key: KeyLike
 }
 
 export interface ActiveBinding {
-  sequence: ParsedKeyPart[]
+  sequence: KeySequencePart[]
   command?: BindingCommand
   commandAttrs?: Readonly<Attributes>
   attrs?: Readonly<Attributes>
@@ -213,7 +217,7 @@ export interface ActiveKeyOptions {
 }
 
 export interface ActiveKey {
-  stroke: ParsedKeyStroke
+  stroke: NormalizedKeyStroke
   display: string
   bindings?: ActiveBinding[]
   bindingAttrs?: Readonly<Attributes>
@@ -274,8 +278,8 @@ export interface BindingParserContext {
   input: string
   index: number
   layer: Readonly<Record<string, unknown>>
-  tokens: ReadonlyMap<string, ParsedKeyToken>
-  parseObjectKey(key: KeyStroke): ParsedKeyPart
+  tokens: ReadonlyMap<string, ResolvedKeyToken>
+  parseObjectKey(key: KeyStrokeInput): KeySequencePart
 }
 
 export interface BindingExpanderContext {
@@ -284,7 +288,7 @@ export interface BindingExpanderContext {
 }
 
 export interface BindingParserResult {
-  parts: ParsedKeyPart[]
+  parts: KeySequencePart[]
   nextIndex: number
   usedTokens?: readonly string[]
   unknownTokens?: readonly string[]
@@ -296,7 +300,7 @@ export type BindingExpander = (ctx: BindingExpanderContext) => readonly string[]
 
 export interface ParsedBindingInput {
   key: KeyLike
-  sequence: ParsedKeyPart[]
+  sequence: KeySequencePart[]
   cmd?: BindingCommand
   event?: BindingEvent
   preventDefault?: boolean
@@ -306,7 +310,7 @@ export interface ParsedBindingInput {
 
 export interface BindingTransformerContext {
   layer: Readonly<Record<string, unknown>>
-  parseKey(key: KeyLike): ParsedKeyPart
+  parseKey(key: KeyLike): KeySequencePart
   add(binding: ParsedBindingInput): void
   skipOriginal(): void
 }
@@ -348,7 +352,7 @@ export type Hooks = {
    * Synchronous pending-sequence updates, including clear. Payload is the
    * current sequence.
    */
-  pendingSequence: readonly ParsedKeyPart[]
+  pendingSequence: readonly KeySequencePart[]
   /**
    * One-time diagnostic when a binding references a command name that is not
    * currently resolvable.
@@ -445,7 +449,7 @@ export interface ActiveKeySelection {
 }
 
 export interface ActiveKeyState {
-  stroke: ParsedKeyStroke
+  stroke: NormalizedKeyStroke
   display: string
   continues: boolean
   firstBinding?: CompiledBinding
@@ -470,7 +474,7 @@ export interface CompiledBindingsResult {
 export interface SequenceNode {
   parent: SequenceNode | null
   depth: number
-  stroke: ParsedKeyStroke | null
+  stroke: NormalizedKeyStroke | null
   matchKey: string | null
   children: Map<string, SequenceNode>
   bindings: CompiledBinding[]

@@ -7,7 +7,7 @@ import {
   type LayerFields,
   type ActionMap,
   type ReactiveMatcher,
-  type ParsedKeyPart,
+  type KeySequencePart,
 } from "@opentui/core/extras"
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, type DependencyList } from "react"
 import { useRenderer } from "./use-renderer.js"
@@ -94,7 +94,7 @@ export const useActiveKeys = (options?: ActiveKeyOptions): readonly ActiveKey[] 
   }, [actionMap, options, version])
 }
 
-export const usePendingSequence = (): readonly ParsedKeyPart[] => {
+export const usePendingSequence = (): readonly KeySequencePart[] => {
   const actionMap = useActionMap()
   const version = useActionMapStateVersion(actionMap)
 

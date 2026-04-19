@@ -21,9 +21,9 @@ import type {
   CompiledBinding,
   CompiledBindingsResult,
   KeyLike,
-  KeyStroke,
-  ParsedKeyPart,
-  ParsedKeyToken,
+  KeyStrokeInput,
+  KeySequencePart,
+  ResolvedKeyToken,
   RuntimeMatcher,
   SequenceNode,
 } from "../types.js"
@@ -45,7 +45,7 @@ const EMPTY_MATCHERS: readonly RuntimeMatcher[] = []
 const EMPTY_CONDITION_KEYS: readonly string[] = []
 
 interface ParsedBindingSequenceResult {
-  parts: ParsedKeyPart[]
+  parts: KeySequencePart[]
   usedTokens: readonly string[]
   unknownTokens: readonly string[]
   hasTokenBindings: boolean
@@ -74,7 +74,7 @@ export class CompilerService {
     return normalized
   }
 
-  public parseTokenKey(key: KeyLike): ParsedKeyPart {
+  public parseTokenKey(key: KeyLike): KeySequencePart {
     return parseSingleKeyPartWithParsers(key, this.state.config.bindingParsers.values(), {
       tokens: this.state.config.tokens,
       layer: EMPTY_COMPILE_FIELDS,
@@ -84,7 +84,7 @@ export class CompilerService {
 
   public compileBindings(
     bindings: readonly BindingInput[],
-    tokens: ReadonlyMap<string, ParsedKeyToken>,
+    tokens: ReadonlyMap<string, ResolvedKeyToken>,
     sourceScope: Scope,
     sourceTarget: Renderable | undefined,
     sourceLayerOrder: number,
@@ -279,7 +279,7 @@ export class CompilerService {
     return syntax
   }
 
-  private parseObjectKeyPart(key: KeyStroke): ParsedKeyPart {
+  private parseObjectKeyPart(key: KeyStrokeInput): KeySequencePart {
     const parsed = this.getBindingSyntax().parseObjectKey(key)
     return createParsedKeyPart(parsed.stroke, parsed.display, parsed.matchKey)
   }
@@ -298,8 +298,8 @@ export class CompilerService {
 
   private applyBindingTransformers(
     binding: BindingInput,
-    sequence: ParsedKeyPart[],
-    tokens: ReadonlyMap<string, ParsedKeyToken>,
+    sequence: KeySequencePart[],
+    tokens: ReadonlyMap<string, ResolvedKeyToken>,
     bindingParsers: readonly BindingParser[],
     compileFields?: Readonly<Record<string, unknown>>,
   ): ParsedBindingInput[] {
@@ -472,9 +472,9 @@ function parseBindingSequenceWithParsers(
   key: string,
   parsers: readonly BindingParser[],
   options: {
-    tokens?: ReadonlyMap<string, ParsedKeyToken>
+    tokens?: ReadonlyMap<string, ResolvedKeyToken>
     layer?: Readonly<Record<string, unknown>>
-    parseObjectKey: (key: KeyStroke) => ParsedKeyPart
+    parseObjectKey: (key: KeyStrokeInput) => KeySequencePart
   },
 ): ParsedBindingSequenceResult {
   if (key.length === 0) {
@@ -485,10 +485,10 @@ function parseBindingSequenceWithParsers(
     throw new Error("No action map binding parsers are registered")
   }
 
-  const tokens = options.tokens ?? new Map<string, ParsedKeyToken>()
+  const tokens = options.tokens ?? new Map<string, ResolvedKeyToken>()
   const layer = options.layer ?? EMPTY_COMPILE_FIELDS
   const parseObjectKey = options.parseObjectKey
-  const parts: ParsedKeyPart[] = []
+  const parts: KeySequencePart[] = []
   const usedTokens = new Set<string>()
   const unknownTokens = new Set<string>()
 
@@ -542,11 +542,11 @@ function parseSingleKeyPartWithParsers(
   key: KeyLike,
   parsers: readonly BindingParser[],
   options: {
-    tokens?: ReadonlyMap<string, ParsedKeyToken>
+    tokens?: ReadonlyMap<string, ResolvedKeyToken>
     layer?: Readonly<Record<string, unknown>>
-    parseObjectKey: (key: KeyStroke) => ParsedKeyPart
+    parseObjectKey: (key: KeyStrokeInput) => KeySequencePart
   },
-): ParsedKeyPart {
+): KeySequencePart {
   if (typeof key !== "string") {
     return options.parseObjectKey(key)
   }

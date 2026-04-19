@@ -14,9 +14,9 @@ import type {
   KeyInputContext,
   LayerFieldCompiler,
   RawInputContext,
-  ParsedKeyPart,
-  ParsedKeyStroke,
-  ParsedKeyToken,
+  KeySequencePart,
+  NormalizedKeyStroke,
+  ResolvedKeyToken,
   PendingSequenceState,
   RegisteredCommand,
   RegisteredLayer,
@@ -33,7 +33,7 @@ export interface CoreState {
 }
 
 export interface ConfigState {
-  tokens: Map<string, ParsedKeyToken>
+  tokens: Map<string, ResolvedKeyToken>
   bindingSyntax: BindingSyntax | undefined
   layerFields: Map<string, LayerFieldCompiler>
   bindingExpanders: OrderedRegistry<BindingExpander>
@@ -86,7 +86,7 @@ export interface CommandsState {
 export interface ProjectionState {
   pendingSequence: PendingSequenceState | null
   pendingSequenceCacheVersion: number
-  pendingSequenceCache: readonly ParsedKeyPart[]
+  pendingSequenceCache: readonly KeySequencePart[]
   activeCommandViewVersion: number
   activeCommandView?: ActiveCommandView
   registeredCommandsCacheVersion: number
@@ -137,7 +137,7 @@ export function createActionMapState(): State {
       order: 0,
     },
     config: {
-      tokens: new Map<string, ParsedKeyToken>(),
+      tokens: new Map<string, ResolvedKeyToken>(),
       bindingSyntax: undefined,
       layerFields: new Map<string, LayerFieldCompiler>(),
       bindingExpanders: new OrderedRegistry<BindingExpander>(),

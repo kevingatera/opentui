@@ -1,4 +1,4 @@
-import type { ActionMap, ParsedKeyPart } from "../types.js"
+import type { ActionMap, KeySequencePart } from "../types.js"
 import { registerLeader, type LeaderOptions } from "./leader.js"
 
 export interface TimedLeaderOptions extends LeaderOptions {
@@ -30,7 +30,7 @@ export function registerTimedLeader(actionMap: ActionMap, options: TimedLeaderOp
     }, timeoutMs)
   }
 
-  const syncArmedState = (sequence: readonly ParsedKeyPart[]): void => {
+  const syncArmedState = (sequence: readonly KeySequencePart[]): void => {
     const nextArmed = matchesTrigger(sequence[0])
     if (nextArmed) {
       scheduleTimeout()
