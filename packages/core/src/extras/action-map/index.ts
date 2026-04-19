@@ -11,7 +11,7 @@ export * as addons from "./addons/index.js"
 export type {
   KeyLike,
   ActiveBinding,
-  StringifiableKey,
+  KeyStringifyInput,
   StringifyOptions,
   Attributes,
   BindingCommand,
@@ -75,9 +75,9 @@ export type {
   EventMatchResolverContext,
   EventMatchResolver,
   TargetLayer,
-  Token,
-  ParsedKeyToken,
-  ParsedKeyPart,
-  ParsedKeyStroke,
-  KeyStroke,
+  KeyToken,
+  ResolvedKeyToken,
+  KeySequencePart,
+  NormalizedKeyStroke,
+  KeyStrokeInput,
 } from "./types.js"

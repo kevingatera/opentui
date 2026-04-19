@@ -1,10 +1,10 @@
-import type { BindingParser, ActionMap, BindingParserContext, ParsedKeyPart } from "../types.js"
+import type { BindingParser, ActionMap, BindingParserContext, KeySequencePart } from "../types.js"
 
 function parseEmacsStroke(
   input: string,
   sequence: string,
   parseObjectKey: BindingParserContext["parseObjectKey"],
-): ParsedKeyPart {
+): KeySequencePart {
   const parts = input.split("+")
   let name = ""
   let ctrl = false
@@ -69,7 +69,7 @@ function parseEmacsStroke(
 function parseEmacsSequence(
   input: string,
   parseObjectKey: BindingParserContext["parseObjectKey"],
-): ParsedKeyPart[] | undefined {
+): KeySequencePart[] | undefined {
   const strokes = input.trim().split(/\s+/).filter(Boolean)
 
   if (strokes.length <= 1) {
