@@ -67,6 +67,7 @@
   },
   "dependencies": {
     "@opentui/core": "workspace:*",
+    "@opentui/extras": "workspace:*",
     "react-reconciler": "^0.32.0"
   }
 }

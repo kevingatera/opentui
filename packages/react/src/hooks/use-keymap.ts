@@ -8,7 +8,7 @@ import {
   type Keymap,
   type ReactiveMatcher,
   type KeySequencePart,
-} from "@opentui/core/extras"
+} from "@opentui/extras/keymap"
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, type DependencyList } from "react"
 import { useRenderer } from "./use-renderer.js"
 

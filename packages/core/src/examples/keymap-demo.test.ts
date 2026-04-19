@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { InputRenderable, TextareaRenderable } from "../index.js"
-import { getKeymap } from "../extras.js"
+import { getKeymap } from "@opentui/extras/keymap"
 import { createTestRenderer } from "../testing.js"
 import { destroy, run } from "./keymap-demo.js"
 

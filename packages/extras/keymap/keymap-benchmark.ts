@@ -1,8 +1,8 @@
 import { mkdirSync, writeFileSync } from "node:fs"
 import path from "node:path"
 
-import { BoxRenderable } from "../renderables/Box.js"
-import { createTestRenderer, type MockInput, type TestRenderer } from "../testing.js"
+import { BoxRenderable } from "@opentui/core"
+import { createTestRenderer, type MockInput, type TestRenderer } from "@opentui/core/testing"
 import {
   addons,
   defaultBindingParser,
@@ -10,7 +10,7 @@ import {
   type BindingParser,
   type Keymap,
   type ReactiveMatcher,
-} from "../extras/keymap/index.js"
+} from "./index.js"
 
 const DEFAULT_ITERATIONS = 20_000
 const DEFAULT_WARMUP = 2_000

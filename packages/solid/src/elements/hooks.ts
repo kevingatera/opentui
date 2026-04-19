@@ -17,7 +17,7 @@ import {
   type Keymap,
   type ReactiveMatcher,
   type KeySequencePart,
-} from "@opentui/core/extras"
+} from "@opentui/extras/keymap"
 import {
   createContext,
   createEffect,
