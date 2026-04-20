@@ -106,6 +106,7 @@ skip_graphics_query: bool = false,
 skip_explicit_width_query: bool = false,
 graphics_query_pending: bool = false,
 capability_queries_pending: bool = false,
+theme_queries_pending: bool = false,
 
 state: struct {
     alt_screen: bool = false,
@@ -117,6 +118,7 @@ state: struct {
     mouse_was_enabled: bool = false,
     pixel_mouse: bool = false,
     color_scheme_updates: bool = false,
+    theme_queries_sent: bool = false,
     focus_tracking: bool = false,
     modify_other_keys: bool = false,
     mouse_pointer: MousePointerStyle = .default,
@@ -228,6 +230,18 @@ pub fn queryTerminalSend(self: *Terminal, tty: anytype) !void {
     self.checkEnvironmentOverrides();
     self.graphics_query_pending = !self.skip_graphics_query;
     self.capability_queries_pending = false;
+    self.theme_queries_pending = false;
+
+    try self.setColorSchemeUpdates(tty, true);
+    try tty.writeAll(ansi.ANSI.colorSchemeRequest);
+
+    if (self.in_tmux) {
+        try tty.writeAll(ansi.ANSI.oscThemeQueriesTmux);
+    } else {
+        try tty.writeAll(ansi.ANSI.oscThemeQueries);
+        self.theme_queries_pending = true;
+    }
+    self.state.theme_queries_sent = true;
 
     // Send xtversion first (doesn't need DCS wrapping - used for tmux detection)
     try tty.writeAll(ansi.ANSI.xtversion ++
@@ -278,6 +292,14 @@ pub fn sendPendingQueries(self: *Terminal, tty: anytype) !bool {
         sent = true;
     }
 
+    if (self.theme_queries_pending) {
+        if (self.term_info.from_xtversion and is_tmux) {
+            try tty.writeAll(ansi.ANSI.oscThemeQueriesTmux);
+            sent = true;
+        }
+        self.theme_queries_pending = false;
+    }
+
     return sent;
 }
 
@@ -313,9 +335,22 @@ pub fn enableDetectedFeatures(self: *Terminal, tty: anytype, use_kitty_keyboard:
         try self.setFocusTracking(tty, true);
     }
 
+    const is_tmux = self.in_tmux or self.isXtversionTmux();
+
     if (!self.state.color_scheme_updates) {
         try self.setColorSchemeUpdates(tty, true);
         try tty.writeAll(ansi.ANSI.colorSchemeRequest);
+    }
+
+    if (!self.state.theme_queries_sent) {
+        if (is_tmux) {
+            try tty.writeAll(ansi.ANSI.oscThemeQueriesTmux);
+            self.theme_queries_pending = false;
+        } else {
+            try tty.writeAll(ansi.ANSI.oscThemeQueries);
+            self.theme_queries_pending = true;
+        }
+        self.state.theme_queries_sent = true;
     }
 }
 
