@@ -982,6 +982,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.stdin = stdin
     this.stdout = stdout
     this._usesProcessStdout = stdout === process.stdout
+    this.realStdoutWrite = stdout.write
 
     const lib = resolveRenderLib()
 
@@ -1064,7 +1065,10 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     if (feed) {
       this._detachFeed = feed.onData((bytes: Uint8Array) => {
         return new Promise<void>((resolve) => {
-          stdout.write(bytes, () => resolve())
+          // Renderer-owned frame bytes must bypass any later stdout.write
+          // interception (e.g. split-footer capture) and go straight to the
+          // caller's actual sink.
+          this.realStdoutWrite.call(this.stdout, bytes, () => resolve())
         })
       })
       this._detachFeedError = feed.onError((code) => {
@@ -1074,7 +1078,6 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
     rendererTracker.addRenderer(this)
 
-    this.realStdoutWrite = stdout.write
     this.lib = lib
     this._terminalWidth = stdout.columns ?? width
     this._terminalHeight = stdout.rows ?? height

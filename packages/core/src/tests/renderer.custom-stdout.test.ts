@@ -84,6 +84,32 @@ test("non-process stdout: rendered bytes flow to the custom Writable", async () 
   expect(received.includes(0x1b)).toBe(true)
 })
 
+test("split-footer custom stdout: native feed bytes bypass stdout capture", async () => {
+  const stdin = createNullReadable()
+  const stdout = new CollectingWriteStream(80, 24) as unknown as CollectingWriteStream & NodeJS.WriteStream
+
+  // Construct directly so the test isolates the feed/write bridge without
+  // setupTerminal() adding unrelated startup ANSI.
+  const renderer = new CliRenderer(stdin, stdout, 80, 24, {
+    testing: false,
+    screenMode: "split-footer",
+    consoleMode: "disabled",
+  })
+  destroyFns.push(() => renderer.destroy())
+
+  stdout.clearWrites()
+
+  renderer.setTerminalTitle("split-footer custom stdout")
+
+  // Renderer-owned ANSI must go straight to the sink, not back through the
+  // split-footer stdout-capture queue.
+  expect((renderer as any).externalOutputQueue.size).toBe(0)
+
+  await new Promise<void>((resolve) => setImmediate(resolve))
+
+  expect(stdout.getWrittenBytes().toString("binary")).toContain("\x1b]0;split-footer custom stdout\x07")
+})
+
 test("process.stdout: no feed is allocated (stdout-direct path)", async () => {
   const renderer = await createCliRenderer({
     stdin: process.stdin,
