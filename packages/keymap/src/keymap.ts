@@ -32,7 +32,9 @@ import type {
   KeyLike,
   KeySequencePart,
 } from "./types.js"
-import { CommandService, normalizeCommandName } from "./services/commands.js"
+import { ActivationService } from "./services/activation.js"
+import { CommandCatalogService, normalizeCommandName } from "./services/command-catalog.js"
+import { CommandExecutorService } from "./services/command-executor.js"
 import { CompilerService } from "./services/compiler.js"
 import { ConditionService } from "./services/conditions.js"
 import { DispatchService } from "./services/dispatch.js"
@@ -40,9 +42,9 @@ import { EnvironmentService } from "./services/environment.js"
 import { LayerService } from "./services/layers.js"
 import { Emitter, type EmitterListener } from "./lib/emitter.js"
 import { NotificationService } from "./services/notify.js"
-import { ProjectionService } from "./services/projection.js"
 import { resolveKeyMatch } from "./services/keys.js"
 import { RuntimeService } from "./services/runtime.js"
+import { normalizeBindingInputs } from "./services/primitives/binding-inputs.js"
 import { createKeymapState } from "./services/state.js"
 
 type DiagnosticEvents<TTarget extends object, TEvent extends KeymapEvent> = Pick<
@@ -52,25 +54,6 @@ type DiagnosticEvents<TTarget extends object, TEvent extends KeymapEvent> = Pick
 
 function getKeyMatchKey(input: KeyStringifyInput): KeyMatch {
   return resolveKeyMatch(input)
-}
-
-function normalizeBindingInputs<TTarget extends object, TEvent extends KeymapEvent>(
-  bindings: Bindings<TTarget, TEvent>,
-): BindingInput<TTarget, TEvent>[] {
-  if (Array.isArray(bindings)) {
-    return bindings
-  }
-
-  const normalized: BindingInput<TTarget, TEvent>[] = []
-  for (const [key, cmd] of Object.entries(bindings)) {
-    if (typeof cmd !== "string" && typeof cmd !== "function") {
-      throw new Error(`Invalid keymap binding for "${key}": shorthand bindings must map to string or function commands`)
-    }
-
-    normalized.push({ key, cmd })
-  }
-
-  return normalized
 }
 
 export class Keymap<TTarget extends object, TEvent extends KeymapEvent = KeymapEvent> {
@@ -83,10 +66,11 @@ export class Keymap<TTarget extends object, TEvent extends KeymapEvent = KeymapE
   private events = new Emitter<DiagnosticEvents<TTarget, TEvent>>(() => {})
   private hooks: Emitter<Hooks<TTarget, TEvent>>
   private readonly notify: NotificationService<TTarget, TEvent>
+  private readonly activation: ActivationService<TTarget, TEvent>
   private readonly runtime: RuntimeService<TTarget, TEvent>
   private readonly conditions: ConditionService<TTarget, TEvent>
-  private readonly commands: CommandService<TTarget, TEvent>
-  private readonly projection: ProjectionService<TTarget, TEvent>
+  private readonly catalog: CommandCatalogService<TTarget, TEvent>
+  private readonly executor: CommandExecutorService<TTarget, TEvent>
   private readonly compiler: CompilerService<TTarget, TEvent>
   private readonly dispatch: DispatchService<TTarget, TEvent>
   private readonly layers: LayerService<TTarget, TEvent>
@@ -107,13 +91,25 @@ export class Keymap<TTarget extends object, TEvent extends KeymapEvent = KeymapE
     })
     this.notify = new NotificationService(this.state, this.events, this.hooks)
     this.conditions = new ConditionService(this.state, this.notify)
-    this.projection = new ProjectionService(this.state, this.host, this.hooks, this.notify, this.conditions)
-    this.runtime = new RuntimeService(this.state, this.notify, this.conditions, this.projection)
-    this.commands = new CommandService(this.state, this.notify, this.runtime, this.projection, this.hooks, {
+    this.catalog = new CommandCatalogService(this.state, this.host, this.notify, this.conditions, this.hooks, {
+      onCommandResolversChanged: () => {
+        this.activation.ensureValidPendingSequence()
+      },
+    })
+    this.activation = new ActivationService(
+      this.state,
+      this.host,
+      this.hooks,
+      this.notify,
+      this.conditions,
+      this.catalog,
+    )
+    this.runtime = new RuntimeService(this.state, this.notify, this.conditions, this.activation)
+    this.executor = new CommandExecutorService(this.notify, this.runtime, this.activation, this.catalog, {
       keymap: this,
       createCommandEvent: () => this.host.createCommandEvent(),
     })
-    this.compiler = new CompilerService(this.state, this.notify, this.commands, this.conditions, {
+    this.compiler = new CompilerService(this.state, this.notify, this.catalog, this.conditions, {
       warnUnknownField: (kind, fieldName) => {
         this.warnUnknownField(kind, fieldName)
       },
@@ -121,9 +117,9 @@ export class Keymap<TTarget extends object, TEvent extends KeymapEvent = KeymapE
         this.warnUnknownToken(token, sequence)
       },
     })
-    this.layers = new LayerService(this.state, this.notify, this.conditions, this.projection, {
+    this.layers = new LayerService(this.state, this.notify, this.conditions, this.activation, {
       compiler: this.compiler,
-      commands: this.commands,
+      commands: this.catalog,
       host: this.host,
       warnUnknownField: (kind, fieldName) => {
         this.warnUnknownField(kind, fieldName)
@@ -134,9 +130,9 @@ export class Keymap<TTarget extends object, TEvent extends KeymapEvent = KeymapE
       this.state,
       this.notify,
       this.runtime,
-      this.projection,
+      this.activation,
       this.conditions,
-      this.commands,
+      this.executor,
       this.compiler,
     )
     this.keypressListener = (event) => {
@@ -172,7 +168,7 @@ export class Keymap<TTarget extends object, TEvent extends KeymapEvent = KeymapE
 
     this.cleanedUp = true
 
-    this.projection.setPendingSequence(null)
+    this.activation.setPendingSequence(null)
 
     for (const resource of this.resources.values()) {
       resource.dispose()
@@ -205,11 +201,11 @@ export class Keymap<TTarget extends object, TEvent extends KeymapEvent = KeymapE
   }
 
   public hasPendingSequence(): boolean {
-    return this.projection.ensureValidPendingSequence() !== undefined
+    return this.activation.ensureValidPendingSequence() !== undefined
   }
 
   public getPendingSequence(): readonly KeySequencePart[] {
-    return this.projection.getPendingSequence()
+    return this.activation.getPendingSequence()
   }
 
   public createKeyMatcher(key: KeyLike): (input: KeyStringifyInput | null | undefined) => boolean {
@@ -225,19 +221,19 @@ export class Keymap<TTarget extends object, TEvent extends KeymapEvent = KeymapE
   }
 
   public clearPendingSequence(): void {
-    this.projection.setPendingSequence(null)
+    this.activation.setPendingSequence(null)
   }
 
   public popPendingSequence(): boolean {
-    return this.projection.popPendingSequence()
+    return this.activation.popPendingSequence()
   }
 
   public getActiveKeys(options?: ActiveKeyOptions): readonly ActiveKey<TTarget, TEvent>[] {
-    return this.projection.getActiveKeys(options)
+    return this.activation.getActiveKeys(options)
   }
 
   public getCommands(query?: CommandQuery<TTarget>): readonly CommandRecord[] {
-    return this.projection.getCommands(query)
+    return this.catalog.getCommands(query)
   }
 
   public normalizeCommandName(name: string): string {
@@ -271,7 +267,7 @@ export class Keymap<TTarget extends object, TEvent extends KeymapEvent = KeymapE
   }
 
   public runCommand(cmd: string, options?: RunCommandOptions<TTarget, TEvent>): RunCommandResult {
-    return this.commands.runCommand(cmd, options)
+    return this.executor.runCommand(cmd, options)
   }
 
   public on(name: "state", fn: Listener<Events<TTarget, TEvent>["state"]>): () => void
@@ -372,15 +368,15 @@ export class Keymap<TTarget extends object, TEvent extends KeymapEvent = KeymapE
   }
 
   public prependCommandResolver(resolver: CommandResolver<TTarget, TEvent>): () => void {
-    return this.commands.prependCommandResolver(resolver)
+    return this.catalog.prependCommandResolver(resolver)
   }
 
   public appendCommandResolver(resolver: CommandResolver<TTarget, TEvent>): () => void {
-    return this.commands.appendCommandResolver(resolver)
+    return this.catalog.appendCommandResolver(resolver)
   }
 
   public clearCommandResolvers(): void {
-    this.commands.clearCommandResolvers()
+    this.catalog.clearCommandResolvers()
   }
 
   public prependLayerAnalyzer(analyzer: LayerAnalyzer<TTarget, TEvent>): () => void {
@@ -412,7 +408,7 @@ export class Keymap<TTarget extends object, TEvent extends KeymapEvent = KeymapE
       // Any focus change breaks a pending sequence. Prefix dispatch is captured
       // against the state that started it, and changing focus can change the
       // active bindings and their precedence.
-      this.projection.setPendingSequence(null)
+      this.activation.setPendingSequence(null)
       this.notify.queueStateChange()
     })
   }

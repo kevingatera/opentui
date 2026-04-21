@@ -1,8 +1,8 @@
-import type { CommandService } from "./commands.js"
+import type { CommandCatalogService } from "./command-catalog.js"
 import type { ConditionService } from "./conditions.js"
 import type { State } from "./state.js"
 import type { NotificationService } from "./notify.js"
-import { normalizeBindingCommand } from "./commands.js"
+import { normalizeBindingCommand } from "./command-catalog.js"
 import type {
   Attributes,
   BindingCommand,
@@ -36,6 +36,8 @@ import {
   createTextKeyMatch,
   normalizeBindingTokenName,
 } from "./keys.js"
+import { snapshotParsedBindingInput } from "./primitives/binding-inputs.js"
+import { mergeAttribute, mergeRequirement } from "./primitives/field-invariants.js"
 import { getErrorMessage, snapshotDataValue } from "./values.js"
 
 const EMPTY_COMPILE_FIELDS: Readonly<Record<string, unknown>> = Object.freeze({})
@@ -59,37 +61,12 @@ function createSequenceNode<TTarget extends object, TEvent extends KeymapEvent>(
   }
 }
 
-function mergeRequirement(target: EventData, name: string, value: unknown, source: string): void {
-  if (Object.prototype.hasOwnProperty.call(target, name) && !Object.is(target[name], value)) {
-    throw new Error(`Conflicting keymap requirement for "${name}" from ${source}`)
-  }
-
-  target[name] = value
-}
-
-function mergeAttribute(target: Attributes, name: string, value: unknown, source: string): void {
-  if (Object.prototype.hasOwnProperty.call(target, name) && !Object.is(target[name], value)) {
-    throw new Error(`Conflicting keymap attribute for "${name}" from ${source}`)
-  }
-
-  target[name] = value
-}
-
 function snapshotAttributes(attrs: Attributes): Readonly<Attributes> | undefined {
   if (Object.keys(attrs).length === 0) {
     return undefined
   }
 
   return snapshotDataValue(attrs, { freeze: true }) as Readonly<Attributes>
-}
-
-function snapshotParsedBindingInput<TTarget extends object, TEvent extends KeymapEvent>(
-  binding: ParsedBindingInput<TTarget, TEvent>,
-): ParsedBindingInput<TTarget, TEvent> {
-  return {
-    ...binding,
-    sequence: cloneKeySequence(binding.sequence),
-  }
 }
 
 interface ParsedBindingSequenceResult {
@@ -108,7 +85,7 @@ export class CompilerService<TTarget extends object, TEvent extends KeymapEvent>
   constructor(
     private readonly state: State<TTarget, TEvent>,
     private readonly notify: NotificationService<TTarget, TEvent>,
-    private readonly commands: CommandService<TTarget, TEvent>,
+    private readonly commands: CommandCatalogService<TTarget, TEvent>,
     private readonly conditions: ConditionService<TTarget, TEvent>,
     private readonly options: CompilerOptions,
   ) {}
