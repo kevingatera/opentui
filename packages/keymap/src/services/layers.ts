@@ -1,10 +1,9 @@
 import type { CompilerService } from "./compiler.js"
-import type { CommandService } from "./commands.js"
+import type { CommandCatalogService } from "./command-catalog.js"
 import type { ConditionService } from "./conditions.js"
-import type { ProjectionService } from "./projection.js"
+import type { ActivationService } from "./activation.js"
 import type {
   BindingInput,
-  Bindings,
   CompiledBinding,
   CompiledBindingsResult,
   EventData,
@@ -15,7 +14,6 @@ import type {
   LayerAnalyzer,
   LayerAnalysisContext,
   LayerBindingAnalysis,
-  ParsedBindingInput,
   Scope,
   ResolvedKeyToken,
   RegisteredCommand,
@@ -27,39 +25,12 @@ import type {
 import { RESERVED_LAYER_FIELDS } from "../schema.js"
 import type { State } from "./state.js"
 import type { NotificationService } from "./notify.js"
+import { snapshotBindingInputs, snapshotParsedBindingInput } from "./primitives/binding-inputs.js"
+import { mergeRequirement } from "./primitives/field-invariants.js"
 import { cloneKeySequence } from "./keys.js"
 import { getErrorMessage, snapshotDataValue } from "./values.js"
 
 const NOOP = (): void => {}
-
-function mergeRequirement(target: EventData, name: string, value: unknown, source: string): void {
-  if (Object.prototype.hasOwnProperty.call(target, name) && !Object.is(target[name], value)) {
-    throw new Error(`Conflicting keymap requirement for "${name}" from ${source}`)
-  }
-
-  target[name] = value
-}
-
-function snapshotBindingInputs<TTarget extends object, TEvent extends KeymapEvent>(
-  bindings: Bindings<TTarget, TEvent>,
-): BindingInput<TTarget, TEvent>[] {
-  const normalized = Array.isArray(bindings)
-    ? bindings
-    : Object.entries(bindings).map(([key, cmd]) => {
-        if (typeof cmd !== "string" && typeof cmd !== "function") {
-          throw new Error(
-            `Invalid keymap binding for "${key}": shorthand bindings must map to string or function commands`,
-          )
-        }
-
-        return { key, cmd }
-      })
-
-  return normalized.map((binding) => ({
-    ...binding,
-    key: typeof binding.key === "string" ? binding.key : { ...binding.key },
-  }))
-}
 
 function sortByPriorityAndOrder<T extends { priority: number; order: number }>(
   items: T[],
@@ -126,7 +97,7 @@ interface CompileLayerRuntimeStateResult {
 
 interface LayersOptions<TTarget extends object, TEvent extends KeymapEvent> {
   compiler: CompilerService<TTarget, TEvent>
-  commands: CommandService<TTarget, TEvent>
+  commands: CommandCatalogService<TTarget, TEvent>
   host: KeymapHost<TTarget, TEvent>
   warnUnknownField: (kind: "binding" | "layer", fieldName: string) => void
 }
@@ -139,15 +110,6 @@ interface AnalyzeLayerOptions<TTarget extends object, TEvent extends KeymapEvent
   compiledBindings: readonly CompiledBinding<TTarget, TEvent>[]
   root: RegisteredLayer<TTarget, TEvent>["root"]
   hasTokenBindings: boolean
-}
-
-function cloneParsedBindingInput<TTarget extends object, TEvent extends KeymapEvent>(
-  binding: ParsedBindingInput<TTarget, TEvent>,
-): ParsedBindingInput<TTarget, TEvent> {
-  return {
-    ...binding,
-    sequence: cloneKeySequence(binding.sequence),
-  }
 }
 
 function getSequenceNode<TTarget extends object, TEvent extends KeymapEvent>(
@@ -180,7 +142,7 @@ function buildLayerBindingAnalyses<TTarget extends object, TEvent extends Keymap
       event: binding.event,
       preventDefault: binding.preventDefault,
       fallthrough: binding.fallthrough,
-      sourceBinding: cloneParsedBindingInput(binding.sourceBinding),
+      sourceBinding: snapshotParsedBindingInput(binding.sourceBinding),
       sourceScope: binding.sourceScope,
       sourceTarget: binding.sourceTarget,
       sourceLayerOrder: binding.sourceLayerOrder,
@@ -196,7 +158,7 @@ export class LayerService<TTarget extends object, TEvent extends KeymapEvent> {
     private readonly state: State<TTarget, TEvent>,
     private readonly notify: NotificationService<TTarget, TEvent>,
     private readonly conditions: ConditionService<TTarget, TEvent>,
-    private readonly projection: ProjectionService<TTarget, TEvent>,
+    private readonly activation: ActivationService<TTarget, TEvent>,
     private readonly options: LayersOptions<TTarget, TEvent>,
   ) {}
 
@@ -308,7 +270,7 @@ export class LayerService<TTarget extends object, TEvent extends KeymapEvent> {
       }
 
       if (registeredLayer.commands.length > 0) {
-        this.projection.ensureValidPendingSequence()
+        this.activation.ensureValidPendingSequence()
       }
 
       this.notify.queueStateChange()
@@ -373,7 +335,7 @@ export class LayerService<TTarget extends object, TEvent extends KeymapEvent> {
       }
 
       if (shouldClearPending) {
-        this.projection.setPendingSequence(null)
+        this.activation.setPendingSequence(null)
       }
 
       if (nextCompilations.size > 0) {
@@ -562,9 +524,9 @@ export class LayerService<TTarget extends object, TEvent extends KeymapEvent> {
       layer.offTargetDestroy = undefined
 
       if (this.state.projection.pendingSequence?.layer === layer) {
-        this.projection.setPendingSequence(null)
+        this.activation.setPendingSequence(null)
       } else if (layer.commands.length > 0) {
-        this.projection.ensureValidPendingSequence()
+        this.activation.ensureValidPendingSequence()
       }
 
       this.notify.queueStateChange()

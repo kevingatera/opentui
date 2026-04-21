@@ -1,8 +1,8 @@
 import type { CompilerService } from "./compiler.js"
-import type { CommandService } from "./commands.js"
+import type { ActivationService } from "./activation.js"
+import type { CommandExecutorService } from "./command-executor.js"
 import type { ConditionService } from "./conditions.js"
 import type { NotificationService } from "./notify.js"
-import type { ProjectionService } from "./projection.js"
 import type { RuntimeService } from "./runtime.js"
 import type { State } from "./state.js"
 import type {
@@ -27,9 +27,9 @@ export class DispatchService<TTarget extends object, TEvent extends KeymapEvent>
     private readonly state: State<TTarget, TEvent>,
     private readonly notify: NotificationService<TTarget, TEvent>,
     private readonly runtime: RuntimeService<TTarget, TEvent>,
-    private readonly projection: ProjectionService<TTarget, TEvent>,
+    private readonly activation: ActivationService<TTarget, TEvent>,
     private readonly conditions: ConditionService<TTarget, TEvent>,
-    private readonly commands: CommandService<TTarget, TEvent>,
+    private readonly executor: CommandExecutorService<TTarget, TEvent>,
     private readonly compiler: CompilerService<TTarget, TEvent>,
   ) {
     this.eventMatchResolverContext = {
@@ -152,8 +152,8 @@ export class DispatchService<TTarget extends object, TEvent extends KeymapEvent>
   }
 
   private dispatchReleaseLayers(event: TEvent): void {
-    const focused = this.projection.getFocusedTarget()
-    const activeLayers = this.projection.getActiveLayers(focused)
+    const focused = this.activation.getFocusedTarget()
+    const activeLayers = this.activation.getActiveLayers(focused)
     const hasLayerConditions = this.state.layers.layersWithConditions > 0
     const matchKeys = this.resolveEventMatchKeys(event)
 
@@ -182,8 +182,8 @@ export class DispatchService<TTarget extends object, TEvent extends KeymapEvent>
   }
 
   private dispatchLayers(event: TEvent): void {
-    const focused = this.projection.getFocusedTarget()
-    const pending = this.projection.ensureValidPendingSequence()
+    const focused = this.activation.getFocusedTarget()
+    const pending = this.activation.ensureValidPendingSequence()
     const matchKeys = this.resolveEventMatchKeys(event)
 
     if (pending) {
@@ -191,7 +191,7 @@ export class DispatchService<TTarget extends object, TEvent extends KeymapEvent>
       return
     }
 
-    const activeLayers = this.projection.getActiveLayers(focused)
+    const activeLayers = this.activation.getActiveLayers(focused)
     this.dispatchFromRoot(activeLayers, matchKeys, event, focused)
   }
 
@@ -203,12 +203,12 @@ export class DispatchService<TTarget extends object, TEvent extends KeymapEvent>
   ): void {
     const nextNode = this.getReachableChild(pending.node, matchKeys, focused)
     if (!nextNode) {
-      this.projection.setPendingSequence(null)
+      this.activation.setPendingSequence(null)
       return
     }
 
     if (nextNode.children.size > 0) {
-      this.projection.setPendingSequence({
+      this.activation.setPendingSequence({
         layer: pending.layer,
         node: nextNode,
       })
@@ -218,7 +218,7 @@ export class DispatchService<TTarget extends object, TEvent extends KeymapEvent>
     }
 
     this.runBindings(pending.layer, nextNode.bindings, event, focused)
-    this.projection.setPendingSequence(null)
+    this.activation.setPendingSequence(null)
   }
 
   private dispatchFromRoot(
@@ -244,7 +244,7 @@ export class DispatchService<TTarget extends object, TEvent extends KeymapEvent>
       }
 
       if (nextNode.children.size > 0) {
-        this.projection.setPendingSequence({
+        this.activation.setPendingSequence({
           layer,
           node: nextNode,
         })
@@ -338,7 +338,7 @@ export class DispatchService<TTarget extends object, TEvent extends KeymapEvent>
         continue
       }
 
-      const bindingHandled = this.commands.runBinding(layer, binding, event, focused)
+      const bindingHandled = this.executor.runBinding(layer, binding, event, focused)
       if (!bindingHandled) {
         continue
       }
@@ -359,7 +359,7 @@ export class DispatchService<TTarget extends object, TEvent extends KeymapEvent>
   ): SequenceNode<TTarget, TEvent> | undefined {
     for (const strokeKey of matchKeys) {
       const child = node.children.get(strokeKey)
-      if (!child || !this.projection.nodeHasReachableBindings(child, focused)) {
+      if (!child || !this.activation.nodeHasReachableBindings(child, focused)) {
         continue
       }
 
@@ -382,7 +382,7 @@ export class DispatchService<TTarget extends object, TEvent extends KeymapEvent>
         continue
       }
 
-      const bindingHandled = this.commands.runBinding(layer, binding, event, focused)
+      const bindingHandled = this.executor.runBinding(layer, binding, event, focused)
       if (!bindingHandled) {
         continue
       }
