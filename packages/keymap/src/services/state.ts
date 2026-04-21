@@ -81,16 +81,16 @@ export interface CommandsState<TTarget extends object, TEvent extends KeymapEven
   commandMetadataVersion: number
   registeredNames: Map<string, number>
   commandResolvers: OrderedRegistry<CommandResolver<TTarget, TEvent>>
+  activeCommandViewVersion: number
+  activeCommandView?: ActiveCommandView<TTarget, TEvent>
+  registeredCommandsCacheVersion: number
+  registeredCommandsCache: readonly RegisteredCommand<TTarget, TEvent>[]
 }
 
 export interface ProjectionState<TTarget extends object, TEvent extends KeymapEvent> {
   pendingSequence: PendingSequenceState<TTarget, TEvent> | null
   pendingSequenceCacheVersion: number
   pendingSequenceCache: readonly KeySequencePart[]
-  activeCommandViewVersion: number
-  activeCommandView?: ActiveCommandView<TTarget, TEvent>
-  registeredCommandsCacheVersion: number
-  registeredCommandsCache: readonly RegisteredCommand<TTarget, TEvent>[]
   activeKeysPlainCacheVersion: number
   activeKeysPlainCache: readonly ActiveKey<TTarget, TEvent>[]
   activeKeysBindingsCacheVersion: number
@@ -162,15 +162,15 @@ export function createKeymapState<TTarget extends object, TEvent extends KeymapE
       commandMetadataVersion: 0,
       registeredNames: new Map<string, number>(),
       commandResolvers: new OrderedRegistry<CommandResolver<TTarget, TEvent>>(),
+      activeCommandViewVersion: -1,
+      activeCommandView: undefined,
+      registeredCommandsCacheVersion: -1,
+      registeredCommandsCache: [],
     },
     projection: {
       pendingSequence: null,
       pendingSequenceCacheVersion: -1,
       pendingSequenceCache: [],
-      activeCommandViewVersion: -1,
-      activeCommandView: undefined,
-      registeredCommandsCacheVersion: -1,
-      registeredCommandsCache: [],
       activeKeysPlainCacheVersion: -1,
       activeKeysPlainCache: [],
       activeKeysBindingsCacheVersion: -1,
