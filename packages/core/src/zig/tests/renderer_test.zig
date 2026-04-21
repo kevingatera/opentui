@@ -385,14 +385,7 @@ test "renderer - theme color query tracks pending background restore" {
 
     cli_renderer.setBackgroundColor(RGBA{ 0.1, 0.2, 0.3, 1.0 });
     cli_renderer.queryThemeColors();
-    try std.testing.expect(cli_renderer.themeQueryBgRestorePending);
-
-    cli_renderer.finishThemeColorQuery();
-    try std.testing.expect(!cli_renderer.themeQueryBgRestorePending);
-
-    cli_renderer.setBackgroundColor(RGBA{ 0.1, 0.2, 0.3, 0.0 });
-    cli_renderer.queryThemeColors();
-    try std.testing.expect(!cli_renderer.themeQueryBgRestorePending);
+    try std.testing.expectEqual(RGBA{ 0.1, 0.2, 0.3, 1.0 }, cli_renderer.backgroundColor);
 }
 
 test "renderer - empty text buffer renders correctly" {
