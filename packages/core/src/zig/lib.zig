@@ -853,6 +853,10 @@ export fn queryThemeColors(rendererPtr: *renderer.CliRenderer) void {
     rendererPtr.queryThemeColors();
 }
 
+export fn finishThemeColorQuery(rendererPtr: *renderer.CliRenderer) void {
+    rendererPtr.finishThemeColorQuery();
+}
+
 export fn enableKittyKeyboard(rendererPtr: *renderer.CliRenderer, flags: u8) void {
     rendererPtr.enableKittyKeyboard(flags);
 }

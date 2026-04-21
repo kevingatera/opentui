@@ -492,6 +492,7 @@ const KITTY_FLAG_ALL_KEYS_AS_ESCAPES = 0b1000 // Report all keys as escape codes
 const KITTY_FLAG_REPORT_TEXT = 0b10000 // Report text associated with key events
 
 const DEFAULT_STDIN_PARSER_MAX_BUFFER_BYTES = 64 * 1024 * 1024
+const THEME_QUERY_TIMEOUT_MS = 250
 
 /**
  * Kitty Keyboard Protocol configuration options
@@ -780,6 +781,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private resizeTimeoutId: TimerHandle | null = null
   private capabilityTimeoutId: TimerHandle | null = null
   private splitStartupSeedTimeoutId: TimerHandle | null = null
+  private themeRefreshTimeoutId: TimerHandle | null = null
   private pendingSplitStartupCursorSeed: boolean = false
   private resizeDebounceDelay: number = 100
 
@@ -844,6 +846,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private _onDestroy?: () => void
   private _themeMode: ThemeMode | null = null
   private _themeQueryPending: boolean = true
+  private _themeRefreshPending: boolean = false
   private _themeOscForeground: string | null = null
   private _themeOscBackground: string | null = null
   private _terminalFocusState: boolean | null = null
@@ -1442,7 +1445,21 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       throw new Error("timeoutMs must be a non-negative finite number")
     }
 
+    console.log("[theme-mode] waitForThemeMode called", {
+      timeoutMs,
+      currentThemeMode: this._themeMode,
+      themeQueryPending: this._themeQueryPending,
+      foreground: this._themeOscForeground,
+      background: this._themeOscBackground,
+      isDestroyed: this._isDestroyed,
+    })
+
     if (this._themeMode !== null || this._isDestroyed || timeoutMs === 0) {
+      console.log("[theme-mode] waitForThemeMode immediate resolve", {
+        resolvedThemeMode: this._themeMode,
+        isDestroyed: this._isDestroyed,
+        timeoutMs,
+      })
       return Promise.resolve(this._themeMode)
     }
 
@@ -1461,14 +1478,26 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
       const finish = () => {
         cleanup()
+        console.log("[theme-mode] waitForThemeMode finish", {
+          resolvedThemeMode: this._themeMode,
+          themeQueryPending: this._themeQueryPending,
+          foreground: this._themeOscForeground,
+          background: this._themeOscBackground,
+        })
         resolve(this._themeMode)
       }
 
       const handleThemeMode = () => {
+        console.log("[theme-mode] waitForThemeMode resolved from theme_mode event", {
+          resolvedThemeMode: this._themeMode,
+        })
         finish()
       }
 
       const handleDestroy = () => {
+        console.log("[theme-mode] waitForThemeMode resolved from destroy", {
+          resolvedThemeMode: this._themeMode,
+        })
         finish()
       }
 
@@ -2528,6 +2557,12 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     if (this._terminalIsSetup) return
     this._terminalIsSetup = true
 
+    console.log("[theme-mode] setupTerminal start", {
+      screenMode: this._screenMode,
+      externalOutputMode: this._externalOutputMode,
+      useAlternateScreen: this._screenMode === "alternate-screen",
+    })
+
     const startupCursorCprActive = this._screenMode === "split-footer" && this._externalOutputMode === "capture-stdout"
     this.updateStdinParserProtocolContext({
       privateCapabilityRepliesActive: true,
@@ -2536,6 +2571,12 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     })
     this.lib.setupTerminal(this.rendererPtr, this._screenMode === "alternate-screen")
     this._capabilities = this.lib.getTerminalCapabilities(this.rendererPtr)
+
+    console.log("[theme-mode] setupTerminal after native setup", {
+      capabilities: this._capabilities,
+      themeMode: this._themeMode,
+      themeQueryPending: this._themeQueryPending,
+    })
 
     if (this.debugOverlay.enabled) {
       this.lib.setDebugOverlay(this.rendererPtr, true, this.debugOverlay.corner)
@@ -2636,14 +2677,76 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     }
   }
 
+  private clearThemeRefreshTimeout(): void {
+    if (this.themeRefreshTimeoutId !== null) {
+      this.clock.clearTimeout(this.themeRefreshTimeoutId)
+      this.themeRefreshTimeoutId = null
+    }
+  }
+
+  private completeThemeQuery(reason: string): void {
+    this.clearThemeRefreshTimeout()
+
+    if (this._themeRefreshPending) {
+      this.lib.finishThemeColorQuery(this.rendererPtr)
+    }
+
+    this._themeRefreshPending = false
+    this._themeQueryPending = false
+
+    console.log("[theme-mode] completeThemeQuery", {
+      reason,
+      currentThemeMode: this._themeMode,
+      foreground: this._themeOscForeground,
+      background: this._themeOscBackground,
+      themeRefreshPending: this._themeRefreshPending,
+      themeQueryPending: this._themeQueryPending,
+    })
+  }
+
+  private cancelThemeRefresh(reason: string): void {
+    if (!this._themeRefreshPending && this.themeRefreshTimeoutId === null) {
+      return
+    }
+
+    this.clearThemeRefreshTimeout()
+    this._themeRefreshPending = false
+    this._themeQueryPending = false
+
+    console.log("[theme-mode] cancelThemeRefresh", {
+      reason,
+      currentThemeMode: this._themeMode,
+      foreground: this._themeOscForeground,
+      background: this._themeOscBackground,
+    })
+  }
+
   private requestThemeOscColors(): void {
+    console.log("[theme-mode] requestThemeOscColors", {
+      currentThemeMode: this._themeMode,
+      previousForeground: this._themeOscForeground,
+      previousBackground: this._themeOscBackground,
+      themeQueryPending: this._themeQueryPending,
+    })
+
     this._themeQueryPending = true
+    this._themeRefreshPending = true
     this._themeOscForeground = null
     this._themeOscBackground = null
 
     // Native setup intentionally never sends CSI ?996n. We only refresh OSC
     // 10/11 colors and derive the mode from the returned background color.
     this.lib.queryThemeColors(this.rendererPtr)
+
+    this.clearThemeRefreshTimeout()
+    this.themeRefreshTimeoutId = this.clock.setTimeout(() => {
+      console.log("[theme-mode] theme refresh timed out", {
+        foreground: this._themeOscForeground,
+        background: this._themeOscBackground,
+        currentThemeMode: this._themeMode,
+      })
+      this.completeThemeQuery("timeout")
+    }, THEME_QUERY_TIMEOUT_MS)
   }
 
   private processCapabilitySequence(sequence: string, hasCursorReport: boolean): boolean {
@@ -2655,8 +2758,21 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       return false
     }
 
+    const previousColorSchemeUpdates = this._capabilities?.color_scheme_updates ?? null
+
     this.lib.processCapabilityResponse(this.rendererPtr, sequence)
     this._capabilities = this.lib.getTerminalCapabilities(this.rendererPtr)
+
+    if (sequence.includes("\x1b[?2031;") || previousColorSchemeUpdates !== (this._capabilities?.color_scheme_updates ?? null)) {
+      console.log("[theme-mode] capability sequence processed", {
+        sequence: JSON.stringify(sequence),
+        hasCursorReport,
+        previousColorSchemeUpdates,
+        nextColorSchemeUpdates: this._capabilities?.color_scheme_updates ?? null,
+        capabilities: this._capabilities,
+      })
+    }
+
     this.emit(CliRenderEvents.CAPABILITIES, this._capabilities)
 
     const hadPendingSplitStartupCursorSeed = this.pendingSplitStartupCursorSeed
@@ -2722,10 +2838,20 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       // We intentionally do not use CSI ?997 as the actual mode value because
       // terminals disagree on its meaning. OpenTUI only treats it as a signal to
       // refresh OSC 10/11 and then derives dark/light from the returned bg color.
+      console.log("[theme-mode] received CSI 997 notification", {
+        sequence: JSON.stringify(sequence),
+        reportedMode: "dark",
+        currentThemeMode: this._themeMode,
+      })
       this.requestThemeOscColors()
       return true
     }
     if (sequence === "\x1b[?997;2n") {
+      console.log("[theme-mode] received CSI 997 notification", {
+        sequence: JSON.stringify(sequence),
+        reportedMode: "light",
+        currentThemeMode: this._themeMode,
+      })
       this.requestThemeOscColors()
       return true
     }
@@ -2740,8 +2866,20 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
       if (match[1] === "10") {
         this._themeOscForeground = color
+        console.log("[theme-mode] parsed OSC 10 foreground", {
+          sequence: JSON.stringify(match[0]),
+          foreground: color,
+          background: this._themeOscBackground,
+          themeQueryPending: this._themeQueryPending,
+        })
       } else {
         this._themeOscBackground = color
+        console.log("[theme-mode] parsed OSC 11 background", {
+          sequence: JSON.stringify(match[0]),
+          foreground: this._themeOscForeground,
+          background: color,
+          themeQueryPending: this._themeQueryPending,
+        })
       }
     }
 
@@ -2750,12 +2888,29 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     }
 
     if (!this._themeQueryPending) {
+      console.log("[theme-mode] ignoring OSC theme response because no query is pending", {
+        sequence: JSON.stringify(sequence),
+        foreground: this._themeOscForeground,
+        background: this._themeOscBackground,
+      })
       return true
     }
 
     if (this._themeOscForeground && this._themeOscBackground) {
-      this.applyThemeMode(inferThemeModeFromBackgroundColor(this._themeOscBackground))
-      this._themeQueryPending = false
+      const derivedThemeMode = inferThemeModeFromBackgroundColor(this._themeOscBackground)
+      console.log("[theme-mode] deriving theme mode from OSC colors", {
+        foreground: this._themeOscForeground,
+        background: this._themeOscBackground,
+        derivedThemeMode,
+      })
+      this.applyThemeMode(derivedThemeMode)
+      this.completeThemeQuery("osc-response")
+    } else {
+      console.log("[theme-mode] waiting for remaining OSC theme color", {
+        foreground: this._themeOscForeground,
+        background: this._themeOscBackground,
+        themeQueryPending: this._themeQueryPending,
+      })
     }
 
     return true
@@ -2763,8 +2918,17 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
   private applyThemeMode(mode: ThemeMode): void {
     const changed = this._themeMode !== mode
+    const previousThemeMode = this._themeMode
 
     this._themeMode = mode
+
+    console.log("[theme-mode] applyThemeMode", {
+      previousThemeMode,
+      nextThemeMode: mode,
+      changed,
+      foreground: this._themeOscForeground,
+      background: this._themeOscBackground,
+    })
 
     if (changed) {
       this.emit(CliRenderEvents.THEME_MODE, mode)
@@ -3482,6 +3646,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.stdinParser?.reset()
     this.stdin.removeListener("data", this.stdinListener)
 
+    this.cancelThemeRefresh("suspend")
+
     this.lib.suspendRenderer(this.rendererPtr)
 
     if (this.stdin.setRawMode) {
@@ -3616,6 +3782,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       this.clock.clearTimeout(this.renderTimeout)
       this.renderTimeout = null
     }
+
+    this.cancelThemeRefresh("destroy")
 
     this._isRunning = false
     this.waitingForPixelResolution = false

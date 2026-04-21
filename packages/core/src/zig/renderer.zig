@@ -102,6 +102,7 @@ pub const CliRenderer = struct {
     useAlternateScreen: bool = true,
     terminalSetup: bool = false,
     clearOnShutdown: bool = true,
+    themeQueryBgRestorePending: bool = false,
 
     renderStats: struct {
         lastFrameTime: f64,
@@ -451,10 +452,12 @@ pub const CliRenderer = struct {
         direct.writeAll(ansi.ANSI.resetCursorColorFallback) catch {};
         direct.writeAll(ansi.ANSI.resetCursorColor) catch {};
         direct.writeAll(ansi.ANSI.defaultCursorStyle) catch {};
+        direct.writeAll(ansi.ANSI.resetTerminalBgColor) catch {};
         // Workaround for Ghostty not showing the cursor after shutdown for some reason
         direct.writeAll(ansi.ANSI.showCursor) catch {};
         direct.flush() catch {};
         std.Thread.sleep(10 * std.time.ns_per_ms);
+        direct.writeAll(ansi.ANSI.resetTerminalBgColor) catch {};
         direct.writeAll(ansi.ANSI.showCursor) catch {};
         direct.flush() catch {};
         std.Thread.sleep(10 * std.time.ns_per_ms);
@@ -578,14 +581,20 @@ pub const CliRenderer = struct {
         self.nextRenderBuffer.setBlendBackdropColor(.{ rgba[0], rgba[1], rgba[2], 1.0 });
 
         // Emit OSC 11 to sync terminal background color with the renderer background.
-        // Skip if alpha is 0 (fully transparent — let terminal use its own default).
-        if (rgba[3] > 0 and !self.testing) {
+        // If a theme query temporarily reset OSC 11 to read the terminal default,
+        // defer the restore until finishThemeColorQuery() so the query result is not
+        // contaminated by our own override.
+        if (!self.testing and !self.themeQueryBgRestorePending) {
             var stdoutWriter = std.fs.File.stdout().writer(&self.stdoutBuffer);
             const writer = &stdoutWriter.interface;
-            const r: u8 = @intFromFloat(@round(@min(rgba[0] * 255.0, 255.0)));
-            const g: u8 = @intFromFloat(@round(@min(rgba[1] * 255.0, 255.0)));
-            const b: u8 = @intFromFloat(@round(@min(rgba[2] * 255.0, 255.0)));
-            ansi.ANSI.setTerminalBgColorOutput(writer, r, g, b) catch {};
+            if (rgba[3] > 0) {
+                const r: u8 = @intFromFloat(@round(@min(rgba[0] * 255.0, 255.0)));
+                const g: u8 = @intFromFloat(@round(@min(rgba[1] * 255.0, 255.0)));
+                const b: u8 = @intFromFloat(@round(@min(rgba[2] * 255.0, 255.0)));
+                ansi.ANSI.setTerminalBgColorOutput(writer, r, g, b) catch {};
+            } else {
+                writer.writeAll(ansi.ANSI.resetTerminalBgColor) catch {};
+            }
             writer.flush() catch {};
         }
     }
@@ -1815,7 +1824,32 @@ pub const CliRenderer = struct {
 
     pub fn queryThemeColors(self: *CliRenderer) void {
         var stream = std.io.fixedBufferStream(&self.writeOutBuf);
+
+        if (self.backgroundColor[3] > 0) {
+            stream.writer().writeAll(ansi.ANSI.resetTerminalBgColor) catch {};
+            self.themeQueryBgRestorePending = true;
+        } else {
+            self.themeQueryBgRestorePending = false;
+        }
+
         self.terminal.queryThemeColors(stream.writer()) catch {};
+        self.writeOut(stream.getWritten());
+    }
+
+    pub fn finishThemeColorQuery(self: *CliRenderer) void {
+        if (!self.themeQueryBgRestorePending) return;
+
+        var stream = std.io.fixedBufferStream(&self.writeOutBuf);
+        if (self.backgroundColor[3] > 0) {
+            const r: u8 = @intFromFloat(@round(@min(self.backgroundColor[0] * 255.0, 255.0)));
+            const g: u8 = @intFromFloat(@round(@min(self.backgroundColor[1] * 255.0, 255.0)));
+            const b: u8 = @intFromFloat(@round(@min(self.backgroundColor[2] * 255.0, 255.0)));
+            ansi.ANSI.setTerminalBgColorOutput(stream.writer(), r, g, b) catch {};
+        } else {
+            stream.writer().writeAll(ansi.ANSI.resetTerminalBgColor) catch {};
+        }
+
+        self.themeQueryBgRestorePending = false;
         self.writeOut(stream.getWritten());
     }
 
