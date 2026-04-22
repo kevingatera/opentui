@@ -214,8 +214,11 @@ pub fn resetState(self: *Terminal, tty: anytype) !void {
 
     self.setTerminalTitle(tty, "");
 
-    // OSC 111 - reset terminal background color to its default
-    try tty.writeAll(ansi.ANSI.resetTerminalBgColor);
+    // OSC 111 is intentionally disabled for now. In Ghostty, sending the
+    // reset alone is enough to poison later OSC 11 background reporting for
+    // system light/dark theme changes, which breaks theme detection on the
+    // next app startup even though the immediate reset appears to work.
+    // try tty.writeAll(ansi.ANSI.resetTerminalBgColor);
 }
 
 pub fn enterAltScreen(self: *Terminal, tty: anytype) !void {
