@@ -42,7 +42,7 @@ import {
 import { type Clock, type TimerHandle, SystemClock } from "./lib/clock.js"
 import { StdinParser, type StdinEvent, type StdinParserProtocolContext } from "./lib/stdin-parser.js"
 import { matchesKeyBinding } from "./lib/keymapping.js"
-import { RendererThemeManager } from "./renderer-theme-manager.js"
+import { RendererThemeMode } from "./renderer-theme-mode.js"
 
 registerEnvVar({
   name: "OTUI_DUMP_CAPTURES",
@@ -814,7 +814,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private _cachedPalette: TerminalColors | null = null
   private _paletteDetectionPromise: Promise<TerminalColors> | null = null
   private _onDestroy?: () => void
-  private themeManager: RendererThemeManager
+  private themeModeState: RendererThemeMode
   private _terminalFocusState: boolean | null = null
 
   private sequenceHandlers: ((sequence: string) => boolean)[] = []
@@ -945,7 +945,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.targetFps = config.targetFps || 30
     this.maxFps = config.maxFps || 60
     this.clock = config.clock ?? new SystemClock()
-    this.themeManager = new RendererThemeManager(
+    this.themeModeState = new RendererThemeMode(
       {
         queryThemeColors: () => {
           this.lib.queryThemeColors(this.rendererPtr)
@@ -954,7 +954,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       this.clock,
     )
     this.themeModeHandler = (sequence: string) => {
-      const result = this.themeManager.handleSequence(sequence)
+      const result = this.themeModeState.handleSequence(sequence)
       if (result.changedMode) {
         this.emit(CliRenderEvents.THEME_MODE, result.changedMode)
       }
@@ -1419,7 +1419,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   }
 
   public get themeMode(): ThemeMode | null {
-    return this.themeManager.themeMode
+    return this.themeModeState.themeMode
   }
 
   public waitForThemeMode(timeoutMs: number = 1000): Promise<ThemeMode | null> {
@@ -1427,7 +1427,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       throw new Error("timeoutMs must be a non-negative finite number")
     }
 
-    return this.themeManager.waitForThemeMode(timeoutMs, this._isDestroyed)
+    return this.themeModeState.waitForThemeMode(timeoutMs, this._isDestroyed)
   }
 
   public getDebugInputs(): Array<{ timestamp: string; sequence: string }> {
@@ -3371,7 +3371,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.stdinParser?.reset()
     this.stdin.removeListener("data", this.stdinListener)
 
-    this.themeManager.cancelRefresh()
+    this.themeModeState.cancelRefresh()
 
     this.lib.suspendRenderer(this.rendererPtr)
 
@@ -3508,7 +3508,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       this.renderTimeout = null
     }
 
-    this.themeManager.cancelRefresh()
+    this.themeModeState.cancelRefresh()
 
     this._isRunning = false
     this.waitingForPixelResolution = false
@@ -3557,7 +3557,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this._paletteDetectionPromise = null
     this._cachedPalette = null
 
-    this.themeManager.dispose()
+    this.themeModeState.dispose()
 
     this.emit(CliRenderEvents.DESTROY)
 

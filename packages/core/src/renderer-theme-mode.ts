@@ -31,7 +31,7 @@ function inferThemeModeFromBackgroundColor(color: string): ThemeMode {
   return brightness > 128 ? "light" : "dark"
 }
 
-export interface RendererThemeManagerHost {
+export interface RendererThemeModeHost {
   queryThemeColors(): void
 }
 
@@ -40,7 +40,7 @@ type ThemeWaiter = {
   timeoutHandle: TimerHandle | null
 }
 
-export class RendererThemeManager {
+export class RendererThemeMode {
   private static readonly QUERY_TIMEOUT_MS = 250
 
   private _themeMode: ThemeMode | null = null
@@ -51,7 +51,7 @@ export class RendererThemeManager {
   private waiters = new Set<ThemeWaiter>()
 
   constructor(
-    private readonly host: RendererThemeManagerHost,
+    private readonly host: RendererThemeModeHost,
     private readonly clock: Clock,
   ) {}
 
@@ -169,7 +169,7 @@ export class RendererThemeManager {
     this.clearThemeRefreshTimeout()
     this.themeRefreshTimeoutId = this.clock.setTimeout(() => {
       this.completeThemeQuery()
-    }, RendererThemeManager.QUERY_TIMEOUT_MS)
+    }, RendererThemeMode.QUERY_TIMEOUT_MS)
   }
 
   private applyThemeMode(mode: ThemeMode): ThemeMode | null {
