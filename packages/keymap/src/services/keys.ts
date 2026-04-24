@@ -8,8 +8,6 @@ import type {
   StringifyOptions,
 } from "../types.js"
 
-const keyMatches = new Map<string, KeyMatch>()
-
 export function normalizeBindingTokenName(token: string): string {
   const normalized = token.trim().toLowerCase()
   if (!normalized) {
@@ -105,7 +103,7 @@ export function resolveKeyMatch(input: KeyStringifyInput): KeyMatch {
 }
 
 export function createKeyMatch(input: KeyStrokeInput): KeyMatch {
-  return getOrCreateKeyMatch(buildKeyMatchId(normalizeKeyStroke(input)))
+  return `key:${buildKeyMatchId(normalizeKeyStroke(input))}`
 }
 
 export function createTextKeyMatch(id: string): KeyMatch {
@@ -114,7 +112,7 @@ export function createTextKeyMatch(id: string): KeyMatch {
     throw new Error("Invalid keymap match id: id cannot be empty")
   }
 
-  return getOrCreateKeyMatch(`text:${normalized}`)
+  return `text:${normalized}`
 }
 
 export function stringifyKeyStroke(input: KeyStringifyInput, options?: StringifyOptions): string {
@@ -161,15 +159,4 @@ function stringifyCanonicalStroke(stroke: NormalizedKeyStroke): string {
 
 function buildKeyMatchId(stroke: NormalizedKeyStroke): string {
   return `${stroke.name}:${stroke.ctrl ? 1 : 0}:${stroke.shift ? 1 : 0}:${stroke.meta ? 1 : 0}:${stroke.super ? 1 : 0}:${stroke.hyper ? 1 : 0}`
-}
-
-function getOrCreateKeyMatch(id: string): KeyMatch {
-  const existing = keyMatches.get(id)
-  if (existing) {
-    return existing
-  }
-
-  const match = Symbol(id)
-  keyMatches.set(id, match)
-  return match
 }

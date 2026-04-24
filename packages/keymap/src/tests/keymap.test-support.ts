@@ -8,6 +8,7 @@ import {
   type CommandRecord,
   type ErrorEvent,
   type EventMatchResolverContext,
+  type KeyMatch,
   type Keymap,
   type ReactiveMatcher,
   type WarningEvent,
@@ -89,7 +90,7 @@ export function createKeymapTestHelpers(
     return diagnostics.captureDiagnostics(keymap)
   }
 
-  function matchEventAs(ctx: EventMatchResolverContext, event: KeyEvent, name: string): symbol {
+  function matchEventAs(ctx: EventMatchResolverContext, event: KeyEvent, name: string): KeyMatch {
     return ctx.resolveKey({
       name,
       ctrl: event.ctrl,

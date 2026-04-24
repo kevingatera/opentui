@@ -1004,7 +1004,7 @@ export class DispatchService<TTarget extends object, TEvent extends KeymapEvent>
       }
 
       for (const candidate of resolved) {
-        if (typeof candidate !== "symbol") {
+        if (typeof candidate !== "string") {
           this.notify.emitError(
             "invalid-event-match-resolver-candidate",
             candidate,
@@ -1126,7 +1126,7 @@ function resolveSingleEventMatchKeys<TTarget extends object, TEvent extends Keym
 
   if (resolved.length === 1) {
     const [candidate] = resolved
-    if (typeof candidate !== "symbol") {
+    if (typeof candidate !== "string") {
       notify.emitError(
         "invalid-event-match-resolver-candidate",
         candidate,
@@ -1141,7 +1141,7 @@ function resolveSingleEventMatchKeys<TTarget extends object, TEvent extends Keym
   const keys: KeyMatch[] = []
   const seen = new Set<KeyMatch>()
   for (const candidate of resolved) {
-    if (typeof candidate !== "symbol") {
+    if (typeof candidate !== "string") {
       notify.emitError(
         "invalid-event-match-resolver-candidate",
         candidate,

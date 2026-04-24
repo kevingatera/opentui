@@ -48,7 +48,7 @@ export interface NormalizedKeyStroke extends KeyStrokeInput {
   super: boolean
 }
 
-export type KeyMatch = symbol
+export type KeyMatch = string
 
 export interface EventMatchResolverContext {
   resolveKey(key: KeyLike): KeyMatch
