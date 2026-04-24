@@ -270,6 +270,38 @@ describe("keymap", () => {
     expect(warnings).toEqual([])
   })
 
+  test("resolves bindings when their command layer is registered later", () => {
+    const keymap = getKeymap(renderer)
+    const calls: string[] = []
+
+    keymap.registerLayer({
+      bindings: [{ key: "x", cmd: "late-command" }],
+    })
+
+    expect(getActiveKeyNames(keymap)).toEqual([])
+    expect(getActiveKey(keymap, "x")).toBeUndefined()
+
+    mockInput.pressKey("x")
+    expect(calls).toEqual([])
+
+    keymap.registerLayer({
+      commands: [
+        {
+          name: "late-command",
+          run() {
+            calls.push("late-command")
+          },
+        },
+      ],
+    })
+
+    expect(getActiveKeyNames(keymap)).toEqual(["x"])
+    expect(getActiveKey(keymap, "x")?.command).toBe("late-command")
+
+    mockInput.pressKey("x")
+    expect(calls).toEqual(["late-command"])
+  })
+
   test("keeps non-renderer state and throws on renderer-backed reads after renderer destroy", () => {
     const keymap = getKeymap(renderer)
 
