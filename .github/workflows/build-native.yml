@@ -47,7 +47,7 @@ jobs:
           bun run build
           cd ../solid
           bun run build
-          cd ../extras
+          cd ../keymap
           bun run build
 
       - name: Verify build outputs

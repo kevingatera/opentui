@@ -14,7 +14,7 @@ const testRuns = [
   },
   {
     cwd: resolve(rootDir, "src/solid"),
-    args: ["test", "./tests/index.test.tsx"],
+    args: ["test", "./tests"],
   },
 ] as const
 
