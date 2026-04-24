@@ -8,44 +8,41 @@ import type { NotificationService } from "./notify.js"
 import type { RuntimeService } from "./runtime.js"
 import type { State } from "./state.js"
 import { cloneKeySequence, cloneKeyStroke, stringifyKeySequence } from "./keys.js"
-import type {
-  ActiveBinding,
-  ActiveKey,
-  EventMatchResolverContext,
-  EventMatchResolver,
-  KeyDeferredDisambiguationContext,
-  KeyDeferredDisambiguationDecision,
-  KeyDeferredDisambiguationHandler,
-  KeyDisambiguationContext,
-  KeyDisambiguationDecision,
-  KeyDisambiguationResolver,
-  KeyMatch,
-  KeyInterceptOptions,
-  KeyInputContext,
-  KeymapEvent,
-  PendingSequenceCapture,
-  PendingSequenceState,
-  RawInterceptOptions,
-  RawInputContext,
-  CompiledBinding,
-  RegisteredLayer,
-  SequenceNode,
+import {
+  KEY_DEFERRED_DISAMBIGUATION_DECISION,
+  KEY_DISAMBIGUATION_DECISION,
+  type ActiveBinding,
+  type ActiveKey,
+  type EventMatchResolverContext,
+  type EventMatchResolver,
+  type KeyDeferredDisambiguationContext,
+  type KeyDeferredDisambiguationDecision,
+  type KeyDeferredDisambiguationHandler,
+  type KeyDisambiguationContext,
+  type KeyDisambiguationDecision,
+  type KeyDisambiguationResolver,
+  type KeyMatch,
+  type KeyInterceptOptions,
+  type KeyInputContext,
+  type KeymapEvent,
+  type PendingSequenceCapture,
+  type PendingSequenceState,
+  type RawInterceptOptions,
+  type RawInputContext,
+  type CompiledBinding,
+  type RegisteredLayer,
+  type SequenceNode,
 } from "../types.js"
-
-const DISAMBIGUATION_DECISION = Symbol("keymap-disambiguation-decision")
-const DEFERRED_DISAMBIGUATION_DECISION = Symbol("keymap-deferred-disambiguation-decision")
 
 type SyncDecisionAction = "run-exact" | "continue-sequence" | "clear" | "defer"
 type DeferredDecisionAction = "run-exact" | "continue-sequence" | "clear"
 
-interface InternalDisambiguationDecision {
-  readonly [DISAMBIGUATION_DECISION]: true
+interface InternalDisambiguationDecision extends KeyDisambiguationDecision {
   readonly action: SyncDecisionAction
   readonly handler?: KeyDeferredDisambiguationHandler<any, any>
 }
 
-interface InternalDeferredDisambiguationDecision {
-  readonly [DEFERRED_DISAMBIGUATION_DECISION]: true
+interface InternalDeferredDisambiguationDecision extends KeyDeferredDisambiguationDecision {
   readonly action: DeferredDecisionAction
 }
 
@@ -59,26 +56,26 @@ interface PendingDisambiguation<TTarget extends object, TEvent extends KeymapEve
 function createSyncDecision(
   action: SyncDecisionAction,
   handler?: KeyDeferredDisambiguationHandler<any, any>,
-): KeyDisambiguationDecision {
-  return Object.freeze({
-    [DISAMBIGUATION_DECISION]: true,
+): InternalDisambiguationDecision {
+  return {
+    [KEY_DISAMBIGUATION_DECISION]: true,
     action,
     handler,
-  }) as unknown as KeyDisambiguationDecision
+  }
 }
 
-function createDeferredDecision(action: DeferredDecisionAction): KeyDeferredDisambiguationDecision {
-  return Object.freeze({
-    [DEFERRED_DISAMBIGUATION_DECISION]: true,
+function createDeferredDecision(action: DeferredDecisionAction): InternalDeferredDisambiguationDecision {
+  return {
+    [KEY_DEFERRED_DISAMBIGUATION_DECISION]: true,
     action,
-  }) as unknown as KeyDeferredDisambiguationDecision
+  }
 }
 
 function isSyncDecision(value: unknown): value is InternalDisambiguationDecision {
   return (
     !!value &&
     typeof value === "object" &&
-    (value as { [DISAMBIGUATION_DECISION]?: unknown })[DISAMBIGUATION_DECISION] === true
+    (value as { [KEY_DISAMBIGUATION_DECISION]?: unknown })[KEY_DISAMBIGUATION_DECISION] === true
   )
 }
 
@@ -86,7 +83,7 @@ function isDeferredDecision(value: unknown): value is InternalDeferredDisambigua
   return (
     !!value &&
     typeof value === "object" &&
-    (value as { [DEFERRED_DISAMBIGUATION_DECISION]?: unknown })[DEFERRED_DISAMBIGUATION_DECISION] === true
+    (value as { [KEY_DEFERRED_DISAMBIGUATION_DECISION]?: unknown })[KEY_DEFERRED_DISAMBIGUATION_DECISION] === true
   )
 }
 

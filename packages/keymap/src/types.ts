@@ -59,8 +59,8 @@ export type EventMatchResolver<TEvent extends KeymapEvent = KeymapEvent> = (
   ctx: EventMatchResolverContext,
 ) => readonly KeyMatch[] | undefined
 
-declare const KEY_DISAMBIGUATION_DECISION: unique symbol
-declare const KEY_DEFERRED_DISAMBIGUATION_DECISION: unique symbol
+export const KEY_DISAMBIGUATION_DECISION = Symbol("keymap-disambiguation-decision")
+export const KEY_DEFERRED_DISAMBIGUATION_DECISION = Symbol("keymap-deferred-disambiguation-decision")
 
 export interface KeyDisambiguationDecision {
   readonly [KEY_DISAMBIGUATION_DECISION]: true
