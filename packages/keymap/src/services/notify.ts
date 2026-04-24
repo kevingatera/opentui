@@ -42,10 +42,11 @@ export class NotificationService<TTarget extends object, TEvent extends KeymapEv
 
   public emitWarning(code: string, warning: unknown, message: string): void {
     if (!this.events.has("warning")) {
+      const consoleMessage = `[${code}] ${message}`
       if (warning instanceof Error) {
-        console.warn(message, warning)
+        console.warn(consoleMessage, warning)
       } else {
-        console.warn(message)
+        console.warn(consoleMessage)
       }
 
       return
@@ -56,10 +57,11 @@ export class NotificationService<TTarget extends object, TEvent extends KeymapEv
 
   public emitError(code: string, error: unknown, message: string): void {
     if (!this.events.has("error")) {
+      const consoleMessage = `[${code}] ${message}`
       if (error instanceof Error) {
-        console.error(message, error)
+        console.error(consoleMessage, error)
       } else {
-        console.error(message)
+        console.error(consoleMessage)
       }
 
       return

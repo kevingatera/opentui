@@ -4853,7 +4853,7 @@ describe("keymap", () => {
       console.warn = originalWarn
     }
 
-    expect(warnings).toEqual([['[Keymap] Unknown layer field "mode" was ignored']])
+    expect(warnings).toEqual([["[unknown-layer-field] [Keymap] Unknown layer field \"mode\" was ignored"]])
   })
 
   test("falls back to console.error when no error listener is registered", () => {
@@ -4873,7 +4873,7 @@ describe("keymap", () => {
       console.error = originalError
     }
 
-    expect(errors).toEqual([['Keymap command field "name" is reserved']])
+    expect(errors).toEqual([["[reserved-command-field] Keymap command field \"name\" is reserved"]])
   })
 
   test("falls back to console.error with cause when no error listener is registered", () => {
@@ -4897,7 +4897,7 @@ describe("keymap", () => {
       console.error = originalError
     }
 
-    expect(errors).toEqual([["[Keymap] Error in command query filter:", cause]])
+    expect(errors).toEqual([["[command-query-filter-error] [Keymap] Error in command query filter:", cause]])
   })
 
   test("does not call console.warn or console.error when a listener is registered", () => {
