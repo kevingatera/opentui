@@ -2,9 +2,15 @@ import { Buffer } from "node:buffer"
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { createTestRenderer, type TestRenderer } from "@opentui/core/testing"
 import { registerBaseLayoutFallback } from "@opentui/keymap/addons/opentui"
-import { createDefaultOpenTuiKeymap as getKeymap } from "@opentui/keymap/opentui"
+import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
+import { createDiagnosticHarness } from "../../../tests/diagnostic-harness.js"
 
 let renderer: TestRenderer
+const diagnostics = createDiagnosticHarness()
+
+function getKeymap(renderer: TestRenderer) {
+  return diagnostics.trackKeymap(createDefaultOpenTuiKeymap(renderer))
+}
 
 describe("base layout fallback addon", () => {
   beforeEach(async () => {
@@ -14,6 +20,7 @@ describe("base layout fallback addon", () => {
 
   afterEach(() => {
     renderer?.destroy()
+    diagnostics.assertNoUnhandledDiagnostics()
   })
 
   test("matches bindings through Kitty base-layout codepoints", () => {

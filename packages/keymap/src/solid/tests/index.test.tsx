@@ -13,6 +13,9 @@ import {
 } from "@opentui/keymap/solid"
 import { render, type JSX } from "@opentui/solid"
 import { Show, createSignal, onCleanup } from "solid-js"
+import { createDiagnosticHarness } from "../../tests/diagnostic-harness.js"
+
+const diagnostics = createDiagnosticHarness()
 
 async function testRender(node: () => JSX.Element, renderConfig: TestRendererOptions = {}) {
   const testSetup = await createTestRenderer({
@@ -22,7 +25,7 @@ async function testRender(node: () => JSX.Element, renderConfig: TestRendererOpt
     },
   })
 
-  const keymap = createDefaultOpenTuiKeymap(testSetup.renderer)
+  const keymap = diagnostics.trackKeymap(createDefaultOpenTuiKeymap(testSetup.renderer))
   await render(() => <KeymapProvider keymap={keymap}>{node()}</KeymapProvider>, testSetup.renderer)
 
   return testSetup
@@ -41,6 +44,7 @@ describe("solid keymap hooks", () => {
     if (testSetup) {
       testSetup.renderer.destroy()
     }
+    diagnostics.assertNoUnhandledDiagnostics()
   })
 
   test("useKeymap returns the provided keymap", async () => {
@@ -446,7 +450,7 @@ describe("solid keymap hooks", () => {
       },
     })
 
-    const keymap = createDefaultOpenTuiKeymap(testSetup.renderer)
+    const keymap = diagnostics.trackKeymap(createDefaultOpenTuiKeymap(testSetup.renderer))
     offLeader = addons.registerTimedLeader(keymap, {
       trigger: { name: "x", ctrl: true },
       timeoutMs: 1_000,
@@ -602,7 +606,7 @@ describe("solid keymap hooks", () => {
       },
     })
 
-    const keymap = createDefaultOpenTuiKeymap(testSetup.renderer)
+    const keymap = diagnostics.trackKeymap(createDefaultOpenTuiKeymap(testSetup.renderer))
     offLeader = addons.registerTimedLeader(keymap, {
       trigger: { name: "x", ctrl: true },
       timeoutMs: 1_000,

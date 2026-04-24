@@ -3,20 +3,20 @@ import type { KeyEvent, Renderable } from "@opentui/core"
 import { createTestRenderer, type TestRenderer } from "@opentui/core/testing"
 import { registerUnresolvedCommandWarnings } from "@opentui/keymap/addons"
 import type { Keymap, WarningEvent } from "@opentui/keymap"
-import { createDefaultOpenTuiKeymap as getKeymap } from "@opentui/keymap/opentui"
+import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
+import { createDiagnosticHarness } from "../../../tests/diagnostic-harness.js"
 
 let renderer: TestRenderer
+const diagnostics = createDiagnosticHarness()
+
+function getKeymap(renderer: TestRenderer) {
+  return diagnostics.trackKeymap(createDefaultOpenTuiKeymap(renderer))
+}
 
 type OpenTuiKeymap = Keymap<Renderable, KeyEvent>
 
-function captureWarnings(keymap: OpenTuiKeymap): { events: WarningEvent[]; warnings: string[] } {
-  const events: WarningEvent[] = []
-  const warnings: string[] = []
-  keymap.on("warning", (event) => {
-    events.push(event)
-    warnings.push(event.message)
-  })
-  return { events, warnings }
+function captureWarnings(keymap: OpenTuiKeymap) {
+  return diagnostics.captureDiagnostics(keymap)
 }
 
 describe("unresolved command warnings addon", () => {
@@ -27,20 +27,22 @@ describe("unresolved command warnings addon", () => {
 
   afterEach(() => {
     renderer.destroy()
+    diagnostics.assertNoUnhandledDiagnostics()
   })
 
   test("warns when a binding references an unresolved string command", () => {
     const keymap = getKeymap(renderer)
-    const { events, warnings } = captureWarnings(keymap)
+    const capture = captureWarnings(keymap)
 
     registerUnresolvedCommandWarnings(keymap)
     keymap.registerLayer({
       bindings: [{ key: "x", cmd: "missing-command" }],
     })
 
+    const { warnings, warningEvents } = capture.takeWarnings()
     expect(warnings).toEqual(['[Keymap] Unresolved command "missing-command" for binding "x"'])
-    expect(events).toHaveLength(1)
-    expect(events[0]).toMatchObject({
+    expect(warningEvents).toHaveLength(1)
+    expect(warningEvents[0]).toMatchObject({
       code: "unresolved-command",
       warning: {
         command: "missing-command",
@@ -87,7 +89,7 @@ describe("unresolved command warnings addon", () => {
 
   test("deduplicates warnings across token-driven recompilation", () => {
     const keymap = getKeymap(renderer)
-    const { warnings } = captureWarnings(keymap)
+    const capture = captureWarnings(keymap)
 
     registerUnresolvedCommandWarnings(keymap)
     keymap.registerLayer({
@@ -96,7 +98,7 @@ describe("unresolved command warnings addon", () => {
 
     keymap.registerToken({ name: "<leader>", key: { name: "space" } })
 
-    expect(warnings).toEqual([
+    expect(capture.takeWarnings().warnings).toEqual([
       '[Keymap] Unknown token "<leader>" in key sequence "<leader>x" was ignored',
       '[Keymap] Unresolved command "missing-command" for binding "x"',
     ])

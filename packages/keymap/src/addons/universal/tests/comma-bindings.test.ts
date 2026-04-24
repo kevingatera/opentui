@@ -1,10 +1,16 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { createTestRenderer, type MockInput, type TestRenderer } from "@opentui/core/testing"
 import { registerCommaBindings } from "@opentui/keymap/addons"
-import { createDefaultOpenTuiKeymap as getKeymap } from "@opentui/keymap/opentui"
+import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
+import { createDiagnosticHarness } from "../../../tests/diagnostic-harness.js"
 
 let renderer: TestRenderer
 let mockInput: MockInput
+const diagnostics = createDiagnosticHarness()
+
+function getKeymap(renderer: TestRenderer) {
+  return diagnostics.trackKeymap(createDefaultOpenTuiKeymap(renderer))
+}
 
 describe("comma bindings addon", () => {
   beforeEach(async () => {
@@ -15,6 +21,7 @@ describe("comma bindings addon", () => {
 
   afterEach(() => {
     renderer?.destroy()
+    diagnostics.assertNoUnhandledDiagnostics()
   })
 
   test("splits comma-delimited key strings into multiple bindings", () => {
@@ -45,11 +52,7 @@ describe("comma bindings addon", () => {
 
   test("skips bindings when a comma-delimited key string contains empty entries", () => {
     const keymap = getKeymap(renderer)
-    const errors: string[] = []
-
-    keymap.on("error", (event) => {
-      errors.push(event.message)
-    })
+    const { takeErrors } = diagnostics.captureDiagnostics(keymap)
     registerCommaBindings(keymap)
 
     expect(() => {
@@ -58,7 +61,7 @@ describe("comma bindings addon", () => {
       })
     }).not.toThrow()
 
-    expect(errors).toEqual(['Invalid key sequence "x,,y": comma-separated bindings cannot contain empty entries'])
+    expect(takeErrors().errors).toEqual(['Invalid key sequence "x,,y": comma-separated bindings cannot contain empty entries'])
     expect(keymap.getActiveKeys()).toEqual([])
   })
 

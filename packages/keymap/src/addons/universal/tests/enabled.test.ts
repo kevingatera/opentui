@@ -3,10 +3,12 @@ import { createTestRenderer, type MockInput, type TestRenderer } from "@opentui/
 import { stringifyKeySequence } from "@opentui/keymap"
 import { registerDefaultKeys, registerEnabledCommandField, registerEnabledField } from "@opentui/keymap/addons"
 import { createOpenTuiKeymap } from "@opentui/keymap/opentui"
+import { createDiagnosticHarness } from "../../../tests/diagnostic-harness.js"
 
 let renderer: TestRenderer
 let mockInput: MockInput
 let keymap: ReturnType<typeof createOpenTuiKeymap>
+const diagnostics = createDiagnosticHarness()
 
 function getActiveKeyNames(): string[] {
   return keymap
@@ -20,15 +22,17 @@ describe("enabled addon", () => {
     const testSetup = await createTestRenderer({ width: 40, height: 10 })
     renderer = testSetup.renderer
     mockInput = testSetup.mockInput
-    keymap = createOpenTuiKeymap(renderer)
+    keymap = diagnostics.trackKeymap(createOpenTuiKeymap(renderer))
     registerDefaultKeys(keymap)
   })
 
   afterEach(() => {
     renderer?.destroy()
+    diagnostics.assertNoUnhandledDiagnostics()
   })
 
   test("ignores enabled layer fields until the addon is registered", () => {
+    const { takeWarnings } = diagnostics.captureDiagnostics(keymap)
     const calls: string[] = []
 
     keymap.registerLayer({
@@ -53,6 +57,7 @@ describe("enabled addon", () => {
 
     mockInput.pressKey("x")
 
+    expect(takeWarnings().warnings).toEqual(['[Keymap] Unknown layer field "enabled" was ignored'])
     expect(calls).toEqual(["noop"])
   })
 
@@ -227,11 +232,7 @@ describe("enabled addon", () => {
   test("rejects invalid enabled values and can be disposed", () => {
     const offEnabled = registerEnabledField(keymap)
     const calls: string[] = []
-    const errors: string[] = []
-
-    keymap.on("error", (event) => {
-      errors.push(event.message)
-    })
+    const { takeErrors, takeWarnings } = diagnostics.captureDiagnostics(keymap)
 
     keymap.registerLayer({
       commands: [
@@ -251,7 +252,7 @@ describe("enabled addon", () => {
       })
     }).not.toThrow()
 
-    expect(errors).toEqual(['Keymap enabled field "enabled" must be a boolean, a function, or a reactive matcher'])
+    expect(takeErrors().errors).toEqual(['Keymap enabled field "enabled" must be a boolean, a function, or a reactive matcher'])
     expect(getActiveKeyNames()).toEqual([])
 
     offEnabled()
@@ -267,10 +268,12 @@ describe("enabled addon", () => {
 
     mockInput.pressKey("x")
 
+    expect(takeWarnings().warnings).toEqual(['[Keymap] Unknown layer field "enabled" was ignored'])
     expect(calls).toEqual(["noop"])
   })
 
   test("treats thrown enabled predicates as disabled", () => {
+    const { takeErrors } = diagnostics.captureDiagnostics(keymap)
     const calls: string[] = []
 
     registerEnabledField(keymap)
@@ -296,6 +299,9 @@ describe("enabled addon", () => {
 
     mockInput.pressKey("x")
 
+    const { errors } = takeErrors()
+    expect(errors.length).toBeGreaterThan(0)
+    expect(errors.every((message) => message === "[Keymap] Error evaluating runtime matcher from field enabled:")).toBe(true)
     expect(calls).toEqual([])
   })
 
@@ -440,11 +446,7 @@ describe("enabled addon", () => {
   test("rejects invalid enabled command values and can be disposed", () => {
     const offEnabled = registerEnabledCommandField(keymap)
     const calls: string[] = []
-    const errors: string[] = []
-
-    keymap.on("error", (event) => {
-      errors.push(event.message)
-    })
+    const { takeErrors } = diagnostics.captureDiagnostics(keymap)
 
     keymap.registerLayer({
       commands: [
@@ -458,7 +460,7 @@ describe("enabled addon", () => {
       ],
     })
 
-    expect(errors).toEqual(['Keymap enabled field "enabled" must be a boolean, a function, or a reactive matcher'])
+    expect(takeErrors().errors).toEqual(['Keymap enabled field "enabled" must be a boolean, a function, or a reactive matcher'])
     expect(keymap.getCommands()).toEqual([])
 
     offEnabled()

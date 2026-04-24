@@ -2,10 +2,16 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { createTestRenderer, type MockInput, type TestRenderer } from "@opentui/core/testing"
 import { stringifyKeyStroke } from "@opentui/keymap"
 import { registerAliasesField } from "@opentui/keymap/addons"
-import { createDefaultOpenTuiKeymap as getKeymap } from "@opentui/keymap/opentui"
+import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
+import { createDiagnosticHarness } from "../../../tests/diagnostic-harness.js"
 
 let renderer: TestRenderer
 let mockInput: MockInput
+const diagnostics = createDiagnosticHarness()
+
+function getKeymap(renderer: TestRenderer) {
+  return diagnostics.trackKeymap(createDefaultOpenTuiKeymap(renderer))
+}
 
 describe("aliases field addon", () => {
   beforeEach(async () => {
@@ -16,6 +22,7 @@ describe("aliases field addon", () => {
 
   afterEach(() => {
     renderer?.destroy()
+    diagnostics.assertNoUnhandledDiagnostics()
   })
 
   test("adds canonical bindings from already-parsed alias strokes", () => {
@@ -123,6 +130,7 @@ describe("aliases field addon", () => {
 
   test("can be disposed to stop alias expansion for subsequent layers", () => {
     const keymap = getKeymap(renderer)
+    const { takeWarnings } = diagnostics.captureDiagnostics(keymap)
     const calls: string[] = []
 
     const offAliases = registerAliasesField(keymap)
@@ -145,6 +153,7 @@ describe("aliases field addon", () => {
 
     mockInput.pressEnter()
 
+    expect(takeWarnings().warnings).toEqual(['[Keymap] Unknown layer field "aliases" was ignored'])
     expect(calls).toEqual([])
     expect(keymap.getActiveKeys().some((candidate) => candidate.stroke.name === "enter")).toBe(true)
     expect(keymap.getActiveKeys().some((candidate) => candidate.stroke.name === "return")).toBe(false)

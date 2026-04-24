@@ -2,11 +2,13 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { createTestRenderer, type TestRenderer } from "@opentui/core/testing"
 import { registerDefaultKeys, registerMetadataFields } from "@opentui/keymap/addons"
 import { createOpenTuiKeymap } from "@opentui/keymap/opentui"
+import { createDiagnosticHarness } from "../../../tests/diagnostic-harness.js"
 
 let renderer: TestRenderer
+const diagnostics = createDiagnosticHarness()
 
 function getKeymap() {
-  const keymap = createOpenTuiKeymap(renderer)
+  const keymap = diagnostics.trackKeymap(createOpenTuiKeymap(renderer))
   registerDefaultKeys(keymap)
   return keymap
 }
@@ -19,6 +21,7 @@ describe("metadata addon", () => {
 
   afterEach(() => {
     renderer?.destroy()
+    diagnostics.assertNoUnhandledDiagnostics()
   })
 
   test("registers binding and command metadata fields", () => {
@@ -107,11 +110,7 @@ describe("metadata addon", () => {
 
   test("normalizes metadata strings and rejects invalid values", () => {
     const keymap = getKeymap()
-    const errors: string[] = []
-
-    keymap.on("error", (event) => {
-      errors.push(event.message)
-    })
+    const { takeErrors } = diagnostics.captureDiagnostics(keymap)
     registerMetadataFields(keymap)
 
     keymap.registerLayer({
@@ -153,7 +152,7 @@ describe("metadata addon", () => {
       })
     }).not.toThrow()
 
-    expect(errors).toEqual([
+    expect(takeErrors().errors).toEqual([
       'Keymap metadata field "desc" must be a string',
       'Keymap metadata field "group" cannot be empty',
     ])
@@ -163,6 +162,7 @@ describe("metadata addon", () => {
 
   test("can be disposed to stop compiling metadata fields", () => {
     const keymap = getKeymap()
+    const { takeWarnings } = diagnostics.captureDiagnostics(keymap)
     const offMetadata = registerMetadataFields(keymap)
 
     offMetadata()
@@ -191,5 +191,9 @@ describe("metadata addon", () => {
     expect(activeKey?.commandAttrs).toBeUndefined()
     expect(activeKey?.bindings?.[0]?.attrs).toBeUndefined()
     expect(activeKey?.bindings?.[0]?.commandAttrs).toBeUndefined()
+    expect(takeWarnings().warnings).toEqual([
+      '[Keymap] Unknown binding field "desc" was ignored',
+      '[Keymap] Unknown binding field "group" was ignored',
+    ])
   })
 })

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, test } from "bun:test"
 import { TextareaRenderable } from "@opentui/core"
 import { createTestRenderer, type TestRenderer } from "@opentui/core/testing"
 import {
@@ -17,6 +17,9 @@ import {
 } from "@opentui/keymap/addons"
 import { registerBaseLayoutFallback, registerManagedTextareaLayer } from "@opentui/keymap/addons/opentui"
 import { createDefaultOpenTuiKeymap, createOpenTuiKeymap } from "@opentui/keymap/opentui"
+import { createDiagnosticHarness } from "../../tests/diagnostic-harness.js"
+
+const diagnostics = createDiagnosticHarness()
 
 function permutations<T>(items: readonly T[]): T[][] {
   if (items.length <= 1) {
@@ -47,10 +50,20 @@ function assertLiveEngine(renderer: TestRenderer, keymap: ReturnType<typeof crea
   expect(() => keymap.runCommand(":write")).not.toThrow()
 }
 
+function assertExpectedTeardownDiagnostics(keymap: ReturnType<typeof createDefaultOpenTuiKeymap>): void {
+  const capture = diagnostics.captureDiagnostics(keymap)
+  const { warnings } = capture.takeWarnings()
+  expect(
+    warnings.every((warning) => warning === '[Keymap] Unknown token "<leader>" in key sequence "<leader>a" was ignored'),
+  ).toBe(true)
+  expect(capture.takeErrors().errors).toEqual([])
+}
+
 async function createStatefulAddonScenario() {
   const testSetup = await createTestRenderer({ width: 60, height: 12, kittyKeyboard: true })
   const { renderer, mockInput } = testSetup
-  const keymap = createDefaultOpenTuiKeymap(renderer)
+  const keymap = diagnostics.trackKeymap(createDefaultOpenTuiKeymap(renderer))
+  const capture = diagnostics.captureDiagnostics(keymap)
   const editor = new TextareaRenderable(renderer, {
     width: 24,
     height: 4,
@@ -93,6 +106,8 @@ async function createStatefulAddonScenario() {
 
   expect(editor.traits.suspend).toBe(true)
   expect(keymap.hasPendingSequence()).toBe(true)
+  expect(capture.takeWarnings().warnings).toEqual([])
+  expect(capture.takeErrors().errors).toEqual([])
   assertLiveEngine(renderer, keymap)
 
   return {
@@ -111,7 +126,8 @@ async function createStatefulAddonScenario() {
 async function createHookScenario() {
   const testSetup = await createTestRenderer({ width: 40, height: 10 })
   const { renderer, mockInput } = testSetup
-  const keymap = createDefaultOpenTuiKeymap(renderer)
+  const keymap = diagnostics.trackKeymap(createDefaultOpenTuiKeymap(renderer))
+  const capture = diagnostics.captureDiagnostics(keymap)
 
   const offWarning = keymap.on("warning", () => {})
   const offError = keymap.on("error", () => {})
@@ -131,6 +147,12 @@ async function createHookScenario() {
 
   mockInput.pressKey("x", { ctrl: true })
   expect(keymap.hasPendingSequence()).toBe(true)
+  expect(capture.takeWarnings().warnings).toEqual([
+    '[Keymap] Unresolved command "missing-command" for binding "z"',
+  ])
+  expect(capture.takeErrors().errors).toEqual([
+    'Invalid keymap command name "bad name": command names cannot contain whitespace',
+  ])
   assertLiveEngine(renderer, keymap)
 
   return {
@@ -152,7 +174,8 @@ async function createHookScenario() {
 async function createInfrastructureScenario() {
   const testSetup = await createTestRenderer({ width: 40, height: 10 })
   const { renderer, mockInput } = testSetup
-  const keymap = createOpenTuiKeymap(renderer)
+  const keymap = diagnostics.trackKeymap(createOpenTuiKeymap(renderer))
+  const capture = diagnostics.captureDiagnostics(keymap)
 
   const offDefaultKeys = registerDefaultKeys(keymap)
   const offEnabled = registerEnabledField(keymap)
@@ -187,6 +210,11 @@ async function createInfrastructureScenario() {
   })
 
   mockInput.pressKey("x", { ctrl: true })
+  expect(capture.takeWarnings().warnings).toEqual([
+    '[Keymap] Binding "z" has no command and no reachable continuations; it will never trigger',
+    '[Keymap] Unresolved command "missing-command" for binding "y"',
+  ])
+  expect(capture.takeErrors().errors).toEqual([])
   expect(() => keymap.getActiveKeys({ includeMetadata: true })).not.toThrow()
   expect(() => keymap.getCommands()).not.toThrow()
 
@@ -209,6 +237,10 @@ async function createInfrastructureScenario() {
 }
 
 describe("addon teardown order", () => {
+  afterEach(() => {
+    diagnostics.assertNoUnhandledDiagnostics()
+  })
+
   test("stateful addon and hook disposers stay safe in every live-order permutation", async () => {
     const orderings = permutations(["state", "timedLeader", "exCommands", "managedTextarea", "backspace"] as const)
 
@@ -224,6 +256,8 @@ describe("addon teardown order", () => {
         if (!scenario.renderer.isDestroyed) {
           scenario.renderer.destroy()
         }
+
+        assertExpectedTeardownDiagnostics(scenario.keymap)
       }
     }
   })
@@ -251,6 +285,8 @@ describe("addon teardown order", () => {
           if (!scenario.renderer.isDestroyed) {
             scenario.renderer.destroy()
           }
+
+          assertExpectedTeardownDiagnostics(scenario.keymap)
         }
       }
     }
@@ -281,6 +317,8 @@ describe("addon teardown order", () => {
           if (!scenario.renderer.isDestroyed) {
             scenario.renderer.destroy()
           }
+
+          assertExpectedTeardownDiagnostics(scenario.keymap)
         }
       }
     }
@@ -325,6 +363,8 @@ describe("addon teardown order", () => {
         if (!scenario.renderer.isDestroyed) {
           scenario.renderer.destroy()
         }
+
+        assertExpectedTeardownDiagnostics(scenario.keymap)
       }
     }
 
@@ -342,6 +382,8 @@ describe("addon teardown order", () => {
         if (!scenario.renderer.isDestroyed) {
           scenario.renderer.destroy()
         }
+
+        assertExpectedTeardownDiagnostics(scenario.keymap)
       }
     }
   })

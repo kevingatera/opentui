@@ -2,10 +2,16 @@ import { Buffer } from "node:buffer"
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { createTestRenderer, type MockInput, type TestRenderer } from "@opentui/core/testing"
 import { registerTimedLeader } from "@opentui/keymap/addons"
-import { createDefaultOpenTuiKeymap as getKeymap } from "@opentui/keymap/opentui"
+import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
+import { createDiagnosticHarness } from "../../../tests/diagnostic-harness.js"
 
 let renderer: TestRenderer
 let mockInput: MockInput
+const diagnostics = createDiagnosticHarness()
+
+function getKeymap(renderer: TestRenderer) {
+  return diagnostics.trackKeymap(createDefaultOpenTuiKeymap(renderer))
+}
 
 describe("timed leader addon", () => {
   beforeEach(async () => {
@@ -16,6 +22,7 @@ describe("timed leader addon", () => {
 
   afterEach(() => {
     renderer?.destroy()
+    diagnostics.assertNoUnhandledDiagnostics()
   })
 
   test("supports leader extensions", () => {
@@ -117,6 +124,7 @@ describe("timed leader addon", () => {
 
   test("disarms when disposed while armed", async () => {
     const keymap = getKeymap(renderer)
+    const { takeWarnings } = diagnostics.captureDiagnostics(keymap)
     const states: string[] = []
 
     const off = registerTimedLeader(keymap, {
@@ -147,6 +155,7 @@ describe("timed leader addon", () => {
     off()
     await Bun.sleep(20)
 
+    expect(takeWarnings().warnings).toEqual(['[Keymap] Unknown token "<leader>" in key sequence "<leader>a" was ignored'])
     expect(states).toEqual(["armed", "disarmed"])
   })
 

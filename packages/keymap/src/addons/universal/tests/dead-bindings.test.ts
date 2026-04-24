@@ -3,21 +3,21 @@ import type { KeyEvent, Renderable } from "@opentui/core"
 import { createTestRenderer, type MockInput, type TestRenderer } from "@opentui/core/testing"
 import { registerDeadBindingWarnings } from "@opentui/keymap/addons"
 import type { Keymap, WarningEvent } from "@opentui/keymap"
-import { createDefaultOpenTuiKeymap as getKeymap } from "@opentui/keymap/opentui"
+import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
+import { createDiagnosticHarness } from "../../../tests/diagnostic-harness.js"
 
 let renderer: TestRenderer
 let mockInput: MockInput
+const diagnostics = createDiagnosticHarness()
+
+function getKeymap(renderer: TestRenderer) {
+  return diagnostics.trackKeymap(createDefaultOpenTuiKeymap(renderer))
+}
 
 type OpenTuiKeymap = Keymap<Renderable, KeyEvent>
 
-function captureWarnings(keymap: OpenTuiKeymap): { events: WarningEvent[]; warnings: string[] } {
-  const events: WarningEvent[] = []
-  const warnings: string[] = []
-  keymap.on("warning", (event) => {
-    events.push(event)
-    warnings.push(event.message)
-  })
-  return { events, warnings }
+function captureWarnings(keymap: OpenTuiKeymap) {
+  return diagnostics.captureDiagnostics(keymap)
 }
 
 describe("dead binding warnings addon", () => {
@@ -29,22 +29,24 @@ describe("dead binding warnings addon", () => {
 
   afterEach(() => {
     renderer.destroy()
+    diagnostics.assertNoUnhandledDiagnostics()
   })
 
   test("warns when an exact binding has no command and no reachable continuations", () => {
     const keymap = getKeymap(renderer)
-    const { events, warnings } = captureWarnings(keymap)
+    const capture = captureWarnings(keymap)
     registerDeadBindingWarnings(keymap)
 
     keymap.registerLayer({
       bindings: [{ key: "x" }],
     })
 
+    const { warnings, warningEvents } = capture.takeWarnings()
     expect(warnings).toEqual([
       '[Keymap] Binding "x" has no command and no reachable continuations; it will never trigger',
     ])
-    expect(events).toHaveLength(1)
-    expect(events[0]).toMatchObject({
+    expect(warningEvents).toHaveLength(1)
+    expect(warningEvents[0]).toMatchObject({
       code: "dead-binding",
       warning: {
         binding: { key: "x" },
@@ -67,21 +69,21 @@ describe("dead binding warnings addon", () => {
 
   test("warns for release bindings without commands", () => {
     const keymap = getKeymap(renderer)
-    const { warnings } = captureWarnings(keymap)
+    const capture = captureWarnings(keymap)
     registerDeadBindingWarnings(keymap)
 
     keymap.registerLayer({
       bindings: [{ key: "x", event: "release" }],
     })
 
-    expect(warnings).toEqual([
+    expect(capture.takeWarnings().warnings).toEqual([
       '[Keymap] Binding "x" has no command and no reachable continuations; it will never trigger',
     ])
   })
 
   test("deduplicates warnings across token recompilation", () => {
     const keymap = getKeymap(renderer)
-    const { warnings } = captureWarnings(keymap)
+    const capture = captureWarnings(keymap)
     registerDeadBindingWarnings(keymap)
 
     keymap.registerLayer({
@@ -90,7 +92,7 @@ describe("dead binding warnings addon", () => {
 
     keymap.registerToken({ name: "<leader>", key: { name: "space" } })
 
-    expect(warnings).toEqual([
+    expect(capture.takeWarnings().warnings).toEqual([
       '[Keymap] Unknown token "<leader>" in key sequence "<leader>x" was ignored',
       '[Keymap] Binding "x" has no command and no reachable continuations; it will never trigger',
     ])

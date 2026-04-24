@@ -4,9 +4,11 @@ import { createTestRenderer, type MockInput, type TestRenderer } from "@opentui/
 import { Keymap } from "@opentui/keymap"
 import { registerDefaultKeys } from "@opentui/keymap/addons"
 import { createOpenTuiKeymapHost } from "@opentui/keymap/opentui"
+import { createDiagnosticHarness } from "../../../tests/diagnostic-harness.js"
 
 let renderer: TestRenderer
 let mockInput: MockInput
+const diagnostics = createDiagnosticHarness()
 
 describe("default parser addon", () => {
   beforeEach(async () => {
@@ -17,27 +19,25 @@ describe("default parser addon", () => {
 
   afterEach(() => {
     renderer.destroy()
+    diagnostics.assertNoUnhandledDiagnostics()
   })
 
   test("bare keymaps do not parse string bindings until the addon is registered", () => {
-    const keymap = new Keymap<Renderable, KeyEvent>(createOpenTuiKeymapHost(renderer))
-    const errors: string[] = []
-
-    keymap.on("error", (event) => {
-      errors.push(event.message)
-    })
+    const keymap = diagnostics.trackKeymap(new Keymap<Renderable, KeyEvent>(createOpenTuiKeymapHost(renderer)))
+    const { takeErrors } = diagnostics.captureDiagnostics(keymap)
 
     keymap.registerLayer({
       commands: [{ name: "run", run() {} }],
       bindings: [{ key: "x", cmd: "run" }],
     })
 
-    expect(errors).toEqual(["No keymap binding parsers are registered"])
+    expect(takeErrors().errors).toEqual(["No keymap binding parsers are registered"])
     expect(keymap.getActiveKeys()).toEqual([])
   })
 
   test("registerDefaultKeys restores the standard parser and event matching", () => {
-    const keymap = new Keymap<Renderable, KeyEvent>(createOpenTuiKeymapHost(renderer))
+    const keymap = diagnostics.trackKeymap(new Keymap<Renderable, KeyEvent>(createOpenTuiKeymapHost(renderer)))
+    const { takeWarnings } = diagnostics.captureDiagnostics(keymap)
     const calls: string[] = []
 
     registerDefaultKeys(keymap)
@@ -58,11 +58,12 @@ describe("default parser addon", () => {
     mockInput.pressKey("x", { ctrl: true })
     mockInput.pressKey("d")
 
+    expect(takeWarnings().warnings).toEqual(['[Keymap] Unknown token "<leader>" in key sequence "<leader>d" was ignored'])
     expect(calls).toEqual(["run"])
   })
 
   test('registerDefaultKeys keeps the " " to "space" mapping in the addon, not the engine', () => {
-    const keymap = new Keymap<Renderable, KeyEvent>(createOpenTuiKeymapHost(renderer))
+    const keymap = diagnostics.trackKeymap(new Keymap<Renderable, KeyEvent>(createOpenTuiKeymapHost(renderer)))
     const calls: string[] = []
 
     registerDefaultKeys(keymap)
@@ -85,7 +86,7 @@ describe("default parser addon", () => {
   })
 
   test("registerDefaultKeys parses every named single-stroke key emitted by terminal hosts", () => {
-    const keymap = new Keymap<Renderable, KeyEvent>(createOpenTuiKeymapHost(renderer))
+    const keymap = diagnostics.trackKeymap(new Keymap<Renderable, KeyEvent>(createOpenTuiKeymapHost(renderer)))
 
     registerDefaultKeys(keymap)
 

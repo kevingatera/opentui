@@ -16,10 +16,12 @@ import {
   type ReactiveMatcher,
   type WarningEvent,
 } from "../index.js"
-import { createDefaultOpenTuiKeymap as getKeymap, createOpenTuiKeymap } from "../opentui.js"
+import { createDefaultOpenTuiKeymap, createOpenTuiKeymap } from "../opentui.js"
+import { createDiagnosticHarness } from "./diagnostic-harness.js"
 
 let renderer: TestRenderer
 let mockInput: MockInput
+const diagnostics = createDiagnosticHarness()
 
 type OpenTuiKeymap = Keymap<Renderable, KeyEvent>
 
@@ -44,9 +46,17 @@ function getActiveKeyNames(keymap: OpenTuiKeymap): string[] {
 }
 
 function getParserKeymap(): OpenTuiKeymap {
-  const keymap = createOpenTuiKeymap(renderer)
+  const keymap = diagnostics.trackKeymap(createOpenTuiKeymap(renderer))
   addons.registerDefaultKeys(keymap)
   return keymap
+}
+
+function getKeymap(renderer: TestRenderer): OpenTuiKeymap {
+  return diagnostics.trackKeymap(createDefaultOpenTuiKeymap(renderer))
+}
+
+function createBareKeymap(renderer: TestRenderer): OpenTuiKeymap {
+  return diagnostics.trackKeymap(createOpenTuiKeymap(renderer))
 }
 
 function getCommand(keymap: OpenTuiKeymap, name: string) {
@@ -70,22 +80,10 @@ function captureDiagnostics(keymap: OpenTuiKeymap): {
   errorEvents: ErrorEvent[]
   warnings: string[]
   errors: string[]
+  takeWarnings: () => { warnings: string[]; warningEvents: WarningEvent[] }
+  takeErrors: () => { errors: string[]; errorEvents: ErrorEvent[] }
 } {
-  const warningEvents: WarningEvent[] = []
-  const errorEvents: ErrorEvent[] = []
-  const warnings: string[] = []
-  const errors: string[] = []
-
-  keymap.on("warning", (event) => {
-    warningEvents.push(event)
-    warnings.push(event.message)
-  })
-  keymap.on("error", (event) => {
-    errorEvents.push(event)
-    errors.push(event.message)
-  })
-
-  return { warningEvents, errorEvents, warnings, errors }
+  return diagnostics.captureDiagnostics(keymap)
 }
 
 function matchEventAs(ctx: EventMatchResolverContext, event: KeyEvent, name: string): symbol {
@@ -193,11 +191,12 @@ describe("keymap", () => {
 
   afterEach(() => {
     renderer?.destroy()
+    diagnostics.assertNoUnhandledDiagnostics()
   })
 
   test("createOpenTuiKeymap returns a fresh keymap for each call", () => {
-    const first = createOpenTuiKeymap(renderer)
-    const second = createOpenTuiKeymap(renderer)
+    const first = createBareKeymap(renderer)
+    const second = createBareKeymap(renderer)
 
     expect(first).not.toBe(second)
   })
@@ -210,7 +209,8 @@ describe("keymap", () => {
   })
 
   test("createOpenTuiKeymap stays bare until addons are installed", () => {
-    const keymap = createOpenTuiKeymap(renderer)
+    const keymap = createBareKeymap(renderer)
+    const { takeErrors } = captureDiagnostics(keymap)
     const calls: string[] = []
 
     keymap.registerLayer({
@@ -233,6 +233,7 @@ describe("keymap", () => {
     mockInput.pressKey("x")
     expect(calls).toEqual([])
     expect(keymap.getActiveKeys()).toEqual([])
+    expect(takeErrors().errors).toEqual(["No keymap binding parsers are registered"])
 
     addons.registerDefaultKeys(keymap)
     keymap.registerLayer({
@@ -777,7 +778,7 @@ describe("keymap", () => {
 
   test("treats thrown command resolvers as errors without emitting unresolved warnings", () => {
     const keymap = getKeymap(renderer)
-    const { warnings, errors } = captureDiagnostics(keymap)
+    const { takeWarnings, takeErrors } = captureDiagnostics(keymap)
 
     keymap.appendCommandResolver(() => {
       throw new Error("resolver boom")
@@ -790,8 +791,9 @@ describe("keymap", () => {
     }).not.toThrow()
 
     expect(getActiveKey(keymap, "x")?.command).toBeUndefined()
-    expect(warnings).toEqual([])
+    expect(takeWarnings().warnings).toEqual([])
     expect(keymap.runCommand("external-run")).toEqual({ ok: false, reason: "error" })
+    const { errors } = takeErrors()
     expect(errors).toHaveLength(1)
     expect(errors.every((message) => message.includes('Error in command resolver for "external-run":'))).toBe(true)
   })
@@ -929,6 +931,7 @@ describe("keymap", () => {
 
   test("createKeyMatcher uses the keymap's current parser and token configuration", () => {
     const keymap = getKeymap(renderer)
+    const { takeWarnings } = captureDiagnostics(keymap)
 
     keymap.clearBindingParsers()
     keymap.appendBindingParser(createBracketTokenParser({ preserveDisplayCase: true }))
@@ -945,6 +948,8 @@ describe("keymap", () => {
     keymap.registerLayer({
       bindings: [{ key: "[Leader]d", cmd: "case-token" }],
     })
+
+    expect(takeWarnings().warnings).toEqual(['[Keymap] Unknown token "[leader]" in key sequence "[Leader]d" was ignored'])
 
     keymap.registerToken({ name: "[Leader]", key: { name: "x", ctrl: true } })
 
@@ -1250,7 +1255,7 @@ describe("keymap", () => {
   test("binding expanders can use layer fields for optional emacs-style key strings", () => {
     const keymap = getKeymap(renderer)
     const calls: string[] = []
-    const { errors } = captureDiagnostics(keymap)
+    const { takeErrors } = captureDiagnostics(keymap)
 
     keymap.registerLayerFields({
       emacsStyle(value) {
@@ -1313,7 +1318,7 @@ describe("keymap", () => {
       })
     }).not.toThrow()
 
-    expect(errors).toEqual(['Invalid key "ctrl+x ctrl+s": multiple key names are not supported'])
+    expect(takeErrors().errors).toEqual(['Invalid key "ctrl+x ctrl+s": multiple key names are not supported'])
   })
 
   test("clearBindingExpanders allows replacing the expander chain", () => {
@@ -1380,6 +1385,7 @@ describe("keymap", () => {
 
   test("can dispose binding transformers to stop transforming future layer registrations", () => {
     const keymap = getKeymap(renderer)
+    const { takeWarnings } = captureDiagnostics(keymap)
     const calls: string[] = []
 
     const offTransformer = keymap.appendBindingTransformer((binding, ctx) => {
@@ -1420,6 +1426,7 @@ describe("keymap", () => {
       bindings: [{ key: "y", blocked: true, cmd: "active" }],
     })
 
+    expect(takeWarnings().warnings).toEqual(['[Keymap] Unknown binding field "blocked" was ignored'])
     mockInput.pressKey("y")
     expect(calls).toEqual(["active"])
   })
@@ -1538,7 +1545,7 @@ describe("keymap", () => {
 
   test("skips bindings when a binding expander returns an empty expansion", () => {
     const keymap = getKeymap(renderer)
-    const { errors } = captureDiagnostics(keymap)
+    const { takeErrors } = captureDiagnostics(keymap)
 
     keymap.appendBindingExpander(() => {
       return []
@@ -1550,13 +1557,13 @@ describe("keymap", () => {
       })
     }).not.toThrow()
 
-    expect(errors).toEqual(['Keymap binding expander must return at least one key sequence for "x"'])
+    expect(takeErrors().errors).toEqual(['Keymap binding expander must return at least one key sequence for "x"'])
     expect(getActiveKey(keymap, "x")).toBeUndefined()
   })
 
   test("skips bindings when a binding parser does not advance the input", () => {
     const keymap = getKeymap(renderer)
-    const { errors } = captureDiagnostics(keymap)
+    const { takeErrors } = captureDiagnostics(keymap)
 
     keymap.clearBindingParsers()
     keymap.appendBindingParser(() => {
@@ -1569,7 +1576,7 @@ describe("keymap", () => {
       })
     }).not.toThrow()
 
-    expect(errors).toEqual(['Keymap binding parser must advance the input for "x" at index 0'])
+    expect(takeErrors().errors).toEqual(['Keymap binding parser must advance the input for "x" at index 0'])
     expect(getActiveKey(keymap, "x")).toBeUndefined()
   })
 
@@ -2300,6 +2307,7 @@ describe("keymap", () => {
 
   test("treats thrown binding runtime matchers as non-matching", () => {
     const keymap = getKeymap(renderer)
+    const { takeErrors } = captureDiagnostics(keymap)
     const calls: string[] = []
 
     keymap.registerBindingFields({
@@ -2334,6 +2342,9 @@ describe("keymap", () => {
 
     mockInput.pressKey("x")
 
+    const { errors } = takeErrors()
+    expect(errors.length).toBeGreaterThan(0)
+    expect(errors.every((message) => message === "[Keymap] Error evaluating runtime matcher from field active:")).toBe(true)
     expect(calls).toEqual([])
   })
 
@@ -2713,6 +2724,7 @@ describe("keymap", () => {
 
   test("reactive matchers on binding fields: re-subscribe after token-driven recompile", () => {
     const keymap = getKeymap(renderer)
+    const { takeWarnings } = captureDiagnostics(keymap)
     const enabled = createReactiveBoolean(true)
 
     keymap.registerBindingFields({
@@ -2736,6 +2748,7 @@ describe("keymap", () => {
     // re-subscribe.
     offToken()
 
+    expect(takeWarnings().warnings).toEqual(['[Keymap] Unknown token "<leader>" in key sequence "<leader>a" was ignored'])
     expect(enabled.disposeCalls).toBe(disposesBefore + 1)
     expect(enabled.subscribeCalls).toBe(subscribesBefore + 1)
     expect(enabled.subscriptions).toBe(1)
@@ -3498,7 +3511,7 @@ describe("keymap", () => {
 
   test("getCommands treats thrown filter predicates as errors and returns no matches", () => {
     const keymap = getKeymap(renderer)
-    const { errors } = captureDiagnostics(keymap)
+    const { takeErrors } = captureDiagnostics(keymap)
 
     keymap.registerLayer({
       commands: [
@@ -3518,9 +3531,7 @@ describe("keymap", () => {
     }).not.toThrow()
 
     expect(queryResult).toEqual([])
-    expect(errors).toEqual(["[Keymap] Error in command query filter:", "[Keymap] Error in command query filter:"])
-
-    errors.length = 0
+    expect(takeErrors().errors).toEqual(["[Keymap] Error in command query filter:", "[Keymap] Error in command query filter:"])
 
     expect(() => {
       queryResult = keymap.getCommands({
@@ -3533,7 +3544,7 @@ describe("keymap", () => {
     }).not.toThrow()
 
     expect(queryResult).toEqual([])
-    expect(errors).toEqual(["[Keymap] Error in command query filter:", "[Keymap] Error in command query filter:"])
+    expect(takeErrors().errors).toEqual(["[Keymap] Error in command query filter:", "[Keymap] Error in command query filter:"])
   })
 
   test("getCommands returns immutable metadata records across repeated reads", () => {
@@ -4405,7 +4416,7 @@ describe("keymap", () => {
 
   test("skips bindings with conflicting requirements from typed fields", () => {
     const keymap = getKeymap(renderer)
-    const { errors } = captureDiagnostics(keymap)
+    const { takeErrors } = captureDiagnostics(keymap)
 
     keymap.registerBindingFields({
       mode(value, ctx) {
@@ -4422,13 +4433,13 @@ describe("keymap", () => {
       })
     }).not.toThrow()
 
-    expect(errors).toEqual(['Conflicting keymap requirement for "vim.mode" from field state'])
+    expect(takeErrors().errors).toEqual(['Conflicting keymap requirement for "vim.mode" from field state'])
     expect(getActiveKey(keymap, "x")).toBeUndefined()
   })
 
   test("skips layers with conflicting requirements from typed layer fields", () => {
     const keymap = getKeymap(renderer)
-    const { errors } = captureDiagnostics(keymap)
+    const { takeErrors } = captureDiagnostics(keymap)
 
     keymap.registerLayerFields({
       mode(value, ctx) {
@@ -4447,13 +4458,13 @@ describe("keymap", () => {
       })
     }).not.toThrow()
 
-    expect(errors).toEqual(['Conflicting keymap requirement for "vim.mode" from field state'])
+    expect(takeErrors().errors).toEqual(['Conflicting keymap requirement for "vim.mode" from field state'])
     expect(getActiveKey(keymap, "x")).toBeUndefined()
   })
 
   test("skips bindings with conflicting attributes from typed binding fields", () => {
     const keymap = getParserKeymap()
-    const { errors } = captureDiagnostics(keymap)
+    const { takeErrors } = captureDiagnostics(keymap)
 
     keymap.registerBindingFields({
       desc(value, ctx) {
@@ -4470,12 +4481,13 @@ describe("keymap", () => {
       })
     }).not.toThrow()
 
-    expect(errors).toEqual(['Conflicting keymap attribute for "label" from field title'])
+    expect(takeErrors().errors).toEqual(['Conflicting keymap attribute for "label" from field title'])
     expect(getActiveKey(keymap, "x")).toBeUndefined()
   })
 
   test("ignores unknown binding fields", () => {
     const keymap = getKeymap(renderer)
+    const { takeWarnings } = captureDiagnostics(keymap)
     const calls: string[] = []
 
     keymap.registerLayer({
@@ -4499,11 +4511,13 @@ describe("keymap", () => {
 
     mockInput.pressKey("x")
 
+    expect(takeWarnings().warnings).toEqual(['[Keymap] Unknown binding field "mode" was ignored'])
     expect(calls).toEqual(["noop"])
   })
 
   test("ignores unknown layer fields", () => {
     const keymap = getKeymap(renderer)
+    const { takeWarnings } = captureDiagnostics(keymap)
     const calls: string[] = []
 
     keymap.registerLayer({
@@ -4528,6 +4542,7 @@ describe("keymap", () => {
 
     mockInput.pressKey("x")
 
+    expect(takeWarnings().warnings).toEqual(['[Keymap] Unknown layer field "mode" was ignored'])
     expect(calls).toEqual(["noop"])
   })
 
@@ -4573,7 +4588,7 @@ describe("keymap", () => {
 
   test("emits warnings only for unknown binding and layer fields", () => {
     const keymap = getKeymap(renderer)
-    const { warnings } = captureDiagnostics(keymap)
+    const { takeWarnings } = captureDiagnostics(keymap)
 
     keymap.registerLayer({
       commands: [
@@ -4598,7 +4613,7 @@ describe("keymap", () => {
       ],
     })
 
-    expect(warnings).toEqual([
+    expect(takeWarnings().warnings).toEqual([
       '[Keymap] Unknown layer field "mode" was ignored',
       '[Keymap] Unknown binding field "when" was ignored',
     ])
@@ -4606,7 +4621,7 @@ describe("keymap", () => {
 
   test("emits unknown token warnings", () => {
     const keymap = getKeymap(renderer)
-    const { warningEvents, warnings } = captureDiagnostics(keymap)
+    const capture = captureDiagnostics(keymap)
 
     keymap.registerLayer({ commands: [{ name: "noop", run() {} }] })
     keymap.registerLayer({
@@ -4616,6 +4631,7 @@ describe("keymap", () => {
       ],
     })
 
+    const { warnings, warningEvents } = capture.takeWarnings()
     expect(warnings).toEqual(['[Keymap] Unknown token "<leader>" in key sequence "<leader>x" was ignored'])
     expect(warningEvents).toEqual([
       {
@@ -4694,6 +4710,7 @@ describe("keymap", () => {
 
   test("registerLayerAnalyzer reruns on token-driven recompilation", () => {
     const keymap = getKeymap(renderer)
+    const { takeWarnings } = captureDiagnostics(keymap)
     const calls: string[] = []
 
     keymap.appendLayerAnalyzer((ctx) => {
@@ -4704,6 +4721,8 @@ describe("keymap", () => {
       bindings: [{ key: "<leader>x", cmd: () => {} }],
     })
 
+    expect(takeWarnings().warnings).toEqual(['[Keymap] Unknown token "<leader>" in key sequence "<leader>x" was ignored'])
+
     keymap.registerToken({ name: "<leader>", key: { name: "space" } })
 
     expect(calls).toEqual(["0:x", "0:<leader>"])
@@ -4711,7 +4730,7 @@ describe("keymap", () => {
 
   test("registerLayerAnalyzer warnings flow through warning events", () => {
     const keymap = getKeymap(renderer)
-    const { warningEvents, warnings } = captureDiagnostics(keymap)
+    const capture = captureDiagnostics(keymap)
 
     keymap.appendLayerAnalyzer((ctx) => {
       ctx.warnOnce(`layer:${ctx.order}`, "layer-warning", { order: ctx.order }, `layer ${ctx.order} warning`)
@@ -4721,13 +4740,14 @@ describe("keymap", () => {
       bindings: [{ key: "x", cmd: () => {} }],
     })
 
+    const { warnings, warningEvents } = capture.takeWarnings()
     expect(warnings).toEqual(["layer 0 warning"])
     expect(warningEvents).toEqual([{ code: "layer-warning", message: "layer 0 warning", warning: { order: 0 } }])
   })
 
   test("registerLayerAnalyzer errors flow through error events", () => {
     const keymap = getKeymap(renderer)
-    const { errorEvents, errors } = captureDiagnostics(keymap)
+    const capture = captureDiagnostics(keymap)
 
     keymap.appendLayerAnalyzer(() => {
       throw new Error("analysis boom")
@@ -4737,6 +4757,7 @@ describe("keymap", () => {
       bindings: [{ key: "x", cmd: () => {} }],
     })
 
+    const { errors, errorEvents } = capture.takeErrors()
     expect(errors).toEqual(["[Keymap] Error in layer analyzer:"])
     expect(errorEvents).toHaveLength(1)
     expect(errorEvents[0]?.code).toBe("layer-analyzer-error")
@@ -4745,7 +4766,7 @@ describe("keymap", () => {
 
   test("emits runtime matcher failures as errors", () => {
     const keymap = getKeymap(renderer)
-    const { warnings, errors } = captureDiagnostics(keymap)
+    const { takeWarnings, takeErrors } = captureDiagnostics(keymap)
 
     keymap.registerBindingFields({
       active(value, ctx) {
@@ -4765,8 +4786,8 @@ describe("keymap", () => {
     })
 
     expect(() => keymap.getActiveKeys()).not.toThrow()
-    expect(errors.some((message) => message.includes("Error evaluating runtime matcher from field active:"))).toBe(true)
-    expect(warnings).toEqual([])
+    expect(takeErrors().errors.some((message) => message.includes("Error evaluating runtime matcher from field active:"))).toBe(true)
+    expect(takeWarnings().warnings).toEqual([])
   })
 
   test("ignores thrown warning and error listeners while notifying remaining listeners", () => {
@@ -4805,6 +4826,7 @@ describe("keymap", () => {
 
   test("can unsubscribe warning and error listeners", () => {
     const keymap = getKeymap(renderer)
+    const { takeWarnings, takeErrors } = captureDiagnostics(keymap)
     const warnings: string[] = []
     const errors: string[] = []
     const originalWarn = console.warn
@@ -4834,10 +4856,12 @@ describe("keymap", () => {
 
     expect(warnings).toEqual([])
     expect(errors).toEqual([])
+    expect(takeWarnings().warnings).toEqual(['[Keymap] Unknown layer field "mode" was ignored'])
+    expect(takeErrors().errors).toEqual(["Invalid keymap command: command cannot be empty"])
   })
 
   test("falls back to console.warn when no warning listener is registered", () => {
-    const keymap = getKeymap(renderer)
+    const keymap = createDefaultOpenTuiKeymap(renderer)
     const originalWarn = console.warn
     const warnings: unknown[][] = []
     console.warn = (...args: unknown[]) => {
@@ -4857,7 +4881,7 @@ describe("keymap", () => {
   })
 
   test("falls back to console.error when no error listener is registered", () => {
-    const keymap = getKeymap(renderer)
+    const keymap = createDefaultOpenTuiKeymap(renderer)
     const originalError = console.error
     const errors: unknown[][] = []
     console.error = (...args: unknown[]) => {
@@ -4877,7 +4901,7 @@ describe("keymap", () => {
   })
 
   test("falls back to console.error with cause when no error listener is registered", () => {
-    const keymap = getKeymap(renderer)
+    const keymap = createDefaultOpenTuiKeymap(renderer)
     const cause = new Error("filter boom")
     const originalError = console.error
     const errors: unknown[][] = []
@@ -4941,7 +4965,7 @@ describe("keymap", () => {
 
   test("ignores reserved command field registrations", () => {
     const keymap = getKeymap(renderer)
-    const { errors } = captureDiagnostics(keymap)
+    const { takeErrors } = captureDiagnostics(keymap)
 
     expect(() => {
       keymap.registerCommandFields({
@@ -4949,12 +4973,12 @@ describe("keymap", () => {
       })
     }).not.toThrow()
 
-    expect(errors).toEqual(['Keymap command field "name" is reserved'])
+    expect(takeErrors().errors).toEqual(['Keymap command field "name" is reserved'])
   })
 
   test("ignores reserved layer field registrations", () => {
     const keymap = getKeymap(renderer)
-    const { errors } = captureDiagnostics(keymap)
+    const { takeErrors } = captureDiagnostics(keymap)
 
     expect(() => {
       keymap.registerLayerFields({
@@ -4962,12 +4986,12 @@ describe("keymap", () => {
       })
     }).not.toThrow()
 
-    expect(errors).toEqual(['Keymap layer field "targetMode" is reserved'])
+    expect(takeErrors().errors).toEqual(['Keymap layer field "targetMode" is reserved'])
   })
 
   test("ignores reserved and duplicate binding field registrations", () => {
     const keymap = getKeymap(renderer)
-    const { errors } = captureDiagnostics(keymap)
+    const { takeErrors } = captureDiagnostics(keymap)
 
     keymap.registerBindingFields({
       active() {},
@@ -4980,7 +5004,7 @@ describe("keymap", () => {
       })
     }).not.toThrow()
 
-    expect(errors).toEqual([
+    expect(takeErrors().errors).toEqual([
       'Keymap binding field "key" is reserved',
       'Keymap binding field "active" is already registered',
     ])
@@ -4988,7 +5012,7 @@ describe("keymap", () => {
 
   test("skips commands with conflicting attributes from typed command fields", () => {
     const keymap = getParserKeymap()
-    const { errors } = captureDiagnostics(keymap)
+    const { takeErrors } = captureDiagnostics(keymap)
 
     keymap.registerCommandFields({
       desc(value, ctx) {
@@ -5012,13 +5036,13 @@ describe("keymap", () => {
       })
     }).not.toThrow()
 
-    expect(errors).toEqual(['Conflicting keymap attribute for "label" from field title'])
+    expect(takeErrors().errors).toEqual(['Conflicting keymap attribute for "label" from field title'])
     expect(getCommand(keymap, "save-file")).toBeUndefined()
   })
 
   test("keeps earlier bindings when a later binding is both an exact key and a prefix", () => {
     const keymap = getKeymap(renderer)
-    const { errors } = captureDiagnostics(keymap)
+    const { takeErrors } = captureDiagnostics(keymap)
 
     keymap.registerLayer({
       commands: [
@@ -5036,7 +5060,7 @@ describe("keymap", () => {
       })
     }).not.toThrow()
 
-    expect(errors).toEqual([
+    expect(takeErrors().errors).toEqual([
       "Keymap bindings cannot use the same sequence as both an exact match and a prefix in the same layer",
     ])
     expect(getActiveKey(keymap, "d")?.command).toBe("one")
@@ -5149,7 +5173,7 @@ describe("keymap", () => {
 
   test("skips release bindings with multiple strokes", () => {
     const keymap = getKeymap(renderer)
-    const { errors } = captureDiagnostics(keymap)
+    const { takeErrors } = captureDiagnostics(keymap)
 
     keymap.registerLayer({ commands: [{ name: "noop", run() {} }] })
 
@@ -5159,7 +5183,7 @@ describe("keymap", () => {
       })
     }).not.toThrow()
 
-    expect(errors).toEqual(["Keymap release bindings only support a single key stroke"])
+    expect(takeErrors().errors).toEqual(["Keymap release bindings only support a single key stroke"])
     expect(getActiveKey(keymap, "d")).toBeUndefined()
   })
 
@@ -5653,28 +5677,32 @@ describe("keymap", () => {
   test("emits pending sequence listener failures and continues notifying remaining listeners", () => {
     const changes: string[] = []
     const keymap = getKeymap(renderer)
-    const { errors } = captureDiagnostics(keymap)
+    const { takeErrors } = captureDiagnostics(keymap)
 
     keymap.registerLayer({ commands: [{ name: "delete-ca", run() {} }] })
     keymap.registerLayer({
       bindings: [{ key: "dca", cmd: "delete-ca" }],
     })
 
-    keymap.on("pendingSequence", () => {
+    const offBadListener = keymap.on("pendingSequence", () => {
       throw new Error("boom")
     })
-    keymap.on("pendingSequence", (sequence) => {
+    const offGoodListener = keymap.on("pendingSequence", (sequence) => {
       changes.push(stringifyKeySequence(sequence, { preferDisplay: true }))
     })
 
     mockInput.pressKey("d")
 
     expect(changes).toEqual(["d"])
-    expect(errors.some((message) => message.includes("Error in pending sequence listener:"))).toBe(true)
+    expect(takeErrors().errors.some((message) => message.includes("Error in pending sequence listener:"))).toBe(true)
+
+    offBadListener()
+    offGoodListener()
   })
 
   test("recompiles tokenized layers when tokens are registered and disposed", () => {
     const keymap = getKeymap(renderer)
+    const { takeWarnings } = captureDiagnostics(keymap)
     const calls: string[] = []
 
     keymap.registerLayer({
@@ -5691,6 +5719,8 @@ describe("keymap", () => {
     keymap.registerLayer({
       bindings: [{ key: "<leader>a", cmd: "leader-action" }],
     })
+
+    expect(takeWarnings().warnings).toEqual(['[Keymap] Unknown token "<leader>" in key sequence "<leader>a" was ignored'])
 
     expect(getActiveKeyNames(keymap)).toEqual(["a"])
 
@@ -5725,6 +5755,7 @@ describe("keymap", () => {
 
   test("keeps token-only bindings inactive until the token is registered", () => {
     const keymap = getKeymap(renderer)
+    const { takeWarnings } = captureDiagnostics(keymap)
     const calls: string[] = []
 
     keymap.registerLayer({
@@ -5742,6 +5773,8 @@ describe("keymap", () => {
       bindings: [{ key: "<leader>", cmd: "leader-only" }],
     })
 
+    expect(takeWarnings().warnings).toEqual(['[Keymap] Unknown token "<leader>" in key sequence "<leader>" was ignored'])
+
     expect(keymap.getActiveKeys()).toEqual([])
 
     keymap.registerToken({
@@ -5758,11 +5791,14 @@ describe("keymap", () => {
 
   test("clears pending tokenized sequences when token registration recompiles their layer", () => {
     const keymap = getKeymap(renderer)
+    const { takeWarnings } = captureDiagnostics(keymap)
 
     keymap.registerLayer({ commands: [{ name: "leader-action", run() {} }] })
     keymap.registerLayer({
       bindings: [{ key: "<leader>ab", cmd: "leader-action" }],
     })
+
+    expect(takeWarnings().warnings).toEqual(['[Keymap] Unknown token "<leader>" in key sequence "<leader>ab" was ignored'])
 
     mockInput.pressKey("a")
 
@@ -5784,7 +5820,7 @@ describe("keymap", () => {
 
   test("skips conflicting tokenized bindings when token registration creates a prefix conflict", () => {
     const keymap = getKeymap(renderer)
-    const { errors } = captureDiagnostics(keymap)
+    const { takeErrors, takeWarnings } = captureDiagnostics(keymap)
 
     keymap.registerLayer({
       commands: [
@@ -5800,6 +5836,8 @@ describe("keymap", () => {
       ],
     })
 
+    expect(takeWarnings().warnings).toEqual(['[Keymap] Unknown token "<leader>" in key sequence "<leader>b" was ignored'])
+
     expect(getActiveKeyNames(keymap)).toEqual(["a", "b"])
 
     expect(() => {
@@ -5809,7 +5847,7 @@ describe("keymap", () => {
       })
     }).not.toThrow()
 
-    expect(errors).toEqual([
+    expect(takeErrors().errors).toEqual([
       "Keymap bindings cannot use the same sequence as both an exact match and a prefix in the same layer",
     ])
     expect(getActiveKeyNames(keymap)).toEqual(["a"])
@@ -5817,6 +5855,7 @@ describe("keymap", () => {
 
   test("can dispose layer, binding, and command field registrations", () => {
     const keymap = getKeymap(renderer)
+    const { takeWarnings } = captureDiagnostics(keymap)
 
     keymap.registerLayer({ commands: [{ name: "noop", run() {} }] })
 
@@ -5874,6 +5913,10 @@ describe("keymap", () => {
       bindings: [{ key: "z", cmd: "noop-with-desc" }],
     })
 
+    expect(takeWarnings().warnings).toEqual([
+      '[Keymap] Unknown layer field "mode" was ignored',
+      '[Keymap] Unknown binding field "mode" was ignored',
+    ])
     expect(getActiveKeyNames(keymap)).toContain("z")
   })
 
@@ -5955,7 +5998,7 @@ describe("keymap", () => {
 
   test("validates command names and command inputs", () => {
     const keymap = getKeymap(renderer)
-    const { errors } = captureDiagnostics(keymap)
+    const { takeErrors } = captureDiagnostics(keymap)
 
     expect(() => {
       keymap.registerLayer({ commands: [{ name: "", run() {} }] })
@@ -5971,7 +6014,7 @@ describe("keymap", () => {
       })
     }).not.toThrow()
 
-    expect(errors).toEqual([
+    expect(takeErrors().errors).toEqual([
       "Invalid keymap command name: name cannot be empty",
       'Invalid keymap command name "bad name": command names cannot contain whitespace',
       "Invalid keymap command: command cannot be empty",
@@ -5983,12 +6026,12 @@ describe("keymap", () => {
 
   test("requires registered token keys to resolve to a single key stroke", () => {
     const keymap = getKeymap(renderer)
-    const { errors } = captureDiagnostics(keymap)
+    const { takeErrors } = captureDiagnostics(keymap)
 
     expect(() => {
       keymap.registerToken({ name: "<leader>", key: "dd" })
     }).not.toThrow()
 
-    expect(errors).toEqual(['Invalid key "dd": expected a single key stroke'])
+    expect(takeErrors().errors).toEqual(['Invalid key "dd": expected a single key stroke'])
   })
 })

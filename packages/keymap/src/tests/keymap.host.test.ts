@@ -1,6 +1,9 @@
-import { beforeEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import * as addons from "../addons/index.js"
 import { Keymap, type KeymapEvent, type KeymapHost } from "../index.js"
+import { createDiagnosticHarness } from "./diagnostic-harness.js"
+
+const diagnostics = createDiagnosticHarness()
 
 class FakeTarget {
   public parent: FakeTarget | null = null
@@ -183,8 +186,13 @@ describe("generic keymap host", () => {
 
   beforeEach(() => {
     host = new FakeHost()
-    keymap = new Keymap(host)
+    keymap = diagnostics.trackKeymap(new Keymap(host))
     addons.registerDefaultKeys(keymap)
+  })
+
+  afterEach(() => {
+    host?.destroy()
+    diagnostics.assertNoUnhandledDiagnostics()
   })
 
   test("dispatches bindings through a host without OpenTUI types", () => {
@@ -243,7 +251,7 @@ describe("generic keymap host", () => {
         return host.createCommandEvent()
       },
     }
-    const localKeymap = new Keymap(hostWithoutDestroy)
+    const localKeymap = diagnostics.trackKeymap(new Keymap(hostWithoutDestroy))
     addons.registerDefaultKeys(localKeymap)
     const calls: string[] = []
 

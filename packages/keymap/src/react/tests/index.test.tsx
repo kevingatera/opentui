@@ -16,6 +16,9 @@ import {
 import { createRoot, type Root } from "@opentui/react"
 import { act, type ReactNode } from "react"
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react"
+import { createDiagnosticHarness } from "../../tests/diagnostic-harness.js"
+
+const diagnostics = createDiagnosticHarness()
 
 function setIsReactActEnvironment(isReactActEnvironment: boolean) {
   // @ts-expect-error test environment flag
@@ -38,7 +41,7 @@ async function testRender(node: ReactNode, testRendererOptions: TestRendererOpti
     },
   })
 
-  const keymap = createDefaultOpenTuiKeymap(testSetup.renderer)
+  const keymap = diagnostics.trackKeymap(createDefaultOpenTuiKeymap(testSetup.renderer))
   root = createRoot(testSetup.renderer)
   act(() => {
     root?.render(<KeymapProvider keymap={keymap}>{node}</KeymapProvider>)
@@ -64,6 +67,7 @@ describe("React keymap hooks", () => {
         testSetup.renderer.destroy()
       })
     }
+    diagnostics.assertNoUnhandledDiagnostics()
   })
 
   test("useKeymap returns the provided keymap", async () => {

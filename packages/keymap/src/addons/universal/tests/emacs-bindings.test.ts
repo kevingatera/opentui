@@ -2,10 +2,16 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { createTestRenderer, type MockInput, type TestRenderer } from "@opentui/core/testing"
 import { stringifyKeySequence } from "@opentui/keymap"
 import { registerEmacsBindings } from "@opentui/keymap/addons"
-import { createDefaultOpenTuiKeymap as getKeymap } from "@opentui/keymap/opentui"
+import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
+import { createDiagnosticHarness } from "../../../tests/diagnostic-harness.js"
 
 let renderer: TestRenderer
 let mockInput: MockInput
+const diagnostics = createDiagnosticHarness()
+
+function getKeymap(renderer: TestRenderer) {
+  return diagnostics.trackKeymap(createDefaultOpenTuiKeymap(renderer))
+}
 
 describe("emacs bindings addon", () => {
   beforeEach(async () => {
@@ -16,6 +22,7 @@ describe("emacs bindings addon", () => {
 
   afterEach(() => {
     renderer?.destroy()
+    diagnostics.assertNoUnhandledDiagnostics()
   })
 
   test("supports emacs-style multi-stroke definitions when the addon is registered", () => {
@@ -47,11 +54,7 @@ describe("emacs bindings addon", () => {
 
   test("keeps emacs syntax unavailable until the addon is registered", () => {
     const keymap = getKeymap(renderer)
-    const errors: string[] = []
-
-    keymap.on("error", (event) => {
-      errors.push(event.message)
-    })
+    const { takeErrors } = diagnostics.captureDiagnostics(keymap)
 
     expect(() => {
       keymap.registerLayer({
@@ -59,20 +62,16 @@ describe("emacs bindings addon", () => {
       })
     }).not.toThrow()
 
-    expect(errors).toEqual(['Invalid key "ctrl+x ctrl+s": multiple key names are not supported'])
+    expect(takeErrors().errors).toEqual(['Invalid key "ctrl+x ctrl+s": multiple key names are not supported'])
     expect(keymap.getActiveKeys()).toEqual([])
   })
 
   test("can be disposed to restore default parsing behavior", () => {
     const keymap = getKeymap(renderer)
-    const errors: string[] = []
+    const { takeErrors } = diagnostics.captureDiagnostics(keymap)
 
     const offEmacsBindings = registerEmacsBindings(keymap)
     offEmacsBindings()
-
-    keymap.on("error", (event) => {
-      errors.push(event.message)
-    })
 
     expect(() => {
       keymap.registerLayer({
@@ -80,7 +79,7 @@ describe("emacs bindings addon", () => {
       })
     }).not.toThrow()
 
-    expect(errors).toEqual(['Invalid key "ctrl+x ctrl+s": multiple key names are not supported'])
+    expect(takeErrors().errors).toEqual(['Invalid key "ctrl+x ctrl+s": multiple key names are not supported'])
     expect(keymap.getActiveKeys()).toEqual([])
   })
 })

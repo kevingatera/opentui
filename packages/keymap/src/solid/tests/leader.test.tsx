@@ -8,6 +8,9 @@ import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
 import { KeymapProvider, reactiveMatcherFromSignal, useBindings } from "@opentui/keymap/solid"
 import { render, type JSX } from "@opentui/solid"
 import { createSignal } from "solid-js"
+import { createDiagnosticHarness } from "../../tests/diagnostic-harness.js"
+
+const diagnostics = createDiagnosticHarness()
 
 async function testRender(
   node: () => JSX.Element,
@@ -23,7 +26,7 @@ async function testRender(
     },
   })
 
-  const keymap = createDefaultOpenTuiKeymap(testSetup.renderer)
+  const keymap = diagnostics.trackKeymap(createDefaultOpenTuiKeymap(testSetup.renderer))
   options?.setupKeymap?.(keymap, testSetup.renderer)
   await render(() => <KeymapProvider keymap={keymap}>{node()}</KeymapProvider>, testSetup.renderer)
 
@@ -69,6 +72,7 @@ describe("solid keymap leader behavior", () => {
     if (testSetup) {
       testSetup.renderer.destroy()
     }
+    diagnostics.assertNoUnhandledDiagnostics()
   })
 
   test("supports leader bindings across global layers with a focused managed textarea", async () => {

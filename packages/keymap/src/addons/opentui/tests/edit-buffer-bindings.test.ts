@@ -7,10 +7,16 @@ import {
   registerManagedTextareaLayer,
   registerTextareaMappingSuspension,
 } from "@opentui/keymap/addons/opentui"
-import { createDefaultOpenTuiKeymap as getKeymap } from "@opentui/keymap/opentui"
+import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
+import { createDiagnosticHarness } from "../../../tests/diagnostic-harness.js"
 
 let renderer: TestRenderer
 let mockInput: MockInput
+const diagnostics = createDiagnosticHarness()
+
+function getKeymap(renderer: TestRenderer) {
+  return diagnostics.trackKeymap(createDefaultOpenTuiKeymap(renderer))
+}
 
 describe("edit buffer bindings addon", () => {
   beforeEach(async () => {
@@ -21,6 +27,7 @@ describe("edit buffer bindings addon", () => {
 
   afterEach(() => {
     renderer?.destroy()
+    diagnostics.assertNoUnhandledDiagnostics()
   })
 
   test("registerEditBufferCommands resolves plain layers that were registered first", () => {
@@ -663,11 +670,7 @@ describe("edit buffer bindings addon", () => {
 
   test("allows colliding command names on separate layers and continues registering the rest of the batch", () => {
     const keymap = getKeymap(renderer)
-    const errors: string[] = []
-
-    keymap.on("error", (event) => {
-      errors.push(event.message)
-    })
+    const { errors } = diagnostics.captureDiagnostics(keymap)
 
     keymap.registerLayer({
       commands: [

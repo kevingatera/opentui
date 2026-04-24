@@ -1,10 +1,16 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { createTestRenderer, type MockInput, type TestRenderer } from "@opentui/core/testing"
 import { registerLeader } from "@opentui/keymap/addons"
-import { createDefaultOpenTuiKeymap as getKeymap } from "@opentui/keymap/opentui"
+import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
+import { createDiagnosticHarness } from "../../../tests/diagnostic-harness.js"
 
 let renderer: TestRenderer
 let mockInput: MockInput
+const diagnostics = createDiagnosticHarness()
+
+function getKeymap(renderer: TestRenderer) {
+  return diagnostics.trackKeymap(createDefaultOpenTuiKeymap(renderer))
+}
 
 describe("leader addon", () => {
   beforeEach(async () => {
@@ -15,6 +21,7 @@ describe("leader addon", () => {
 
   afterEach(() => {
     renderer?.destroy()
+    diagnostics.assertNoUnhandledDiagnostics()
   })
 
   test("registers leader as a plain token alias", () => {
@@ -61,6 +68,7 @@ describe("leader addon", () => {
 
   test("recompiles bindings that were registered before leader exists", () => {
     const keymap = getKeymap(renderer)
+    const { takeWarnings } = diagnostics.captureDiagnostics(keymap)
     const calls: string[] = []
 
     keymap.registerLayer({
@@ -80,6 +88,7 @@ describe("leader addon", () => {
 
     mockInput.pressKey("a")
 
+    expect(takeWarnings().warnings).toEqual(['[Keymap] Unknown token "<leader>" in key sequence "<leader>a" was ignored'])
     expect(calls).toEqual(["leader"])
 
     registerLeader(keymap, {
@@ -98,6 +107,7 @@ describe("leader addon", () => {
 
   test("can be disposed to remove the leader token mapping", () => {
     const keymap = getKeymap(renderer)
+    const { takeWarnings } = diagnostics.captureDiagnostics(keymap)
     const calls: string[] = []
 
     keymap.registerLayer({
@@ -123,6 +133,8 @@ describe("leader addon", () => {
     expect(calls).toEqual(["leader"])
 
     offLeader()
+
+    expect(takeWarnings().warnings).toEqual(['[Keymap] Unknown token "<leader>" in key sequence "<leader>" was ignored'])
 
     mockInput.pressKey("x", { ctrl: true })
     expect(calls).toEqual(["leader"])

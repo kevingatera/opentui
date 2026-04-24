@@ -1,10 +1,21 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import {
-  createDefaultHtmlKeymap as getKeymap,
+  createDefaultHtmlKeymap,
   createHtmlKeymap,
   createHtmlKeymapEvent,
   normalizeHtmlKeyName,
 } from "../html.js"
+import { createDiagnosticHarness } from "./diagnostic-harness.js"
+
+const diagnostics = createDiagnosticHarness()
+
+function getKeymap(root: HTMLElement) {
+  return diagnostics.trackKeymap(createDefaultHtmlKeymap(root))
+}
+
+function createBareHtmlKeymap(root: HTMLElement) {
+  return diagnostics.trackKeymap(createHtmlKeymap(root))
+}
 
 type Listener = (event: unknown) => void
 
@@ -146,6 +157,7 @@ describe("html keymap adapter", () => {
 
   afterEach(() => {
     ;(globalThis as { MutationObserver?: unknown }).MutationObserver = previousMutationObserver
+    diagnostics.assertNoUnhandledDiagnostics()
   })
 
   test("normalizes browser key names and modifiers", () => {
@@ -164,14 +176,15 @@ describe("html keymap adapter", () => {
   })
 
   test("createHtmlKeymap returns a fresh keymap for each call", () => {
-    const first = createHtmlKeymap(root as unknown as HTMLElement)
-    const second = createHtmlKeymap(root as unknown as HTMLElement)
+    const first = createBareHtmlKeymap(root as unknown as HTMLElement)
+    const second = createBareHtmlKeymap(root as unknown as HTMLElement)
 
     expect(first).not.toBe(second)
   })
 
   test("createHtmlKeymap stays bare until addons are installed", () => {
-    const keymap = createHtmlKeymap(root as unknown as HTMLElement)
+    const keymap = createBareHtmlKeymap(root as unknown as HTMLElement)
+    const { takeErrors } = diagnostics.captureDiagnostics(keymap)
     const calls: string[] = []
 
     keymap.registerLayer({
@@ -194,6 +207,7 @@ describe("html keymap adapter", () => {
     root.emit("keydown", new FakeKeyboardEvent("x"))
     expect(calls).toEqual([])
     expect(keymap.getActiveKeys()).toEqual([])
+    expect(takeErrors().errors).toEqual(["No keymap binding parsers are registered"])
 
     const configuredKeymap = getKeymap(root as unknown as HTMLElement)
     configuredKeymap.registerLayer({
@@ -214,11 +228,7 @@ describe("html keymap adapter", () => {
 
   test("createDefaultHtmlKeymap installs metadata and enabled fields", () => {
     const keymap = getKeymap(root as unknown as HTMLElement)
-    const warnings: string[] = []
-
-    keymap.on("warning", (event) => {
-      warnings.push(event.message)
-    })
+    const { takeWarnings } = diagnostics.captureDiagnostics(keymap)
 
     keymap.registerLayer({
       commands: [
@@ -245,7 +255,7 @@ describe("html keymap adapter", () => {
     expect(keymap.getActiveKeys().find((candidate) => candidate.stroke.name === "y")).toBeUndefined()
     expect(activeKey?.bindingAttrs).toEqual({ desc: "Write current file", group: "File" })
     expect(activeKey?.commandAttrs).toEqual({ desc: "Save file", title: "Save", category: "File" })
-    expect(warnings).toEqual([])
+    expect(takeWarnings().warnings).toEqual([])
   })
 
   test("supports focus-within layers on regular HTML targets", () => {

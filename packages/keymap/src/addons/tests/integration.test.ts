@@ -4,9 +4,11 @@ import { createTestRenderer, type MockInput, type TestRenderer } from "@opentui/
 import { registerExCommands, registerLeader } from "@opentui/keymap/addons"
 import { registerManagedTextareaLayer } from "@opentui/keymap/addons/opentui"
 import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
+import { createDiagnosticHarness } from "../../tests/diagnostic-harness.js"
 
 let renderer: TestRenderer
 let mockInput: MockInput
+const diagnostics = createDiagnosticHarness()
 
 function createFocusableBox(id: string): BoxRenderable {
   return new BoxRenderable(renderer, {
@@ -26,10 +28,11 @@ describe("keymap addon composition", () => {
 
   afterEach(() => {
     renderer?.destroy()
+    diagnostics.assertNoUnhandledDiagnostics()
   })
 
   test("leader, ex commands, managed textareas, passthrough typing, and focus traversal compose together", () => {
-    const keymap = createDefaultOpenTuiKeymap(renderer)
+    const keymap = diagnostics.trackKeymap(createDefaultOpenTuiKeymap(renderer))
     const alpha = createFocusableBox("alpha")
     const beta = createFocusableBox("beta")
     const notes = new TextareaRenderable(renderer, {
