@@ -290,6 +290,14 @@ function formatDemoKeySequence(parts: readonly Pick<KeySequencePart, "stroke" | 
   return parts.map((part) => formatDemoKeyPart(part)).join(" ")
 }
 
+function composeDisposers(disposers: Array<() => void>): () => void {
+  return () => {
+    for (let index = disposers.length - 1; index >= 0; index -= 1) {
+      disposers[index]?.()
+    }
+  }
+}
+
 function CounterPanel(props: {
   id: PanelId
   label: string
@@ -726,56 +734,41 @@ const AppContent = () => {
   }, [announce, closeCommandPrompt, manager, renderer, restoreCommandPromptFocus])
 
   useEffect(() => {
-    return addons.registerTimedLeader(manager, {
-      trigger: { name: "x", ctrl: true },
-      onArm() {
-        setLeaderArmed(true)
-        announce("Leader armed: press s or h")
-      },
-      onDisarm() {
-        setLeaderArmed(false)
-      },
-    })
-  }, [announce, manager])
-
-  useEffect(() => {
-    return addons.registerNeovimDisambiguation(manager)
-  }, [manager])
-
-  useEffect(() => {
-    return addons.registerEscapeClearsPendingSequence(manager)
-  }, [manager])
-
-  useEffect(() => {
-    return addons.registerBackspacePopsPendingSequence(manager)
-  }, [manager])
-
-  const managedTextareaLayer = useMemo(
-    () => ({
-      enabled: () => !commandPromptVisibleRef.current && renderer.currentFocusedEditor !== null,
-      bindings: [
-        { key: "left", cmd: "move-left", desc: "Cursor left" },
-        { key: "right", cmd: "move-right", desc: "Cursor right" },
-        { key: "up", cmd: "move-up", desc: "Cursor up" },
-        { key: "down", cmd: "move-down", desc: "Cursor down" },
-        { key: "backspace", cmd: "backspace", desc: "Delete backward" },
-        { key: "delete", cmd: "delete", desc: "Delete forward" },
-        { key: "return", cmd: "newline", desc: "New line" },
-        { key: "ctrl+a", cmd: "line-home", desc: "Line start" },
-        { key: "ctrl+e", cmd: "line-end", desc: "Line end" },
-        { key: "d", group: "Delete" },
-        { key: "dd", cmd: "delete-line", desc: "Delete line" },
-        { key: "g", cmd: "line-home", desc: "Line start", group: "Go" },
-        { key: "gg", cmd: "buffer-home", desc: "Buffer start", group: "Go" },
-        { key: "shift+g", cmd: "buffer-end", desc: "Buffer end", group: "Go" },
-      ] satisfies KeymapBindingInput[],
-    }),
-    [renderer],
-  )
-
-  useEffect(() => {
-    return addons.registerManagedTextareaLayer(manager, renderer, managedTextareaLayer)
-  }, [managedTextareaLayer, manager, renderer])
+    return composeDisposers([
+      addons.registerManagedTextareaLayer(manager, renderer, {
+        enabled: () => !commandPromptVisibleRef.current && renderer.currentFocusedEditor !== null,
+        bindings: [
+          { key: "left", cmd: "move-left", desc: "Cursor left" },
+          { key: "right", cmd: "move-right", desc: "Cursor right" },
+          { key: "up", cmd: "move-up", desc: "Cursor up" },
+          { key: "down", cmd: "move-down", desc: "Cursor down" },
+          { key: "backspace", cmd: "backspace", desc: "Delete backward" },
+          { key: "delete", cmd: "delete", desc: "Delete forward" },
+          { key: "return", cmd: "newline", desc: "New line" },
+          { key: "ctrl+a", cmd: "line-home", desc: "Line start" },
+          { key: "ctrl+e", cmd: "line-end", desc: "Line end" },
+          { key: "d", group: "Delete" },
+          { key: "dd", cmd: "delete-line", desc: "Delete line" },
+          { key: "g", cmd: "line-home", desc: "Line start", group: "Go" },
+          { key: "gg", cmd: "buffer-home", desc: "Buffer start", group: "Go" },
+          { key: "shift+g", cmd: "buffer-end", desc: "Buffer end", group: "Go" },
+        ] satisfies KeymapBindingInput[],
+      }),
+      addons.registerBackspacePopsPendingSequence(manager),
+      addons.registerEscapeClearsPendingSequence(manager),
+      addons.registerNeovimDisambiguation(manager),
+      addons.registerTimedLeader(manager, {
+        trigger: { name: "x", ctrl: true },
+        onArm() {
+          setLeaderArmed(true)
+          announce("Leader armed: press s or h")
+        },
+        onDisarm() {
+          setLeaderArmed(false)
+        },
+      }),
+    ])
+  }, [announce, manager, renderer])
 
   useBindings(() => ({
     enabled: () => !commandPromptVisibleRef.current,
