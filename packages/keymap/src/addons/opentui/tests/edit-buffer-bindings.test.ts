@@ -136,7 +136,6 @@ describe("edit buffer bindings addon", () => {
 
     registerEditBufferCommands(keymap, renderer)
     const off = registerManagedTextareaLayer(keymap, renderer, {
-      target: textarea,
       bindings: { dd: "delete-line" },
     })
 
@@ -146,6 +145,64 @@ describe("edit buffer bindings addon", () => {
     mockInput.pressKey("d")
 
     expect(textarea.plainText).toBe("Line 1")
+
+    off()
+  })
+
+  test("registerManagedTextareaLayer typing rejects target and targetMode", () => {
+    const textarea = new TextareaRenderable(renderer, {
+      width: 20,
+      height: 4,
+      initialValue: "Line 1\nLine 2",
+    })
+    renderer.root.add(textarea)
+
+    const layer: Parameters<typeof registerManagedTextareaLayer>[2] = {
+      // @ts-expect-error managed textarea layers are always global
+      target: textarea,
+      // @ts-expect-error managed textarea layers are always global
+      targetMode: "focus-within",
+      bindings: { dd: "delete-line" },
+    }
+
+    expect(layer.bindings).toEqual({ dd: "delete-line" })
+  })
+
+  test("registerManagedTextareaLayer ignores scoped fields passed by untyped callers", () => {
+    const keymap = getKeymap(renderer)
+    const primary = new TextareaRenderable(renderer, {
+      width: 20,
+      height: 4,
+      initialValue: "Line 1\nLine 2",
+    })
+    const secondary = new TextareaRenderable(renderer, {
+      width: 20,
+      height: 4,
+      initialValue: "Alpha\nBeta\nGamma",
+    })
+    renderer.root.add(primary)
+    renderer.root.add(secondary)
+
+    const off = registerManagedTextareaLayer(keymap, renderer, {
+      target: primary,
+      targetMode: "focus-within",
+      bindings: { dd: "delete-line" },
+    } as Parameters<typeof registerManagedTextareaLayer>[2])
+
+    secondary.focus()
+    secondary.gotoLine(1)
+    expect(secondary.traits.suspend).toBe(true)
+
+    mockInput.pressKey("d")
+    mockInput.pressKey("d")
+
+    expect(secondary.plainText).toBe("Alpha\nGamma")
+
+    primary.focus()
+    primary.cursorOffset = primary.plainText.length
+    mockInput.pressBackspace()
+
+    expect(primary.plainText).toBe("Line 1\nLine ")
 
     off()
   })

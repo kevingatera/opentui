@@ -159,8 +159,10 @@ export interface EditBufferCommandOptions {
 const EDIT_BUFFER_COMMANDS_RESOURCE = Symbol("keymap:edit-buffer-commands")
 const TEXTAREA_MAPPING_SUSPENSION_RESOURCE = Symbol("keymap:textarea-mapping-suspension")
 
-export type ManagedTextareaLayer = Omit<Layer<Renderable, KeyEvent>, "bindings"> & {
+export type ManagedTextareaLayer = Omit<Layer<Renderable, KeyEvent>, "bindings" | "target" | "targetMode"> & {
   bindings?: Bindings<Renderable, KeyEvent>
+  target?: never
+  targetMode?: never
 }
 
 function isManagedTextarea(editor: EditBufferRenderable | null): editor is TextareaRenderable {
@@ -456,7 +458,7 @@ export function registerEditBufferCommands(
 }
 
 /**
- * High-level textarea integration: registers the edit-buffer commands,
+ * High-level global textarea integration: registers the edit-buffer commands,
  * suspends the textarea's built-in key handling while focused, and installs
  * the layer with default bindings plus overrides. Safe to combine with the
  * lower-level helpers because they are reference-counted.
@@ -473,7 +475,7 @@ export function registerManagedTextareaLayer(
   const offSuspension = registerTextareaMappingSuspension(keymap, renderer)
 
   try {
-    const { bindings, ...rest } = layer
+    const { bindings, target: _ignoredTarget, targetMode: _ignoredTargetMode, ...rest } = layer
     const offLayer = keymap.registerLayer({
       ...rest,
       bindings: createTextareaBindingsWithResolvedOptions(
