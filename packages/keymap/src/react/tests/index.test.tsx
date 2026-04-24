@@ -189,6 +189,66 @@ describe("React keymap hooks", () => {
     expect(registerCalls).toBe(1)
   })
 
+  test("useBindings supports declarative release bindings", async () => {
+    const calls: string[] = []
+
+    function App() {
+      const manager = useKeymap()
+
+      useEffect(() => {
+        return manager.registerLayer({
+          commands: [
+            {
+              name: "release-command",
+              run() {
+                calls.push("release")
+              },
+            },
+            {
+              name: "press-command",
+              run() {
+                calls.push("press")
+              },
+            },
+          ],
+        })
+      }, [manager])
+
+      useBindings(() => ({
+        bindings: [
+          { key: "a", cmd: "release-command", event: "release" },
+          { key: "b", cmd: "press-command" },
+        ],
+      }))
+
+      const activeKeys = useActiveKeys()
+
+      return <text>{`Active: ${activeKeys.map((key) => key.stroke.name).join(",") || "<none>"}`}</text>
+    }
+
+    await act(async () => {
+      testSetup = await testRender(<App />, { width: 20, height: 6, kittyKeyboard: true })
+    })
+
+    await testSetup.renderOnce()
+    expect(testSetup.captureCharFrame()).toContain("Active: b")
+
+    act(() => {
+      testSetup.mockInput.pressKey("a")
+    })
+    expect(calls).toEqual([])
+
+    act(() => {
+      testSetup.renderer.stdin.emit("data", Buffer.from("\x1b[97;1:3u"))
+    })
+    expect(calls).toEqual(["release"])
+
+    act(() => {
+      testSetup.mockInput.pressKey("b")
+    })
+    expect(calls).toEqual(["release", "press"])
+  })
+
   test("useActiveKeys updates on focus changes and direct blur", async () => {
     let firstTarget!: Renderable
     let secondTarget!: Renderable
