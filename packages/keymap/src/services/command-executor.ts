@@ -56,7 +56,26 @@ export class CommandExecutorService<TTarget extends object, TEvent extends Keyma
     const chain = this.catalog.getRegisteredResolvedEntries(normalized, includeRecord)
     let rejectedResult: RunCommandResult | undefined
 
-    if (chain) {
+    // Kept inline across command execution paths: abstracting this chain walk
+    // measurably slowed the benchmarked hot path.
+    if (chain?.length === 1) {
+      const [entry] = chain
+      if (entry) {
+        const execution = this.executeResolvedCommand(normalized, entry.resolved, {
+          keymap: this.options.keymap,
+          event,
+          focused,
+          target: options?.target ?? entry.target ?? null,
+          data,
+        })
+
+        if (execution.status === "handled" || execution.status === "error") {
+          return execution.result
+        }
+
+        rejectedResult = execution.result
+      }
+    } else if (chain) {
       for (const entry of chain) {
         const context: CommandContext<TTarget, TEvent> = {
           keymap: this.options.keymap,
@@ -120,7 +139,24 @@ export class CommandExecutorService<TTarget extends object, TEvent extends Keyma
     const chain = chainLookup.entries
     let rejectedResult: RunCommandResult | undefined
 
-    if (chain) {
+    if (chain?.length === 1) {
+      const [entry] = chain
+      if (entry) {
+        const execution = this.executeResolvedCommand(normalized, entry.resolved, {
+          keymap: this.options.keymap,
+          event,
+          focused,
+          target: options?.target ?? entry.target ?? null,
+          data,
+        })
+
+        if (execution.status === "handled" || execution.status === "error") {
+          return execution.result
+        }
+
+        rejectedResult = execution.result
+      }
+    } else if (chain) {
       for (const entry of chain) {
         const context: CommandContext<TTarget, TEvent> = {
           keymap: this.options.keymap,
@@ -187,7 +223,24 @@ export class CommandExecutorService<TTarget extends object, TEvent extends Keyma
     }
 
     const chain = this.catalog.getResolvedCommandChain(binding.command, focused, false).entries
-    if (chain) {
+    if (chain?.length === 1) {
+      const [entry] = chain
+      if (entry) {
+        const execution = this.executeResolvedCommand(binding.command, entry.resolved, {
+          keymap: this.options.keymap,
+          event,
+          focused,
+          target: entry.target ?? bindingLayer.target ?? null,
+          data,
+        })
+        if (execution.status === "rejected") {
+          return false
+        }
+
+        applyBindingEventEffects(binding, event)
+        return true
+      }
+    } else if (chain) {
       for (const entry of chain) {
         const context: CommandContext<TTarget, TEvent> = {
           keymap: this.options.keymap,
