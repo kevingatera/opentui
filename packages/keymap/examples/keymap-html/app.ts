@@ -403,7 +403,7 @@ function runPromptCommand(): void {
 
   const focused =
     promptRestoreTarget && document.contains(promptRestoreTarget) ? promptRestoreTarget : getCurrentFocusedTarget()
-  const result = keymap.runCommand(parsed.raw, { focused })
+  const result = keymap.dispatchCommand(parsed.raw, { focused })
   if (result.ok) {
     appendLog(`Ran ${parsed.raw}`)
     closePrompt()

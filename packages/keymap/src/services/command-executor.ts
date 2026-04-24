@@ -4,6 +4,7 @@ import type {
   CommandContext,
   CommandResult,
   CompiledBinding,
+  DispatchCommandOptions,
   KeymapEvent,
   RegisteredLayer,
   ResolvedBindingCommand,
@@ -52,6 +53,69 @@ export class CommandExecutorService<TTarget extends object, TEvent extends Keyma
     const focused = options?.focused ?? this.activation.getFocusedTargetIfAvailable()
     const event = options?.event ?? this.options.createCommandEvent()
     const data = this.runtime.getReadonlyData()
+    const chain = this.catalog.getRegisteredResolvedEntries(normalized, includeRecord)
+    let rejectedResult: RunCommandResult | undefined
+
+    if (chain) {
+      for (const entry of chain) {
+        const context: CommandContext<TTarget, TEvent> = {
+          keymap: this.options.keymap,
+          event,
+          focused,
+          target: options?.target ?? entry.target ?? null,
+          data,
+        }
+
+        const execution = this.executeResolvedCommand(normalized, entry.resolved, context)
+        if (execution.status === "handled" || execution.status === "error") {
+          return execution.result
+        }
+
+        rejectedResult = execution.result
+      }
+    }
+
+    const fallback = this.catalog.getRegisteredResolverFallback(normalized, includeRecord)
+    if (fallback.resolved) {
+      const execution = this.executeResolvedCommand(normalized, fallback.resolved, {
+        keymap: this.options.keymap,
+        event,
+        focused,
+        target: options?.target ?? null,
+        data,
+      })
+
+      if (execution.status === "handled" || execution.status === "error") {
+        return execution.result
+      }
+
+      rejectedResult = execution.result
+    }
+
+    if (fallback.hadError) {
+      return { ok: false, reason: "error" }
+    }
+
+    return rejectedResult ?? { ok: false, reason: "not-found" }
+  }
+
+  public dispatchCommand(cmd: string, options?: DispatchCommandOptions<TTarget, TEvent>): RunCommandResult {
+    let normalized: BindingCommand<TTarget, TEvent> | undefined
+
+    try {
+      normalized = normalizeBindingCommand(cmd)
+    } catch {
+      return { ok: false, reason: "invalid-args" }
+    }
+
+    if (typeof normalized !== "string") {
+      return { ok: false, reason: "not-found" }
+    }
+
+    const includeRecord = options?.includeCommand === true
+    const focused = options?.focused ?? this.activation.getFocusedTargetIfAvailable()
+    const event = options?.event ?? this.options.createCommandEvent()
+    const data = this.runtime.getReadonlyData()
     const chainLookup = this.catalog.getResolvedCommandChain(normalized, focused, includeRecord)
     const chain = chainLookup.entries
     let rejectedResult: RunCommandResult | undefined
@@ -77,6 +141,13 @@ export class CommandExecutorService<TTarget extends object, TEvent extends Keyma
 
     if (chainLookup.hadError) {
       return { ok: false, reason: "error" }
+    }
+
+    const unavailable = this.catalog.getDispatchUnavailableCommandState(normalized, focused, includeRecord)
+    if (unavailable) {
+      return unavailable.command
+        ? { ok: false, reason: unavailable.reason, command: unavailable.command }
+        : { ok: false, reason: unavailable.reason }
     }
 
     return rejectedResult ?? { ok: false, reason: "not-found" }

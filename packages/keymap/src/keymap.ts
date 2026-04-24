@@ -13,6 +13,7 @@ import type {
   CommandEntry,
   CommandQuery,
   CommandRecord,
+  DispatchCommandOptions,
   KeymapEvent,
   KeymapHost,
   LayerAnalyzer,
@@ -265,6 +266,10 @@ export class Keymap<TTarget extends object, TEvent extends KeymapEvent = KeymapE
 
   public runCommand(cmd: string, options?: RunCommandOptions<TTarget, TEvent>): RunCommandResult {
     return this.executor.runCommand(cmd, options)
+  }
+
+  public dispatchCommand(cmd: string, options?: DispatchCommandOptions<TTarget, TEvent>): RunCommandResult {
+    return this.executor.dispatchCommand(cmd, options)
   }
 
   public on(name: "state", fn: Listener<Events<TTarget, TEvent>["state"]>): () => void

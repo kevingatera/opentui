@@ -379,7 +379,7 @@ describe("keymap", () => {
     expect(calls).toEqual(["handled"])
   })
 
-  test("runCommand executes a registered command and only includes command metadata when requested", () => {
+  test("runCommand and dispatchCommand execute commands and only include metadata when requested", () => {
     const keymap = getKeymap(renderer)
     const calls: string[] = []
 
@@ -395,6 +395,7 @@ describe("keymap", () => {
     })
 
     expect(keymap.runCommand("save-file")).toEqual({ ok: true })
+    expect(keymap.dispatchCommand("save-file")).toEqual({ ok: true })
     expect(keymap.runCommand("save-file", { includeCommand: true })).toEqual({
       ok: true,
       command: {
@@ -402,8 +403,16 @@ describe("keymap", () => {
         fields: {},
       },
     })
+    expect(keymap.dispatchCommand("save-file", { includeCommand: true })).toEqual({
+      ok: true,
+      command: {
+        name: "save-file",
+        fields: {},
+      },
+    })
     expect(keymap.runCommand("missing-command")).toEqual({ ok: false, reason: "not-found" })
-    expect(calls).toEqual(["save-file", "save-file"])
+    expect(keymap.dispatchCommand("missing-command")).toEqual({ ok: false, reason: "not-found" })
+    expect(calls).toEqual(["save-file", "save-file", "save-file", "save-file"])
   })
 
   test("normalizeCommandName exposes command normalization on the public facade", () => {
@@ -578,7 +587,7 @@ describe("keymap", () => {
     expect(keymap.runCommand("shared-command")).toEqual({ ok: false, reason: "not-found" })
   })
 
-  test("layer commands resolve bindings, shadow globals, and expose local metadata", () => {
+  test("dispatchCommand resolves active layer commands while runCommand uses registered precedence", () => {
     const keymap = getKeymap(renderer)
     const { warnings } = captureDiagnostics(keymap)
     const calls: string[] = []
@@ -611,6 +620,7 @@ describe("keymap", () => {
       bindings: [{ key: "x", cmd: "submit" }],
     })
 
+    expect(keymap.dispatchCommand("submit")).toEqual({ ok: true })
     expect(keymap.runCommand("submit")).toEqual({ ok: true })
 
     target.focus()
@@ -619,6 +629,14 @@ describe("keymap", () => {
 
     mockInput.pressKey("x")
 
+    expect(keymap.dispatchCommand("submit", { includeCommand: true })).toEqual({
+      ok: true,
+      command: {
+        name: "submit",
+        fields: { desc: "Local submit" },
+        attrs: { desc: "Local submit" },
+      },
+    })
     expect(keymap.runCommand("submit", { includeCommand: true })).toEqual({
       ok: true,
       command: {
@@ -627,7 +645,7 @@ describe("keymap", () => {
         attrs: { desc: "Local submit" },
       },
     })
-    expect(calls).toEqual(["global", "local", "local"])
+    expect(calls).toEqual(["global", "local", "local", "local", "local"])
     expect(warnings).toEqual([])
   })
 
@@ -708,7 +726,7 @@ describe("keymap", () => {
     expect(calls).toEqual(["local", "global"])
   })
 
-  test("supports command-only layers for scoped runCommand resolution", () => {
+  test("dispatchCommand reports inactive command-only layers while runCommand can execute them programmatically", () => {
     const keymap = getKeymap(renderer)
     const calls: string[] = []
     const target = createFocusableBox("command-only-layer-target")
@@ -727,16 +745,27 @@ describe("keymap", () => {
       ],
     })
 
-    expect(keymap.runCommand("submit")).toEqual({ ok: false, reason: "not-found" })
+    expect(keymap.dispatchCommand("submit")).toEqual({ ok: false, reason: "inactive" })
+    expect(keymap.dispatchCommand("submit", { includeCommand: true })).toEqual({
+      ok: false,
+      reason: "inactive",
+      command: {
+        name: "submit",
+        fields: {},
+      },
+    })
+    expect(keymap.runCommand("submit")).toEqual({ ok: true })
 
     target.focus()
 
+    expect(keymap.dispatchCommand("submit")).toEqual({ ok: true })
     expect(keymap.runCommand("submit")).toEqual({ ok: true })
 
     off()
 
+    expect(keymap.dispatchCommand("submit")).toEqual({ ok: false, reason: "not-found" })
     expect(keymap.runCommand("submit")).toEqual({ ok: false, reason: "not-found" })
-    expect(calls).toEqual(["local"])
+    expect(calls).toEqual(["local", "local", "local"])
   })
 
   test("refreshing global command resolution keeps same-name layer command bindings", () => {
@@ -792,9 +821,10 @@ describe("keymap", () => {
 
     expect(getActiveKey(keymap, "x")?.command).toBeUndefined()
     expect(takeWarnings().warnings).toEqual([])
+    expect(keymap.dispatchCommand("external-run")).toEqual({ ok: false, reason: "error" })
     expect(keymap.runCommand("external-run")).toEqual({ ok: false, reason: "error" })
     const { errors } = takeErrors()
-    expect(errors).toHaveLength(1)
+    expect(errors).toHaveLength(2)
     expect(errors.every((message) => message.includes('Error in command resolver for "external-run":'))).toBe(true)
   })
 
@@ -3005,7 +3035,7 @@ describe("keymap", () => {
     expect(enabled.subscriptions).toBe(0)
   })
 
-  test("command conditions fall through to lower-priority commands and hide unresolved bindings", () => {
+  test("dispatchCommand reports disabled commands while runCommand can execute registered disabled commands", () => {
     const keymap = getKeymap(renderer)
     const calls: string[] = []
     const target = createFocusableBox("command-condition-target")
@@ -3051,13 +3081,23 @@ describe("keymap", () => {
 
     expect(getActiveKey(keymap, "x")?.command).toBe("submit")
     expect(getActiveKey(keymap, "y")).toBeUndefined()
+    expect(keymap.dispatchCommand("submit")).toEqual({ ok: true })
+    expect(keymap.dispatchCommand("hidden-local")).toEqual({ ok: false, reason: "disabled" })
+    expect(keymap.dispatchCommand("hidden-local", { includeCommand: true })).toEqual({
+      ok: false,
+      reason: "disabled",
+      command: {
+        name: "hidden-local",
+        fields: { enabled: false },
+      },
+    })
     expect(keymap.runCommand("submit")).toEqual({ ok: true })
-    expect(keymap.runCommand("hidden-local")).toEqual({ ok: false, reason: "not-found" })
+    expect(keymap.runCommand("hidden-local")).toEqual({ ok: true })
 
     mockInput.pressKey("x")
     mockInput.pressKey("y")
 
-    expect(calls).toEqual(["global", "global"])
+    expect(calls).toEqual(["global", "local", "hidden", "global"])
   })
 
   test("layer and binding requirements compose", () => {
@@ -6022,6 +6062,7 @@ describe("keymap", () => {
     expect(keymap.getCommands()).toEqual([])
     expect(getActiveKey(keymap, "x")).toBeUndefined()
     expect(keymap.runCommand("   ")).toEqual({ ok: false, reason: "invalid-args" })
+    expect(keymap.dispatchCommand("   ")).toEqual({ ok: false, reason: "invalid-args" })
   })
 
   test("requires registered token keys to resolve to a single key stroke", () => {

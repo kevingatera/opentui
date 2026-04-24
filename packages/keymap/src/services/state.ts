@@ -81,12 +81,25 @@ export interface ActiveCommandView<TTarget extends object, TEvent extends Keymap
   fallbackWithRecordErrors: Set<string>
 }
 
+export interface RegisteredCommandView<TTarget extends object, TEvent extends KeymapEvent> {
+  entries: readonly LayerCommandEntry<TTarget, TEvent>[]
+  chainsByName: ReadonlyMap<string, readonly LayerCommandEntry<TTarget, TEvent>[]>
+  resolvedWithoutRecordChains: Map<string, readonly ResolvedCommandEntry<TTarget, TEvent>[]>
+  resolvedWithRecordChains: Map<string, readonly ResolvedCommandEntry<TTarget, TEvent>[]>
+  fallbackWithoutRecord: Map<string, ResolvedBindingCommand<TTarget, TEvent> | null>
+  fallbackWithRecord: Map<string, ResolvedBindingCommand<TTarget, TEvent> | null>
+  fallbackWithoutRecordErrors: Set<string>
+  fallbackWithRecordErrors: Set<string>
+}
+
 export interface CommandsState<TTarget extends object, TEvent extends KeymapEvent> {
   commandMetadataVersion: number
   registeredNames: Map<string, number>
   commandResolvers: OrderedRegistry<CommandResolver<TTarget, TEvent>>
   activeCommandViewVersion: number
   activeCommandView?: ActiveCommandView<TTarget, TEvent>
+  registeredCommandViewVersion: number
+  registeredCommandView?: RegisteredCommandView<TTarget, TEvent>
   registeredCommandEntriesCacheVersion: number
   registeredCommandEntriesCache: readonly LayerCommandEntry<TTarget, TEvent>[]
 }
@@ -172,6 +185,8 @@ export function createKeymapState<TTarget extends object, TEvent extends KeymapE
       commandResolvers: new OrderedRegistry<CommandResolver<TTarget, TEvent>>(),
       activeCommandViewVersion: -1,
       activeCommandView: undefined,
+      registeredCommandViewVersion: -1,
+      registeredCommandView: undefined,
       registeredCommandEntriesCacheVersion: -1,
       registeredCommandEntriesCache: [],
     },

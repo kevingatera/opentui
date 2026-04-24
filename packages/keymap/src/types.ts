@@ -113,10 +113,13 @@ export interface RunCommandOptions<TTarget extends object = object, TEvent exten
   includeCommand?: boolean
 }
 
+export interface DispatchCommandOptions<TTarget extends object = object, TEvent extends KeymapEvent = KeymapEvent>
+  extends RunCommandOptions<TTarget, TEvent> {}
+
 export type RunCommandResult =
   | { ok: true; command?: CommandRecord }
   | { ok: false; reason: "not-found" }
-  | { ok: false; reason: "invalid-args" | "rejected" | "error"; command?: CommandRecord }
+  | { ok: false; reason: "inactive" | "disabled" | "invalid-args" | "rejected" | "error"; command?: CommandRecord }
 
 export interface CommandContext<TTarget extends object = object, TEvent extends KeymapEvent = KeymapEvent> {
   keymap: Keymap<TTarget, TEvent>
