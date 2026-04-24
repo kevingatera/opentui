@@ -61,7 +61,9 @@ describe("comma bindings addon", () => {
       })
     }).not.toThrow()
 
-    expect(takeErrors().errors).toEqual(['Invalid key sequence "x,,y": comma-separated bindings cannot contain empty entries'])
+    expect(takeErrors().errors).toEqual([
+      'Invalid key sequence "x,,y": comma-separated bindings cannot contain empty entries',
+    ])
     expect(keymap.getActiveKeys()).toEqual([])
   })
 

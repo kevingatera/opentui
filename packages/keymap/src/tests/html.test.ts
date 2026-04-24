@@ -1,10 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
-import {
-  createDefaultHtmlKeymap,
-  createHtmlKeymap,
-  createHtmlKeymapEvent,
-  normalizeHtmlKeyName,
-} from "../html.js"
+import { createDefaultHtmlKeymap, createHtmlKeymap, createHtmlKeymapEvent, normalizeHtmlKeyName } from "../html.js"
 import { createDiagnosticHarness } from "./diagnostic-harness.js"
 
 const diagnostics = createDiagnosticHarness()

@@ -54,7 +54,9 @@ function assertExpectedTeardownDiagnostics(keymap: ReturnType<typeof createDefau
   const capture = diagnostics.captureDiagnostics(keymap)
   const { warnings } = capture.takeWarnings()
   expect(
-    warnings.every((warning) => warning === '[Keymap] Unknown token "<leader>" in key sequence "<leader>a" was ignored'),
+    warnings.every(
+      (warning) => warning === '[Keymap] Unknown token "<leader>" in key sequence "<leader>a" was ignored',
+    ),
   ).toBe(true)
   expect(capture.takeErrors().errors).toEqual([])
 }
@@ -147,9 +149,7 @@ async function createHookScenario() {
 
   mockInput.pressKey("x", { ctrl: true })
   expect(keymap.hasPendingSequence()).toBe(true)
-  expect(capture.takeWarnings().warnings).toEqual([
-    '[Keymap] Unresolved command "missing-command" for binding "z"',
-  ])
+  expect(capture.takeWarnings().warnings).toEqual(['[Keymap] Unresolved command "missing-command" for binding "z"'])
   expect(capture.takeErrors().errors).toEqual([
     'Invalid keymap command name "bad name": command names cannot contain whitespace',
   ])
@@ -269,10 +269,10 @@ describe("addon teardown order", () => {
       for (let pivot = 0; pivot <= ordering.length; pivot += 1) {
         const scenario = await createStatefulAddonScenario()
 
-      try {
-        for (const name of ordering.slice(0, pivot)) {
-          expect(() => scenario.disposers[name]()).not.toThrow()
-          assertLiveEngine(scenario.renderer, scenario.keymap)
+        try {
+          for (const name of ordering.slice(0, pivot)) {
+            expect(() => scenario.disposers[name]()).not.toThrow()
+            assertLiveEngine(scenario.renderer, scenario.keymap)
           }
 
           expect(() => scenario.renderer.destroy()).not.toThrow()

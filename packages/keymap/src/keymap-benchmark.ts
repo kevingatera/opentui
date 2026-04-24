@@ -1371,7 +1371,8 @@ const scenarios: BenchmarkScenario[] = [
   },
   {
     name: "dispatch_disambiguation_deferred_timeout_run_exact",
-    description: "Repeated ambiguous first-stroke dispatch with a deferred timeout resolver that later runs the exact binding",
+    description:
+      "Repeated ambiguous first-stroke dispatch with a deferred timeout resolver that later runs the exact binding",
     async setup() {
       const resources = await createScenarioResources()
 
@@ -1406,7 +1407,8 @@ const scenarios: BenchmarkScenario[] = [
   },
   {
     name: "dispatch_disambiguation_deferred_timeout_cancelled",
-    description: "Repeated ambiguous first-stroke dispatch with a deferred timeout resolver that is cancelled before it resolves",
+    description:
+      "Repeated ambiguous first-stroke dispatch with a deferred timeout resolver that is cancelled before it resolves",
     async setup() {
       const resources = await createScenarioResources()
 

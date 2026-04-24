@@ -252,7 +252,9 @@ describe("enabled addon", () => {
       })
     }).not.toThrow()
 
-    expect(takeErrors().errors).toEqual(['Keymap enabled field "enabled" must be a boolean, a function, or a reactive matcher'])
+    expect(takeErrors().errors).toEqual([
+      'Keymap enabled field "enabled" must be a boolean, a function, or a reactive matcher',
+    ])
     expect(getActiveKeyNames()).toEqual([])
 
     offEnabled()
@@ -301,7 +303,9 @@ describe("enabled addon", () => {
 
     const { errors } = takeErrors()
     expect(errors.length).toBeGreaterThan(0)
-    expect(errors.every((message) => message === "[Keymap] Error evaluating runtime matcher from field enabled:")).toBe(true)
+    expect(errors.every((message) => message === "[Keymap] Error evaluating runtime matcher from field enabled:")).toBe(
+      true,
+    )
     expect(calls).toEqual([])
   })
 
@@ -460,7 +464,9 @@ describe("enabled addon", () => {
       ],
     })
 
-    expect(takeErrors().errors).toEqual(['Keymap enabled field "enabled" must be a boolean, a function, or a reactive matcher'])
+    expect(takeErrors().errors).toEqual([
+      'Keymap enabled field "enabled" must be a boolean, a function, or a reactive matcher',
+    ])
     expect(keymap.getCommands()).toEqual([])
 
     offEnabled()

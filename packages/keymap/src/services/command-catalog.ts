@@ -23,7 +23,11 @@ import type {
   ResolvedBindingCommand,
   RuntimeMatcher,
 } from "../types.js"
-import { getActiveLayersForFocused, getFocusedTargetIfAvailable, isLayerActiveForFocused } from "./primitives/active-layers.js"
+import {
+  getActiveLayersForFocused,
+  getFocusedTargetIfAvailable,
+  isLayerActiveForFocused,
+} from "./primitives/active-layers.js"
 import type { ConditionService } from "./conditions.js"
 import { mergeAttribute, mergeRequirement } from "./primitives/field-invariants.js"
 import type { NotificationService } from "./notify.js"
@@ -389,7 +393,10 @@ export class CommandCatalogService<TTarget extends object, TEvent extends Keymap
 
   public getRegisteredCommandView(): RegisteredCommandView<TTarget, TEvent> {
     const cacheVersion = this.state.commands.commandMetadataVersion
-    if (this.state.commands.registeredCommandViewVersion === cacheVersion && this.state.commands.registeredCommandView) {
+    if (
+      this.state.commands.registeredCommandViewVersion === cacheVersion &&
+      this.state.commands.registeredCommandView
+    ) {
       return this.state.commands.registeredCommandView
     }
 
