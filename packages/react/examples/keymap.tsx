@@ -735,6 +735,19 @@ const AppContent = () => {
 
   useEffect(() => {
     return composeDisposers([
+      addons.registerTimedLeader(manager, {
+        trigger: { name: "x", ctrl: true },
+        onArm() {
+          setLeaderArmed(true)
+          announce("Leader armed: press s or h")
+        },
+        onDisarm() {
+          setLeaderArmed(false)
+        },
+      }),
+      addons.registerNeovimDisambiguation(manager),
+      addons.registerEscapeClearsPendingSequence(manager),
+      addons.registerBackspacePopsPendingSequence(manager),
       addons.registerManagedTextareaLayer(manager, renderer, {
         enabled: () => !commandPromptVisibleRef.current && renderer.currentFocusedEditor !== null,
         bindings: [
@@ -754,39 +767,24 @@ const AppContent = () => {
           { key: "shift+g", cmd: "buffer-end", desc: "Buffer end", group: "Go" },
         ] satisfies KeymapBindingInput[],
       }),
-      addons.registerBackspacePopsPendingSequence(manager),
-      addons.registerEscapeClearsPendingSequence(manager),
-      addons.registerNeovimDisambiguation(manager),
-      addons.registerTimedLeader(manager, {
-        trigger: { name: "x", ctrl: true },
-        onArm() {
-          setLeaderArmed(true)
-          announce("Leader armed: press s or h")
-        },
-        onDisarm() {
-          setLeaderArmed(false)
-        },
+      manager.registerLayer({
+        enabled: () => !commandPromptVisibleRef.current,
+        bindings: [
+          { key: "tab", cmd: "focus-next", desc: "Next target" },
+          { key: "shift+tab", cmd: "focus-prev", desc: "Previous target" },
+          { key: "?", cmd: "toggle-help", desc: "Toggle help" },
+          { key: "ctrl+r", cmd: ":reset", desc: "Reset counters" },
+          { key: "<leader>", group: "Leader" },
+          { key: "<leader>s", cmd: ":w session.log", desc: "Write session log", group: "Leader" },
+          { key: "<leader>h", cmd: "toggle-help", desc: "Toggle help", group: "Leader" },
+        ] satisfies KeymapBindingInput[],
+      }),
+      manager.registerLayer({
+        enabled: () => !commandPromptVisibleRef.current,
+        bindings: [{ key: ":", cmd: "open-ex-prompt", desc: "Open ex prompt" }] satisfies KeymapBindingInput[],
       }),
     ])
   }, [announce, manager, renderer])
-
-  useBindings(() => ({
-    enabled: () => !commandPromptVisibleRef.current,
-    bindings: [
-      { key: "tab", cmd: "focus-next", desc: "Next target" },
-      { key: "shift+tab", cmd: "focus-prev", desc: "Previous target" },
-      { key: "?", cmd: "toggle-help", desc: "Toggle help" },
-      { key: "ctrl+r", cmd: ":reset", desc: "Reset counters" },
-      { key: "<leader>", group: "Leader" },
-      { key: "<leader>s", cmd: ":w session.log", desc: "Write session log", group: "Leader" },
-      { key: "<leader>h", cmd: "toggle-help", desc: "Toggle help", group: "Leader" },
-    ] satisfies KeymapBindingInput[],
-  }))
-
-  useBindings(() => ({
-    enabled: () => !commandPromptVisibleRef.current,
-    bindings: [{ key: ":", cmd: "open-ex-prompt", desc: "Open ex prompt" }] satisfies KeymapBindingInput[],
-  }))
 
   const activeKeys = useActiveKeys({ includeMetadata: true })
   const pendingSequence = usePendingSequence()
