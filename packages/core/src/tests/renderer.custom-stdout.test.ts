@@ -110,6 +110,24 @@ test("split-footer custom stdout: native feed bytes bypass stdout capture", asyn
   expect(stdout.getWrittenBytes().toString("binary")).toContain("\x1b]0;split-footer custom stdout\x07")
 })
 
+test("custom stdout resetTerminalBgColor routes through configured stdout", async () => {
+  const stdin = createNullReadable()
+  const stdout = new CollectingWriteStream(80, 24) as unknown as CollectingWriteStream & NodeJS.WriteStream
+
+  const renderer = new CliRenderer(stdin, stdout, 80, 24, {
+    testing: false,
+    consoleMode: "disabled",
+  })
+  destroyFns.push(() => renderer.destroy())
+
+  stdout.clearWrites()
+  renderer.resetTerminalBgColor()
+
+  await new Promise<void>((resolve) => setImmediate(resolve))
+
+  expect(stdout.getWrittenBytes().toString("binary")).toContain("\x1b]111\x07")
+})
+
 test("process.stdout: no feed is allocated (stdout-direct path)", async () => {
   const renderer = await createCliRenderer({
     stdin: process.stdin,
@@ -128,6 +146,38 @@ test("omitting stdin/stdout uses process streams", async () => {
   })
   expect(renderer.stdin).toBe(process.stdin)
   destroyFns.push(() => renderer.destroy())
+})
+
+test("custom stdout defaults to remote env behavior", async () => {
+  const previous = process.env.OPENTUI_FORCE_WCWIDTH
+  process.env.OPENTUI_FORCE_WCWIDTH = "1"
+
+  try {
+    const defaultRemoteRenderer = await createCliRenderer({
+      stdin: createNullReadable(),
+      stdout: new CollectingWriteStream(80, 24) as unknown as NodeJS.WriteStream,
+      testing: false,
+    })
+    destroyFns.push(() => defaultRemoteRenderer.destroy())
+
+    expect(defaultRemoteRenderer.widthMethod).toBe("unicode")
+
+    const localRenderer = await createCliRenderer({
+      stdin: createNullReadable(),
+      stdout: new CollectingWriteStream(80, 24) as unknown as NodeJS.WriteStream,
+      testing: false,
+      remote: false,
+    })
+    destroyFns.push(() => localRenderer.destroy())
+
+    expect(localRenderer.widthMethod).toBe("wcwidth")
+  } finally {
+    if (previous === undefined) {
+      delete process.env.OPENTUI_FORCE_WCWIDTH
+    } else {
+      process.env.OPENTUI_FORCE_WCWIDTH = previous
+    }
+  }
 })
 
 // ---- Shutdown bytes reach the remote Writable (F1 regression test) ----
@@ -165,13 +215,10 @@ test("destroy emits shutdown ANSI sequence through the custom Writable", async (
 
 // ---- Backpressure ----
 
-test("slow Writable keeps feed chunks pinned while writes are in-flight", async () => {
+test("slow Writable marks feed as backpressured until write callback settles", async () => {
   const stdin = createNullReadable()
   const stdout = new CollectingWriteStream(80, 24) as unknown as CollectingWriteStream & NodeJS.WriteStream
-  // 40 ms delay per write keeps the Promise returned by onData unresolved,
-  // which in turn keeps the feed chunk refcount held — the backpressure
-  // mechanism we want to verify is actually engaging.
-  stdout.delayMs = 40
+  stdout.delayMs = 50
 
   const renderer = await createCliRenderer({
     stdin,
@@ -179,29 +226,182 @@ test("slow Writable keeps feed chunks pinned while writes are in-flight", async 
     testing: false,
   })
   destroyFns.push(() => {
-    stdout.delayMs = 0 // let teardown drain quickly
+    stdout.delayMs = 0
     renderer.destroy()
   })
 
   const feed = (renderer as any)._feed
   expect(feed).not.toBeNull()
 
-  // Emit several native writes without waiting for the 40 ms Writable callbacks
-  // to drain. The TS-side `pendingAsyncHandlers` counter tracks chunks still
-  // pinned by unresolved onData Promises — this is the concrete backpressure
-  // signal the renderer relies on, not the Zig-side span queue (which drains
-  // synchronously on DataAvailable).
-  let maxPinned = 0
-  for (let i = 0; i < 8; i++) {
-    renderer.setTerminalTitle(`backpressure-${i}`)
-    await new Promise<void>((resolve) => setImmediate(resolve))
-    const pinned = (feed as any).pendingAsyncHandlers as number
-    if (pinned > maxPinned) maxPinned = pinned
-  }
+  renderer.setTerminalTitle("slow-write")
+  await new Promise<void>((resolve) => setImmediate(resolve))
 
-  // At least one chunk must be pinned while writes are outstanding.
-  // Zero would mean the feed cycled chunks instantly with no backpressure.
-  expect(maxPinned).toBeGreaterThanOrEqual(1)
+  expect(feed.isBackpressured()).toBe(true)
+
+  stdout.delayMs = 0
+  await feed.idle()
+
+  expect(feed.isBackpressured()).toBe(false)
+})
+
+test("split-footer custom stdout keeps captured commits queued while feed is backpressured", async () => {
+  const stdin = createNullReadable()
+  const stdout = new CollectingWriteStream(80, 24) as unknown as CollectingWriteStream & NodeJS.WriteStream
+  stdout.delayMs = 100
+
+  const renderer = new CliRenderer(stdin, stdout, 80, 24, {
+    testing: false,
+    screenMode: "split-footer",
+    consoleMode: "disabled",
+  })
+  destroyFns.push(() => {
+    stdout.delayMs = 0
+    renderer.destroy()
+  })
+
+  const feed = (renderer as any)._feed
+  expect(feed).not.toBeNull()
+
+  renderer.setTerminalTitle("pin-feed")
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  expect(feed.isBackpressured()).toBe(true)
+
+  stdout.write("captured\n")
+  await (renderer as any).loop()
+
+  expect((renderer as any).externalOutputQueue.size).toBeGreaterThan(0)
+
+  let idleResolved = false
+  const idlePromise = renderer.idle().then(() => {
+    idleResolved = true
+  })
+
+  await Promise.resolve()
+  expect(idleResolved).toBe(false)
+
+  stdout.delayMs = 0
+  await feed.idle()
+  await idlePromise
+  await feed.idle()
+
+  expect((renderer as any).externalOutputQueue.size).toBe(0)
+})
+
+test("capture-to-passthrough flushes queued split-footer commits while feed is backpressured", async () => {
+  const stdin = createNullReadable()
+  const stdout = new CollectingWriteStream(80, 24) as unknown as CollectingWriteStream & NodeJS.WriteStream
+  stdout.delayMs = 30
+
+  const renderer = new CliRenderer(stdin, stdout, 80, 24, {
+    testing: false,
+    screenMode: "split-footer",
+    consoleMode: "disabled",
+  })
+  destroyFns.push(() => {
+    stdout.delayMs = 0
+    renderer.destroy()
+  })
+
+  const feed = (renderer as any)._feed
+  expect(feed).not.toBeNull()
+
+  renderer.setTerminalTitle("pin-feed-before-mode-switch")
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  expect(feed.isBackpressured()).toBe(true)
+
+  stdout.write("captured-before-mode-switch\n")
+  expect((renderer as any).externalOutputQueue.size).toBeGreaterThan(0)
+
+  renderer.externalOutputMode = "passthrough"
+  stdout.delayMs = 0
+
+  await new Promise<void>((resolve) => setTimeout(resolve, 80))
+
+  expect(stdout.getWrittenBytes().toString("binary")).toContain("captured-before-mode-switch")
+  expect((renderer as any).externalOutputQueue.size).toBe(0)
+})
+
+test("destroy resolves idle waiters when a feed-idle render was scheduled", async () => {
+  const stdin = createNullReadable()
+  const stdout = new CollectingWriteStream(80, 24) as unknown as CollectingWriteStream & NodeJS.WriteStream
+  stdout.delayMs = 30
+
+  const renderer = new CliRenderer(stdin, stdout, 80, 24, {
+    testing: false,
+    screenMode: "split-footer",
+    consoleMode: "disabled",
+  })
+  destroyFns.push(() => {
+    stdout.delayMs = 0
+    renderer.destroy()
+  })
+
+  const feed = (renderer as any)._feed
+  expect(feed).not.toBeNull()
+
+  renderer.setTerminalTitle("pin-feed-before-idle")
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  expect(feed.isBackpressured()).toBe(true)
+
+  stdout.write("captured-before-idle-destroy\n")
+  await (renderer as any).loop()
+  expect((renderer as any).feedIdleRenderScheduled).toBe(true)
+
+  let idleResolved = false
+  const idlePromise = renderer.idle().then(() => {
+    idleResolved = true
+  })
+
+  renderer.destroy()
+  stdout.delayMs = 0
+  await Promise.resolve()
+
+  expect(idleResolved).toBe(true)
+  await idlePromise
+
+  await new Promise<void>((resolve) => setTimeout(resolve, 80))
+  expect(stdout.getWrittenBytes().toString("binary")).toContain("captured-before-idle-destroy")
+  expect((renderer as any).externalOutputQueue.size).toBe(0)
+})
+
+test("suspend resolves idle waiters when a feed-idle render was scheduled", async () => {
+  const stdin = createNullReadable()
+  const stdout = new CollectingWriteStream(80, 24) as unknown as CollectingWriteStream & NodeJS.WriteStream
+  stdout.delayMs = 30
+
+  const renderer = new CliRenderer(stdin, stdout, 80, 24, {
+    testing: false,
+    screenMode: "split-footer",
+    consoleMode: "disabled",
+  })
+  destroyFns.push(() => {
+    stdout.delayMs = 0
+    renderer.destroy()
+  })
+
+  const feed = (renderer as any)._feed
+  expect(feed).not.toBeNull()
+
+  renderer.setTerminalTitle("pin-feed-before-suspend")
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  expect(feed.isBackpressured()).toBe(true)
+
+  stdout.write("captured-before-suspend\n")
+  await (renderer as any).loop()
+  expect((renderer as any).feedIdleRenderScheduled).toBe(true)
+
+  let idleResolved = false
+  const idlePromise = renderer.idle().then(() => {
+    idleResolved = true
+  })
+
+  renderer.suspend()
+  stdout.delayMs = 0
+  await feed.idle()
+  await Promise.resolve()
+
+  expect(idleResolved).toBe(true)
+  await idlePromise
 })
 
 // ---- Dimension fallback ----

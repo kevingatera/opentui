@@ -1,7 +1,7 @@
 import { toArrayBuffer, type Pointer } from "bun:ffi"
 import { resolveRenderLib } from "./zig.js"
 import { SpanInfoStruct } from "./zig-structs.js"
-import type { GrowthPolicy, NativeSpanFeedOptions, NativeSpanFeedStats } from "./zig-structs.js"
+import type { NativeSpanFeedOptions } from "./zig-structs.js"
 
 export type { GrowthPolicy, NativeSpanFeedOptions, NativeSpanFeedStats } from "./zig-structs.js"
 
@@ -116,6 +116,18 @@ export class NativeSpanFeed {
     return () => this.errorHandlers.delete(handler)
   }
 
+  private hasPinnedChunks(): boolean {
+    if (!this.stateBuffer) return false
+    for (const refcount of this.stateBuffer) {
+      if (refcount > 0) return true
+    }
+    return false
+  }
+
+  isBackpressured(): boolean {
+    return this.pendingAsyncHandlers > 0 || this.pendingDataAvailable || this.hasPinnedChunks()
+  }
+
   close(): void {
     if (this.destroyed) return
     if (this.inCallback || this.draining || this.pendingAsyncHandlers > 0) {
@@ -170,7 +182,13 @@ export class NativeSpanFeed {
   }
 
   private isIdle(): boolean {
-    return !this.inCallback && !this.draining && this.pendingAsyncHandlers === 0 && !this.pendingDataAvailable
+    return (
+      !this.inCallback &&
+      !this.draining &&
+      this.pendingAsyncHandlers === 0 &&
+      !this.pendingDataAvailable &&
+      !this.hasPinnedChunks()
+    )
   }
 
   private resolveIdleIfNeeded(): void {

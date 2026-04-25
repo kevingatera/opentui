@@ -34,7 +34,7 @@ export class TestRecorder {
   private recording: boolean = false
   private frameNumber: number = 0
   private startTime: number = 0
-  private originalRenderNative?: () => void
+  private originalRenderNative?: () => "rendered" | "backpressured" | "skipped"
   private decoder = new TextDecoder()
   private recordBuffers: RecordBuffersOptions
   private now: () => number
@@ -64,10 +64,14 @@ export class TestRecorder {
     // Override renderNative to capture frames after each render
     this.renderer["renderNative"] = () => {
       // Call the original renderNative
-      this.originalRenderNative!()
+      const status = this.originalRenderNative!()
 
       // Capture the frame after rendering
-      this.captureFrame()
+      if (status === "rendered") {
+        this.captureFrame()
+      }
+
+      return status
     }
   }
 

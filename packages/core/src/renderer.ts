@@ -347,32 +347,25 @@ class ExternalOutputQueue {
     this.commits.push(commit)
   }
 
-  claim(limit: number = Number.POSITIVE_INFINITY): ExternalOutputCommit[] {
-    if (this.commits.length === 0) {
-      return []
-    }
-
-    // Split-footer capture can enqueue many tiny commits in a burst (for example,
-    // simulated Ctrl+R hold). Taking everything at once creates very large native
-    // frames that increase visible churn. We keep claim() bounded so one render tick
-    // produces one modest frame and schedules another tick if work remains.
+  peek(limit: number): ExternalOutputCommit[] {
     const clampedLimit = Number.isFinite(limit) ? Math.max(1, Math.trunc(limit)) : this.commits.length
-    if (clampedLimit >= this.commits.length) {
-      const output = this.commits
-      this.commits = []
-      return output
-    }
+    return this.commits.slice(0, clampedLimit)
+  }
 
-    const output = this.commits.slice(0, clampedLimit)
-    this.commits = this.commits.slice(clampedLimit)
+  drop(count: number): void {
+    for (const commit of this.commits.splice(0, count)) {
+      commit.snapshot.destroy()
+    }
+  }
+
+  claim(): ExternalOutputCommit[] {
+    const output = this.commits
+    this.commits = []
     return output
   }
 
   clear(): void {
-    for (const commit of this.commits) {
-      commit.snapshot.destroy()
-    }
-    this.commits = []
+    this.drop(this.commits.length)
   }
 }
 
@@ -919,6 +912,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private _feed: NativeSpanFeed | null = null
   private _detachFeed: (() => void) | null = null
   private _detachFeedError: (() => void) | null = null
+  private feedIdleRenderScheduled = false
 
   public get controlState(): RendererControlState {
     return this._controlState
@@ -986,6 +980,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     // `this`) while accessing the implementation's wider signature.
     const { screenMode, footerHeight, externalOutputMode } = resolveModes(config)
     const initialGeometry = calculateRenderGeometry(screenMode, width, height, footerHeight)
+    const resolvedRemote = config.remote ?? !this._usesProcessStdout
 
     type InternalRenderLib = RenderLib & {
       createRenderer: (
@@ -1001,7 +996,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
         initialGeometry.renderWidth,
         initialGeometry.renderHeight,
         {
-          remote: config.remote ?? !this._usesProcessStdout,
+          remote: resolvedRemote,
           testing: config.testing ?? false,
           feedPtr: feed?.streamPtr ?? null,
         },
@@ -1066,7 +1061,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.clearOnShutdown = config.clearOnShutdown ?? true
     this.lib.setClearOnShutdown(this.rendererPtr, this.clearOnShutdown)
 
-    const forwardEnvKeys = config.forwardEnvKeys ?? (config.remote ? [] : [...DEFAULT_FORWARDED_ENV_KEYS])
+    const forwardEnvKeys = config.forwardEnvKeys ?? (resolvedRemote ? [] : [...DEFAULT_FORWARDED_ENV_KEYS])
     for (const key of forwardEnvKeys) {
       const value = process.env[key]
       if (value === undefined) continue
@@ -1202,6 +1197,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
         if (this._splitHeight > 0) {
           this.flushStdoutCache(this._splitHeight)
         }
+        return "rendered"
       }
     }
 
@@ -1352,6 +1348,37 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     return this.realStdoutWrite.call(this.stdout, chunk, encoding, callback)
   }
 
+  private isFeedBackpressured(): boolean {
+    return this._feed?.isBackpressured() ?? false
+  }
+
+  private scheduleRenderAfterFeedIdle(): void {
+    const feed = this._feed
+    if (!feed || this.feedIdleRenderScheduled || this._isDestroyed) return
+
+    this.feedIdleRenderScheduled = true
+    feed.idle().then(() => {
+      this.feedIdleRenderScheduled = false
+      if (this._isDestroyed) {
+        this.resolveIdleIfNeeded()
+        return
+      }
+
+      if (this._isRunning) {
+        if (!this.renderTimeout && !this.rendering) {
+          this.renderTimeout = this.clock.setTimeout(() => {
+            this.renderTimeout = null
+            this.loop()
+          }, 0)
+        }
+        return
+      }
+
+      this.requestRender()
+      this.resolveIdleIfNeeded()
+    })
+  }
+
   public requestRender() {
     if (this._controlState === RendererControlState.EXPLICIT_SUSPENDED) {
       return
@@ -1415,11 +1442,14 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   }
 
   private isIdleNow(): boolean {
+    if (this._isDestroyed) return true
+
     return (
       !this._isRunning &&
       !this.rendering &&
       !this.renderTimeout &&
       !this.updateScheduled &&
+      !this.feedIdleRenderScheduled &&
       !this.immediateRerenderRequested
     )
   }
@@ -2248,12 +2278,22 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     return commits
   }
 
-  private flushPendingSplitCommits(forceFooterRepaint: boolean = false): void {
+  private flushPendingSplitCommits(
+    forceFooterRepaint: boolean = false,
+    ignoreFeedBackpressure: boolean = false,
+  ): "rendered" | "backpressured" {
+    if (!ignoreFeedBackpressure && this.isFeedBackpressured()) {
+      this.scheduleRenderAfterFeedIdle()
+      return "backpressured"
+    }
+
     // Drain only a bounded prefix so one JS render pass maps to one native frame.
     // Remaining commits are intentionally left queued and rendered on subsequent
     // ticks to avoid giant multi-thousand-cell frames that can flicker.
-    const commits = this.externalOutputQueue.claim(this.maxSplitCommitsPerFrame)
-    let hasCommittedOutput = false
+    const commits = this.externalOutputQueue.peek(
+      ignoreFeedBackpressure ? Number.POSITIVE_INFINITY : this.maxSplitCommitsPerFrame,
+    )
+    let committedCount = 0
     const lastCommitIndex = commits.length - 1
 
     for (const [index, commit] of commits.entries()) {
@@ -2265,27 +2305,27 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       const beginFrame = index === 0
       const finalizeFrame = index === lastCommitIndex
 
-      try {
-        // Keep split append policy in native code so every producer (captured stdout
-        // and writeToScrollback) shares the same cursor/scrollback invariants.
-        this.renderOffset = this.lib.commitSplitFooterSnapshot(
-          this.rendererPtr,
-          commit.snapshot,
-          commit.rowColumns,
-          commit.startOnNewLine,
-          commit.trailingNewline,
-          this.getSplitPinnedRenderOffset(),
-          forceCommit,
-          beginFrame,
-          finalizeFrame,
-        )
-        hasCommittedOutput = true
-      } finally {
-        commit.snapshot.destroy()
-      }
+      // Keep split append policy in native code so every producer (captured stdout
+      // and writeToScrollback) shares the same cursor/scrollback invariants.
+      this.renderOffset = this.lib.commitSplitFooterSnapshot(
+        this.rendererPtr,
+        commit.snapshot,
+        commit.rowColumns,
+        commit.startOnNewLine,
+        commit.trailingNewline,
+        this.getSplitPinnedRenderOffset(),
+        forceCommit,
+        beginFrame,
+        finalizeFrame,
+      )
+      committedCount++
     }
 
-    if (!hasCommittedOutput) {
+    if (committedCount > 0) {
+      this.externalOutputQueue.drop(committedCount)
+    }
+
+    if (committedCount === 0) {
       this.renderOffset = this.lib.repaintSplitFooter(
         this.rendererPtr,
         this.getSplitPinnedRenderOffset(),
@@ -2300,6 +2340,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       // This keeps sustained stdout bursts smooth instead of blocking on one frame.
       this.requestRender()
     }
+
+    return "rendered"
   }
 
   private interceptStdoutWrite = (chunk: any, encoding?: any, callback?: any): boolean => {
@@ -2352,7 +2394,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       return
     }
 
-    this.flushPendingSplitCommits(forceFooterRepaint)
+    this.flushPendingSplitCommits(forceFooterRepaint, true)
   }
 
   private resetSplitScrollback(seedRows: number = 0): void {
@@ -3396,7 +3438,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
    * consumers that need explicit control (e.g. before SIGTSTP).
    */
   public resetTerminalBgColor(): void {
-    process.stdout.write("\x1b]111\x07")
+    this.writeOut("\x1b]111\x07")
   }
 
   public copyToClipboardOSC52(text: string, target?: ClipboardTarget): boolean {
@@ -3537,6 +3579,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this._previousControlState = this._controlState
 
     this._controlState = RendererControlState.EXPLICIT_SUSPENDED
+    this.updateScheduled = false
     this.internalPause()
 
     if (this._terminalIsSetup) {
@@ -3932,37 +3975,57 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
       // If destroy() was requested during this frame, skip native work and scheduling.
       if (!this._isDestroyed) {
-        this.renderNative()
+        const nativeStatus = this.renderNative() ?? "rendered"
 
-        // Check if hit grid changed and recheck hover state if needed
-        if (this._useMouse && this.lib.getHitGridDirty(this.rendererPtr)) {
-          this.recheckHoverState()
-        }
+        if (nativeStatus === "rendered") {
+          // Check if hit grid changed and recheck hover state if needed
+          if (this._useMouse && this.lib.getHitGridDirty(this.rendererPtr)) {
+            this.recheckHoverState()
+          }
 
-        const overallFrameTime = performance.now() - overallStart
+          const overallFrameTime = performance.now() - overallStart
 
-        // TODO: Add animationRequestTime to stats
-        this.lib.updateStats(
-          this.rendererPtr,
-          overallFrameTime,
-          this.renderStats.fps,
-          this.renderStats.frameCallbackTime,
-        )
+          // TODO: Add animationRequestTime to stats
+          this.lib.updateStats(
+            this.rendererPtr,
+            overallFrameTime,
+            this.renderStats.fps,
+            this.renderStats.frameCallbackTime,
+          )
 
-        if (this.gatherStats) {
-          this.collectStatSample(overallFrameTime)
-        }
+          if (this.gatherStats) {
+            this.collectStatSample(overallFrameTime)
+          }
 
-        if (this._isRunning || this.immediateRerenderRequested) {
-          const targetFrameTime = this.immediateRerenderRequested ? this.minTargetFrameTime : this.targetFrameTime
-          const delay = Math.max(1, targetFrameTime - Math.floor(overallFrameTime))
-          this.immediateRerenderRequested = false
-          this.renderTimeout = this.clock.setTimeout(() => {
+          if (this._isRunning || this.immediateRerenderRequested) {
+            const targetFrameTime = this.immediateRerenderRequested ? this.minTargetFrameTime : this.targetFrameTime
+            const delay = Math.max(1, targetFrameTime - Math.floor(overallFrameTime))
+            this.immediateRerenderRequested = false
+            this.renderTimeout = this.clock.setTimeout(() => {
+              this.renderTimeout = null
+              this.loop()
+            }, delay)
+          } else {
+            this.clock.clearTimeout(this.renderTimeout!)
             this.renderTimeout = null
-            this.loop()
-          }, delay)
+          }
+        } else if (nativeStatus === "skipped") {
+          const overallFrameTime = performance.now() - overallStart
+
+          if (this._isRunning || this.immediateRerenderRequested) {
+            const targetFrameTime = this.immediateRerenderRequested ? this.minTargetFrameTime : this.targetFrameTime
+            const delay = Math.max(1, targetFrameTime - Math.floor(overallFrameTime))
+            this.immediateRerenderRequested = false
+            this.renderTimeout = this.clock.setTimeout(() => {
+              this.renderTimeout = null
+              this.loop()
+            }, delay)
+          } else {
+            this.clock.clearTimeout(this.renderTimeout!)
+            this.renderTimeout = null
+          }
         } else {
-          this.clock.clearTimeout(this.renderTimeout!)
+          this.immediateRerenderRequested = false
           this.renderTimeout = null
         }
       }
@@ -3980,7 +4043,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.loop()
   }
 
-  private renderNative(): void {
+  private renderNative(): "rendered" | "backpressured" | "skipped" {
     if (this.renderingNative) {
       console.error("Rendering called concurrently")
       throw new Error("Rendering called concurrently")
@@ -3988,32 +4051,44 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
     this.renderingNative = true
 
-    if (
-      this.pendingSplitStartupCursorSeed &&
-      this.splitStartupSeedTimeoutId !== null &&
-      this._splitHeight > 0 &&
-      this._externalOutputMode === "capture-stdout"
-    ) {
-      this.renderingNative = false
-      return
-    }
+    try {
+      if (
+        this.pendingSplitStartupCursorSeed &&
+        this.splitStartupSeedTimeoutId !== null &&
+        this._splitHeight > 0 &&
+        this._externalOutputMode === "capture-stdout"
+      ) {
+        return "skipped"
+      }
 
-    if (this._splitHeight > 0 && this._externalOutputMode === "capture-stdout") {
-      // forceFullRepaintRequested is a one-shot latch used when mode/geometry
-      // transitions need a complete footer refresh. Consume it once so steady-state
-      // capture path keeps using diff-based repainting.
-      const forceSplitRepaint = this.forceFullRepaintRequested
-      this.forceFullRepaintRequested = false
-      this.flushPendingSplitCommits(forceSplitRepaint)
-      this.pendingSplitFooterTransition = null
-    } else {
+      if (this.isFeedBackpressured()) {
+        this.scheduleRenderAfterFeedIdle()
+        return "backpressured"
+      }
+
+      if (this._splitHeight > 0 && this._externalOutputMode === "capture-stdout") {
+        // forceFullRepaintRequested is a one-shot latch used when mode/geometry
+        // transitions need a complete footer refresh. Consume it once so steady-state
+        // capture path keeps using diff-based repainting.
+        const forceSplitRepaint = this.forceFullRepaintRequested
+        const status = this.flushPendingSplitCommits(forceSplitRepaint)
+        if (status === "backpressured") {
+          return "backpressured"
+        }
+        this.forceFullRepaintRequested = false
+        this.pendingSplitFooterTransition = null
+        return "rendered"
+      }
+
       const force = this.forceFullRepaintRequested
       this.forceFullRepaintRequested = false
       this.pendingSplitFooterTransition = null
       this.lib.render(this.rendererPtr, force)
+      // this.dumpOutputBuffer(Date.now())
+      return "rendered"
+    } finally {
+      this.renderingNative = false
     }
-    // this.dumpOutputBuffer(Date.now())
-    this.renderingNative = false
   }
 
   private collectStatSample(frameTime: number): void {
