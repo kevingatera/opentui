@@ -5,6 +5,7 @@ import { BoxRenderable } from "../renderables/Box.js"
 import { TextAttributes, type CapturedFrame } from "../types.js"
 import { RGBA } from "../lib/index.js"
 import { StyledText } from "../lib/styled-text.js"
+import { COLOR_TAG_DEFAULT, COLOR_TAG_RGB } from "../lib/RGBA.js"
 
 describe("captureSpans", () => {
   let renderer: TestRenderer
@@ -163,8 +164,8 @@ describe("captureSpans", () => {
     expect(contentSpans).toHaveLength(2)
     expect(contentSpans[0].text).toBe("A")
     expect(contentSpans[1].text).toBe("B")
-    expect(contentSpans[0].fg.intent).toBe("rgb")
-    expect(contentSpans[1].fg.intent).toBe("default")
+    expect(contentSpans[0].fg.tag).toBe(COLOR_TAG_RGB)
+    expect(contentSpans[1].fg.tag).toBe(COLOR_TAG_DEFAULT)
   })
 
   test("handles box-drawing characters without crashing", async () => {

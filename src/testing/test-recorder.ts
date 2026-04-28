@@ -7,8 +7,8 @@ export interface RecordBuffersOptions {
 }
 
 export interface RecordedBuffers {
-  fg?: Uint16Array
-  bg?: Uint16Array
+  fg?: Float32Array
+  bg?: Float32Array
   attributes?: Uint8Array
 }
 
@@ -130,10 +130,10 @@ export class TestRecorder {
       recordedFrame.buffers = {}
 
       if (this.recordBuffers.fg) {
-        recordedFrame.buffers.fg = new Uint16Array(buffers.fg)
+        recordedFrame.buffers.fg = new Float32Array(buffers.fg)
       }
       if (this.recordBuffers.bg) {
-        recordedFrame.buffers.bg = new Uint16Array(buffers.bg)
+        recordedFrame.buffers.bg = new Float32Array(buffers.bg)
       }
       if (this.recordBuffers.attributes) {
         recordedFrame.buffers.attributes = new Uint8Array(buffers.attributes)

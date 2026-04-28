@@ -1,7 +1,6 @@
 const std = @import("std");
 const buffer_mod = @import("../buffer.zig");
 const buffer_effects = @import("../buffer-methods.zig");
-const ansi = @import("../ansi.zig");
 const gp = @import("../grapheme.zig");
 
 const OptimizedBuffer = buffer_mod.OptimizedBuffer;
@@ -9,13 +8,12 @@ const RGBA = buffer_mod.RGBA;
 const ColorTarget = buffer_effects.ColorTarget;
 
 fn expectRGBAApprox(expected: RGBA, actual: RGBA, epsilon: f32) !void {
-    const diff_r = @abs(ansi.redF(expected) - ansi.redF(actual));
-    const diff_g = @abs(ansi.greenF(expected) - ansi.greenF(actual));
-    const diff_b = @abs(ansi.blueF(expected) - ansi.blueF(actual));
-    const diff_a = @abs(ansi.alphaF(expected) - ansi.alphaF(actual));
-    const tolerance = epsilon + (1.0 / 255.0);
+    const diff_r = @abs(expected[0] - actual[0]);
+    const diff_g = @abs(expected[1] - actual[1]);
+    const diff_b = @abs(expected[2] - actual[2]);
+    const diff_a = @abs(expected[3] - actual[3]);
 
-    if (diff_r > tolerance or diff_g > tolerance or diff_b > tolerance or diff_a > tolerance) {
+    if (diff_r > epsilon or diff_g > epsilon or diff_b > epsilon or diff_a > epsilon) {
         std.debug.print("RGBA mismatch: expected {any}, got {any}\n", .{ expected, actual });
         return error.TestExpectedApprox;
     }
@@ -73,8 +71,8 @@ test "colorMatrix - identity matrix leaves colors unchanged" {
     );
     defer buf.deinit();
 
-    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
-    const red = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const red = RGBA{ 1.0, 0.0, 0.0, 1.0 };
 
     try buf.clear(bg, null);
     buf.buffer.fg[0] = red; // (0, 0)
@@ -102,8 +100,8 @@ test "colorMatrix - applies transformation to specified cells only" {
     );
     defer buf.deinit();
 
-    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
-    const red = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const red = RGBA{ 1.0, 0.0, 0.0, 1.0 };
 
     try buf.clear(bg, null);
 
@@ -118,7 +116,7 @@ test "colorMatrix - applies transformation to specified cells only" {
     const expected_r = 0.393;
     const expected_g = 0.349;
     const expected_b = 0.272;
-    try expectRGBAApprox(ansi.rgbaFromFloats(expected_r, expected_g, expected_b, 1.0), buf.buffer.fg[4], 0.001);
+    try expectRGBAApprox(.{ expected_r, expected_g, expected_b, 1.0 }, buf.buffer.fg[4], 0.001);
 
     // Other cells should remain red
     try expectRGBAApprox(red, buf.buffer.fg[0], 0.0001); // (0, 0)
@@ -137,8 +135,8 @@ test "colorMatrix - globalStrength scales individual cell strengths" {
     );
     defer buf.deinit();
 
-    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
-    const red = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const red = RGBA{ 1.0, 0.0, 0.0, 1.0 };
 
     try buf.clear(bg, null);
     buf.buffer.fg[0] = red;
@@ -155,7 +153,7 @@ test "colorMatrix - globalStrength scales individual cell strengths" {
     const sepia_b = 0.272;
     const expected_b = 0.0 + (sepia_b - 0.0) * 0.5;
 
-    try expectRGBAApprox(ansi.rgbaFromFloats(expected_r, expected_g, expected_b, 1.0), buf.buffer.fg[0], 0.001);
+    try expectRGBAApprox(.{ expected_r, expected_g, expected_b, 1.0 }, buf.buffer.fg[0], 0.001);
 }
 
 test "colorMatrix - respects target parameter" {
@@ -170,9 +168,9 @@ test "colorMatrix - respects target parameter" {
     );
     defer buf.deinit();
 
-    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
-    const red = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
-    const blue = ansi.rgbaFromFloats(0.0, 0.0, 1.0, 1.0);
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const red = RGBA{ 1.0, 0.0, 0.0, 1.0 };
+    const blue = RGBA{ 0.0, 0.0, 1.0, 1.0 };
 
     try buf.clear(bg, null);
     buf.buffer.fg[0] = red;
@@ -186,7 +184,7 @@ test "colorMatrix - respects target parameter" {
 
     // FG should be grayscale, BG should remain blue
     const gray_red = 0.299 * 1.0;
-    try expectRGBAApprox(ansi.rgbaFromFloats(gray_red, gray_red, gray_red, 1.0), buf.buffer.fg[0], 0.001);
+    try expectRGBAApprox(.{ gray_red, gray_red, gray_red, 1.0 }, buf.buffer.fg[0], 0.001);
     try expectRGBAApprox(blue, buf.buffer.bg[0], 0.0001);
 
     // Reset for BG test
@@ -200,7 +198,7 @@ test "colorMatrix - respects target parameter" {
     // BG should be grayscale, FG should remain red
     const gray_blue = 0.114 * 1.0;
     try expectRGBAApprox(red, buf.buffer.fg[0], 0.0001);
-    try expectRGBAApprox(ansi.rgbaFromFloats(gray_blue, gray_blue, gray_blue, 1.0), buf.buffer.bg[0], 0.001);
+    try expectRGBAApprox(.{ gray_blue, gray_blue, gray_blue, 1.0 }, buf.buffer.bg[0], 0.001);
 }
 
 test "colorMatrix - skips out-of-bounds coordinates" {
@@ -215,8 +213,8 @@ test "colorMatrix - skips out-of-bounds coordinates" {
     );
     defer buf.deinit();
 
-    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
-    const red = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const red = RGBA{ 1.0, 0.0, 0.0, 1.0 };
 
     try buf.clear(bg, null);
     buf.buffer.fg[4] = red; // (1, 1)
@@ -229,7 +227,7 @@ test "colorMatrix - skips out-of-bounds coordinates" {
     const expected_r = 0.393;
     const expected_g = 0.349;
     const expected_b = 0.272;
-    try expectRGBAApprox(ansi.rgbaFromFloats(expected_r, expected_g, expected_b, 1.0), buf.buffer.fg[4], 0.001);
+    try expectRGBAApprox(.{ expected_r, expected_g, expected_b, 1.0 }, buf.buffer.fg[4], 0.001);
 }
 
 test "colorMatrix - skips NaN and Inf coordinates" {
@@ -244,8 +242,8 @@ test "colorMatrix - skips NaN and Inf coordinates" {
     );
     defer buf.deinit();
 
-    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
-    const red = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const red = RGBA{ 1.0, 0.0, 0.0, 1.0 };
 
     try buf.clear(bg, null);
     buf.buffer.fg[4] = red; // (1, 1)
@@ -259,7 +257,7 @@ test "colorMatrix - skips NaN and Inf coordinates" {
     const expected_r = 0.393;
     const expected_g = 0.349;
     const expected_b = 0.272;
-    try expectRGBAApprox(ansi.rgbaFromFloats(expected_r, expected_g, expected_b, 1.0), buf.buffer.fg[4], 0.001);
+    try expectRGBAApprox(.{ expected_r, expected_g, expected_b, 1.0 }, buf.buffer.fg[4], 0.001);
 }
 
 test "colorMatrix - skips zero strength cells" {
@@ -274,8 +272,8 @@ test "colorMatrix - skips zero strength cells" {
     );
     defer buf.deinit();
 
-    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
-    const red = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const red = RGBA{ 1.0, 0.0, 0.0, 1.0 };
 
     try buf.clear(bg, null);
     buf.buffer.fg[0] = red;
@@ -300,11 +298,11 @@ test "colorMatrix - handles multiple cells in mask" {
     );
     defer buf.deinit();
 
-    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
-    const red = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
-    const green = ansi.rgbaFromFloats(0.0, 1.0, 0.0, 1.0);
-    const blue = ansi.rgbaFromFloats(0.0, 0.0, 1.0, 1.0);
-    const white = ansi.rgbaFromFloats(1.0, 1.0, 1.0, 1.0);
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const red = RGBA{ 1.0, 0.0, 0.0, 1.0 };
+    const green = RGBA{ 0.0, 1.0, 0.0, 1.0 };
+    const blue = RGBA{ 0.0, 0.0, 1.0, 1.0 };
+    const white = RGBA{ 1.0, 1.0, 1.0, 1.0 };
 
     try buf.clear(bg, null);
 
@@ -327,13 +325,13 @@ test "colorMatrix - handles multiple cells in mask" {
     const sepia_r = 0.393;
     const sepia_g = 0.349;
     const sepia_b = 0.272;
-    try expectRGBAApprox(ansi.rgbaFromFloats(sepia_r, sepia_g, sepia_b, 1.0), buf.buffer.fg[0], 0.001);
+    try expectRGBAApprox(.{ sepia_r, sepia_g, sepia_b, 1.0 }, buf.buffer.fg[0], 0.001);
 
     // (1, 1) should be half sepia
     const green_sepia_r = 0.0 + (0.769 - 0.0) * 0.5; // Matrix row 0, col 1 = 0.769
     const green_sepia_g = 1.0 + (0.686 - 1.0) * 0.5;
     const green_sepia_b = 0.0 + (0.534 - 0.0) * 0.5;
-    try expectRGBAApprox(ansi.rgbaFromFloats(green_sepia_r, green_sepia_g, green_sepia_b, 1.0), buf.buffer.fg[5], 0.001);
+    try expectRGBAApprox(.{ green_sepia_r, green_sepia_g, green_sepia_b, 1.0 }, buf.buffer.fg[5], 0.001);
 
     // (2, 2) should be unchanged (zero strength)
     try expectRGBAApprox(blue, buf.buffer.fg[10], 0.0001);
@@ -343,7 +341,7 @@ test "colorMatrix - handles multiple cells in mask" {
     const white_sepia_r = 0.393 + 0.769 + 0.189; // ~1.351
     const white_sepia_g = 0.349 + 0.686 + 0.168; // ~1.203
     const white_sepia_b = 0.272 + 0.534 + 0.131; // ~0.937
-    try expectRGBAApprox(ansi.rgbaFromFloats(white_sepia_r, white_sepia_g, white_sepia_b, 1.0), buf.buffer.fg[15], 0.001);
+    try expectRGBAApprox(.{ white_sepia_r, white_sepia_g, white_sepia_b, 1.0 }, buf.buffer.fg[15], 0.001);
 }
 
 test "colorMatrix - truncates incomplete mask triplets" {
@@ -358,8 +356,8 @@ test "colorMatrix - truncates incomplete mask triplets" {
     );
     defer buf.deinit();
 
-    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
-    const red = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const red = RGBA{ 1.0, 0.0, 0.0, 1.0 };
 
     try buf.clear(bg, null);
     buf.buffer.fg[0] = red;
@@ -373,7 +371,7 @@ test "colorMatrix - truncates incomplete mask triplets" {
     const sepia_r = 0.393;
     const sepia_g = 0.349;
     const sepia_b = 0.272;
-    try expectRGBAApprox(ansi.rgbaFromFloats(sepia_r, sepia_g, sepia_b, 1.0), buf.buffer.fg[0], 0.001);
+    try expectRGBAApprox(.{ sepia_r, sepia_g, sepia_b, 1.0 }, buf.buffer.fg[0], 0.001);
 
     // Second cell should be unchanged (incomplete triplet ignored)
     try expectRGBAApprox(red, buf.buffer.fg[1], 0.0001);
@@ -391,8 +389,8 @@ test "colorMatrix - empty mask returns early" {
     );
     defer buf.deinit();
 
-    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
-    const red = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const red = RGBA{ 1.0, 0.0, 0.0, 1.0 };
 
     try buf.clear(bg, null);
     buf.buffer.fg[0] = red;
@@ -417,8 +415,8 @@ test "colorMatrix - empty matrix returns early" {
     );
     defer buf.deinit();
 
-    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
-    const red = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const red = RGBA{ 1.0, 0.0, 0.0, 1.0 };
 
     try buf.clear(bg, null);
     buf.buffer.fg[0] = red;
@@ -452,8 +450,8 @@ test "colorMatrix - alpha channel transformation" {
     );
     defer buf.deinit();
 
-    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
-    const opaque_color = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const opaque_color = RGBA{ 1.0, 0.0, 0.0, 1.0 };
 
     try buf.clear(bg, null);
     buf.buffer.fg[0] = opaque_color;
@@ -463,7 +461,7 @@ test "colorMatrix - alpha channel transformation" {
     buffer_effects.colorMatrix(buf, &ALPHA_MODIFY_MATRIX, &cell_mask, 1.0, ColorTarget.FG);
 
     // Alpha should be halved
-    try expectRGBAApprox(ansi.rgbaFromFloats(1.0, 0.0, 0.0, 0.5), buf.buffer.fg[0], 0.0001);
+    try expectRGBAApprox(.{ 1.0, 0.0, 0.0, 0.5 }, buf.buffer.fg[0], 0.0001);
 }
 
 test "colorMatrix - mask with only 1 element" {
@@ -478,8 +476,8 @@ test "colorMatrix - mask with only 1 element" {
     );
     defer buf.deinit();
 
-    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
-    const red = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const red = RGBA{ 1.0, 0.0, 0.0, 1.0 };
 
     try buf.clear(bg, null);
     buf.buffer.fg[0] = red;
@@ -504,8 +502,8 @@ test "colorMatrix - mask with only 2 elements" {
     );
     defer buf.deinit();
 
-    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
-    const red = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const red = RGBA{ 1.0, 0.0, 0.0, 1.0 };
 
     try buf.clear(bg, null);
     buf.buffer.fg[0] = red;
@@ -532,8 +530,8 @@ test "colorMatrix - infinity strength is skipped" {
     );
     defer buf.deinit();
 
-    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
-    const red = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const red = RGBA{ 1.0, 0.0, 0.0, 1.0 };
 
     try buf.clear(bg, null);
     buf.buffer.fg[0] = red;
@@ -559,8 +557,8 @@ test "colorMatrix - non-finite global strength is skipped" {
     );
     defer buf.deinit();
 
-    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
-    const red = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const red = RGBA{ 1.0, 0.0, 0.0, 1.0 };
 
     try buf.clear(bg, null);
     buf.buffer.fg[0] = red;
@@ -586,8 +584,8 @@ test "colorMatrix - large buffer with SIMD and scalar mix" {
     );
     defer buf.deinit();
 
-    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
-    const red = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const red = RGBA{ 1.0, 0.0, 0.0, 1.0 };
 
     try buf.clear(bg, null);
 
@@ -603,7 +601,7 @@ test "colorMatrix - large buffer with SIMD and scalar mix" {
     const expected_b = 0.272;
 
     for (0..100) |i| {
-        try expectRGBAApprox(ansi.rgbaFromFloats(expected_r, expected_g, expected_b, 1.0), buf.buffer.fg[i], 0.001);
+        try expectRGBAApprox(.{ expected_r, expected_g, expected_b, 1.0 }, buf.buffer.fg[i], 0.001);
     }
 }
 
@@ -619,8 +617,8 @@ test "colorMatrix - negative coordinates are skipped" {
     );
     defer buf.deinit();
 
-    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
-    const red = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const red = RGBA{ 1.0, 0.0, 0.0, 1.0 };
 
     try buf.clear(bg, null);
     buf.buffer.fg[4] = red; // (1, 1)
@@ -633,7 +631,7 @@ test "colorMatrix - negative coordinates are skipped" {
     const expected_r = 0.393;
     const expected_g = 0.349;
     const expected_b = 0.272;
-    try expectRGBAApprox(ansi.rgbaFromFloats(expected_r, expected_g, expected_b, 1.0), buf.buffer.fg[4], 0.001);
+    try expectRGBAApprox(.{ expected_r, expected_g, expected_b, 1.0 }, buf.buffer.fg[4], 0.001);
 }
 
 test "colorMatrix - finite coordinates larger than u32 max are skipped" {
@@ -648,8 +646,8 @@ test "colorMatrix - finite coordinates larger than u32 max are skipped" {
     );
     defer buf.deinit();
 
-    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
-    const red = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const red = RGBA{ 1.0, 0.0, 0.0, 1.0 };
 
     try buf.clear(bg, null);
     buf.buffer.fg[4] = red; // (1, 1)
@@ -663,7 +661,7 @@ test "colorMatrix - finite coordinates larger than u32 max are skipped" {
     const expected_r = 0.393;
     const expected_g = 0.349;
     const expected_b = 0.272;
-    try expectRGBAApprox(ansi.rgbaFromFloats(expected_r, expected_g, expected_b, 1.0), buf.buffer.fg[4], 0.001);
+    try expectRGBAApprox(.{ expected_r, expected_g, expected_b, 1.0 }, buf.buffer.fg[4], 0.001);
 }
 
 // ==================== colorMatrixUniform Tests ====================
@@ -680,11 +678,11 @@ test "colorMatrixUniform - identity matrix leaves colors unchanged" {
     );
     defer buf.deinit();
 
-    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
-    const red = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
-    const green = ansi.rgbaFromFloats(0.0, 1.0, 0.0, 1.0);
-    const blue = ansi.rgbaFromFloats(0.0, 0.0, 1.0, 1.0);
-    const white = ansi.rgbaFromFloats(1.0, 1.0, 1.0, 1.0);
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const red = RGBA{ 1.0, 0.0, 0.0, 1.0 };
+    const green = RGBA{ 0.0, 1.0, 0.0, 1.0 };
+    const blue = RGBA{ 0.0, 0.0, 1.0, 1.0 };
+    const white = RGBA{ 1.0, 1.0, 1.0, 1.0 };
 
     try buf.clear(bg, null);
 
@@ -716,8 +714,8 @@ test "colorMatrixUniform - zero strength has no effect" {
     );
     defer buf.deinit();
 
-    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
-    const red = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const red = RGBA{ 1.0, 0.0, 0.0, 1.0 };
 
     try buf.clear(bg, null);
 
@@ -743,8 +741,8 @@ test "colorMatrixUniform - non-finite strength has no effect" {
     );
     defer buf.deinit();
 
-    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
-    const red = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const red = RGBA{ 1.0, 0.0, 0.0, 1.0 };
 
     try buf.clear(bg, null);
     buf.buffer.fg[0] = red;
@@ -769,10 +767,10 @@ test "colorMatrixUniform - grayscale transformation" {
     );
     defer buf.deinit();
 
-    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
-    const red = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
-    const green = ansi.rgbaFromFloats(0.0, 1.0, 0.0, 1.0);
-    const blue = ansi.rgbaFromFloats(0.0, 0.0, 1.0, 1.0);
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const red = RGBA{ 1.0, 0.0, 0.0, 1.0 };
+    const green = RGBA{ 0.0, 1.0, 0.0, 1.0 };
+    const blue = RGBA{ 0.0, 0.0, 1.0, 1.0 };
 
     try buf.clear(bg, null);
 
@@ -790,9 +788,9 @@ test "colorMatrixUniform - grayscale transformation" {
     const gray_blue = 0.299 * 0.0 + 0.587 * 0.0 + 0.114 * 1.0; // ~0.114
 
     // All channels should equal the luminance value
-    try expectRGBAApprox(ansi.rgbaFromFloats(gray_red, gray_red, gray_red, 1.0), buf.buffer.fg[0], 0.001);
-    try expectRGBAApprox(ansi.rgbaFromFloats(gray_green, gray_green, gray_green, 1.0), buf.buffer.fg[1], 0.001);
-    try expectRGBAApprox(ansi.rgbaFromFloats(gray_blue, gray_blue, gray_blue, 1.0), buf.buffer.fg[2], 0.001);
+    try expectRGBAApprox(.{ gray_red, gray_red, gray_red, 1.0 }, buf.buffer.fg[0], 0.001);
+    try expectRGBAApprox(.{ gray_green, gray_green, gray_green, 1.0 }, buf.buffer.fg[1], 0.001);
+    try expectRGBAApprox(.{ gray_blue, gray_blue, gray_blue, 1.0 }, buf.buffer.fg[2], 0.001);
 }
 
 test "colorMatrixUniform - partial strength blends with original" {
@@ -807,8 +805,8 @@ test "colorMatrixUniform - partial strength blends with original" {
     );
     defer buf.deinit();
 
-    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
-    const red = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const red = RGBA{ 1.0, 0.0, 0.0, 1.0 };
 
     try buf.clear(bg, null);
     buf.buffer.fg[0] = red;
@@ -824,8 +822,8 @@ test "colorMatrixUniform - partial strength blends with original" {
     const expected_g = 0.0 + (0.349 - 0.0) * 0.5;
     const expected_b = 0.0 + (0.272 - 0.0) * 0.5;
 
-    try expectRGBAApprox(ansi.rgbaFromFloats(expected_r, expected_g, expected_b, 1.0), buf.buffer.fg[0], 0.001);
-    try expectRGBAApprox(ansi.rgbaFromFloats(expected_r, expected_g, expected_b, 1.0), buf.buffer.fg[1], 0.001);
+    try expectRGBAApprox(.{ expected_r, expected_g, expected_b, 1.0 }, buf.buffer.fg[0], 0.001);
+    try expectRGBAApprox(.{ expected_r, expected_g, expected_b, 1.0 }, buf.buffer.fg[1], 0.001);
 }
 
 test "colorMatrixUniform - target affects correct buffers" {
@@ -840,9 +838,9 @@ test "colorMatrixUniform - target affects correct buffers" {
     );
     defer buf.deinit();
 
-    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
-    const red = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
-    const blue = ansi.rgbaFromFloats(0.0, 0.0, 1.0, 1.0);
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const red = RGBA{ 1.0, 0.0, 0.0, 1.0 };
+    const blue = RGBA{ 0.0, 0.0, 1.0, 1.0 };
 
     try buf.clear(bg, null);
 
@@ -856,7 +854,7 @@ test "colorMatrixUniform - target affects correct buffers" {
 
     // FG should be grayscale, BG should remain blue
     const gray_red = 0.299 * 1.0;
-    try expectRGBAApprox(ansi.rgbaFromFloats(gray_red, gray_red, gray_red, 1.0), buf.buffer.fg[0], 0.001);
+    try expectRGBAApprox(.{ gray_red, gray_red, gray_red, 1.0 }, buf.buffer.fg[0], 0.001);
     try expectRGBAApprox(blue, buf.buffer.bg[0], 0.0001);
 
     // Reset and test BG only (target = 2)
@@ -870,7 +868,7 @@ test "colorMatrixUniform - target affects correct buffers" {
     // BG should be grayscale, FG should remain red
     const gray_blue = 0.114 * 1.0;
     try expectRGBAApprox(red, buf.buffer.fg[0], 0.0001);
-    try expectRGBAApprox(ansi.rgbaFromFloats(gray_blue, gray_blue, gray_blue, 1.0), buf.buffer.bg[0], 0.001);
+    try expectRGBAApprox(.{ gray_blue, gray_blue, gray_blue, 1.0 }, buf.buffer.bg[0], 0.001);
 
     // Reset and test Both (target = 3)
     buf.buffer.fg[0] = red;
@@ -881,8 +879,8 @@ test "colorMatrixUniform - target affects correct buffers" {
     buffer_effects.colorMatrixUniform(buf, &GRAYSCALE_MATRIX, 1.0, ColorTarget.Both);
 
     // Both should be grayscale
-    try expectRGBAApprox(ansi.rgbaFromFloats(gray_red, gray_red, gray_red, 1.0), buf.buffer.fg[0], 0.001);
-    try expectRGBAApprox(ansi.rgbaFromFloats(gray_blue, gray_blue, gray_blue, 1.0), buf.buffer.bg[0], 0.001);
+    try expectRGBAApprox(.{ gray_red, gray_red, gray_red, 1.0 }, buf.buffer.fg[0], 0.001);
+    try expectRGBAApprox(.{ gray_blue, gray_blue, gray_blue, 1.0 }, buf.buffer.bg[0], 0.001);
 }
 
 test "colorMatrixUniform - handles buffer sizes not divisible by 4" {
@@ -898,8 +896,8 @@ test "colorMatrixUniform - handles buffer sizes not divisible by 4" {
     );
     defer buf.deinit();
 
-    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
-    const red = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const red = RGBA{ 1.0, 0.0, 0.0, 1.0 };
 
     try buf.clear(bg, null);
 
@@ -917,7 +915,7 @@ test "colorMatrixUniform - handles buffer sizes not divisible by 4" {
     const expected_b = 0.272;
 
     for (0..5) |i| {
-        try expectRGBAApprox(ansi.rgbaFromFloats(expected_r, expected_g, expected_b, 1.0), buf.buffer.fg[i], 0.001);
+        try expectRGBAApprox(.{ expected_r, expected_g, expected_b, 1.0 }, buf.buffer.fg[i], 0.001);
     }
 }
 
@@ -933,8 +931,8 @@ test "colorMatrixUniform - empty matrix returns early" {
     );
     defer buf.deinit();
 
-    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
-    const red = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const red = RGBA{ 1.0, 0.0, 0.0, 1.0 };
 
     try buf.clear(bg, null);
     buf.buffer.fg[0] = red;
@@ -959,9 +957,9 @@ test "colorMatrixUniform - alpha channel transformation" {
     );
     defer buf.deinit();
 
-    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
-    const opaque_color = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
-    const transparent_color = ansi.rgbaFromFloats(0.0, 1.0, 0.0, 0.5);
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const opaque_color = RGBA{ 1.0, 0.0, 0.0, 1.0 };
+    const transparent_color = RGBA{ 0.0, 1.0, 0.0, 0.5 };
 
     try buf.clear(bg, null);
 
@@ -972,9 +970,9 @@ test "colorMatrixUniform - alpha channel transformation" {
     buffer_effects.colorMatrixUniform(buf, &ALPHA_MODIFY_MATRIX, 1.0, ColorTarget.FG);
 
     // Opaque should become semi-transparent (alpha = 1.0 * 0.5 = 0.5)
-    try expectRGBAApprox(ansi.rgbaFromFloats(1.0, 0.0, 0.0, 0.5), buf.buffer.fg[0], 0.0001);
+    try expectRGBAApprox(.{ 1.0, 0.0, 0.0, 0.5 }, buf.buffer.fg[0], 0.0001);
     // Semi-transparent should become more transparent (alpha = 0.5 * 0.5 = 0.25)
-    try expectRGBAApprox(ansi.rgbaFromFloats(0.0, 1.0, 0.0, 0.25), buf.buffer.fg[1], 0.0001);
+    try expectRGBAApprox(.{ 0.0, 1.0, 0.0, 0.25 }, buf.buffer.fg[1], 0.0001);
 }
 
 test "colorMatrixUniform - very small buffer (less than 4 pixels)" {
@@ -990,9 +988,9 @@ test "colorMatrixUniform - very small buffer (less than 4 pixels)" {
     );
     defer buf.deinit();
 
-    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
-    const red = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
-    const green = ansi.rgbaFromFloats(0.0, 1.0, 0.0, 1.0);
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const red = RGBA{ 1.0, 0.0, 0.0, 1.0 };
+    const green = RGBA{ 0.0, 1.0, 0.0, 1.0 };
 
     try buf.clear(bg, null);
     buf.buffer.fg[0] = red;
@@ -1005,13 +1003,13 @@ test "colorMatrixUniform - very small buffer (less than 4 pixels)" {
     const expected_red_r = 0.393;
     const expected_red_g = 0.349;
     const expected_red_b = 0.272;
-    try expectRGBAApprox(ansi.rgbaFromFloats(expected_red_r, expected_red_g, expected_red_b, 1.0), buf.buffer.fg[0], 0.001);
+    try expectRGBAApprox(.{ expected_red_r, expected_red_g, expected_red_b, 1.0 }, buf.buffer.fg[0], 0.001);
 
     // Green transformed: R=0.769, G=0.686, B=0.534
     const expected_green_r = 0.769;
     const expected_green_g = 0.686;
     const expected_green_b = 0.534;
-    try expectRGBAApprox(ansi.rgbaFromFloats(expected_green_r, expected_green_g, expected_green_b, 1.0), buf.buffer.fg[1], 0.001);
+    try expectRGBAApprox(.{ expected_green_r, expected_green_g, expected_green_b, 1.0 }, buf.buffer.fg[1], 0.001);
 }
 
 test "colorMatrixUniform - single pixel buffer" {
@@ -1027,8 +1025,8 @@ test "colorMatrixUniform - single pixel buffer" {
     );
     defer buf.deinit();
 
-    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
-    const red = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const red = RGBA{ 1.0, 0.0, 0.0, 1.0 };
 
     try buf.clear(bg, null);
     buf.buffer.fg[0] = red;
@@ -1040,7 +1038,7 @@ test "colorMatrixUniform - single pixel buffer" {
     const expected_r = 0.393;
     const expected_g = 0.349;
     const expected_b = 0.272;
-    try expectRGBAApprox(ansi.rgbaFromFloats(expected_r, expected_g, expected_b, 1.0), buf.buffer.fg[0], 0.001);
+    try expectRGBAApprox(.{ expected_r, expected_g, expected_b, 1.0 }, buf.buffer.fg[0], 0.001);
 }
 
 test "colorMatrixUniform - values can exceed 1.0 (no clamping)" {
@@ -1063,8 +1061,8 @@ test "colorMatrixUniform - values can exceed 1.0 (no clamping)" {
         0.0, 0.0, 0.0, 1.0, // Alpha output
     };
 
-    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
-    const gray = ansi.rgbaFromFloats(0.5, 0.5, 0.5, 1.0);
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const gray = RGBA{ 0.5, 0.5, 0.5, 1.0 };
 
     try buf.clear(bg, null);
     buf.buffer.fg[0] = gray;
@@ -1073,7 +1071,7 @@ test "colorMatrixUniform - values can exceed 1.0 (no clamping)" {
     buffer_effects.colorMatrixUniform(buf, &amplify_matrix, 1.0, ColorTarget.FG);
 
     // Values should exceed 1.0 (no clamping)
-    try expectRGBAApprox(ansi.rgbaFromFloats(1.0, 1.0, 1.0, 1.0), buf.buffer.fg[0], 0.0001);
+    try expectRGBAApprox(.{ 1.0, 1.0, 1.0, 1.0 }, buf.buffer.fg[0], 0.0001);
 }
 
 test "colorMatrixUniform - 3 pixel buffer (simd_end = 0, all scalar)" {
@@ -1089,8 +1087,8 @@ test "colorMatrixUniform - 3 pixel buffer (simd_end = 0, all scalar)" {
     );
     defer buf.deinit();
 
-    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
-    const red = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
+    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const red = RGBA{ 1.0, 0.0, 0.0, 1.0 };
 
     try buf.clear(bg, null);
     for (0..3) |i| {
@@ -1106,6 +1104,6 @@ test "colorMatrixUniform - 3 pixel buffer (simd_end = 0, all scalar)" {
     const expected_b = 0.272;
 
     for (0..3) |i| {
-        try expectRGBAApprox(ansi.rgbaFromFloats(expected_r, expected_g, expected_b, 1.0), buf.buffer.fg[i], 0.001);
+        try expectRGBAApprox(.{ expected_r, expected_g, expected_b, 1.0 }, buf.buffer.fg[i], 0.001);
     }
 }

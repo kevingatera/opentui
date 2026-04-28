@@ -1,5 +1,4 @@
 const std = @import("std");
-const ansi = @import("../ansi.zig");
 const bench_utils = @import("../bench-utils.zig");
 const buffer = @import("../buffer.zig");
 const text_buffer = @import("../text-buffer.zig");
@@ -16,8 +15,6 @@ const BenchStats = bench_utils.BenchStats;
 const MemStat = bench_utils.MemStat;
 
 pub const benchName = "Buffer Color Blending";
-
-const CLEAR_BG = ansi.rgbColor(0, 0, 0, 255);
 
 const BUFFER_WIDTH: u32 = 1200;
 const BUFFER_HEIGHT: u32 = 600;
@@ -36,10 +33,6 @@ const BORDER_ALL: BorderSides = .{
     .bottom = true,
     .left = true,
 };
-
-fn rgba(r: f32, g: f32, b: f32, a: f32) buffer.RGBA {
-    return ansi.rgbaFromFloats(r, g, b, a);
-}
 
 fn setupTextBuffer(
     allocator: std.mem.Allocator,
@@ -89,12 +82,12 @@ fn runTranslucentBoxes(
     var final_mem: usize = 0;
 
     if (run_translucent_bg) {
-        const border_color = rgba(0.5, 0.5, 0.5, 1.0);
-        const bg_color = rgba(0.2, 0.2, 0.2, 0.5);
+        const border_color: buffer.RGBA = .{ 0.5, 0.5, 0.5, 1.0 };
+        const bg_color: buffer.RGBA = .{ 0.2, 0.2, 0.2, 0.5 };
 
         var stats = BenchStats{};
         for (0..iterations) |i| {
-            try buf.clear(CLEAR_BG, null);
+            try buf.clear(.{ 0.0, 0.0, 0.0, 1.0 }, null);
 
             var timer = try std.time.Timer.start();
             var box_i: usize = 0;
@@ -111,8 +104,6 @@ fn runTranslucentBoxes(
                     border_color,
                     bg_color,
                     true,
-                    null,
-                    0,
                     null,
                     0,
                 );
@@ -142,12 +133,12 @@ fn runTranslucentBoxes(
     }
 
     if (run_translucent_opacity) {
-        const border_color = rgba(0.5, 0.5, 0.5, 1.0);
-        const bg_color = rgba(0.2, 0.2, 0.2, 1.0);
+        const border_color: buffer.RGBA = .{ 0.5, 0.5, 0.5, 1.0 };
+        const bg_color: buffer.RGBA = .{ 0.2, 0.2, 0.2, 1.0 };
 
         var stats = BenchStats{};
         for (0..iterations) |i| {
-            try buf.clear(CLEAR_BG, null);
+            try buf.clear(.{ 0.0, 0.0, 0.0, 1.0 }, null);
 
             try buf.pushOpacity(0.5);
             errdefer buf.popOpacity();
@@ -167,8 +158,6 @@ fn runTranslucentBoxes(
                     border_color,
                     bg_color,
                     true,
-                    null,
-                    0,
                     null,
                     0,
                 );
@@ -225,7 +214,7 @@ fn runTranslucentTextBuffers(
     if (run_translucent_bg) {
         var stats = BenchStats{};
         for (0..iterations) |i| {
-            try buf.clear(CLEAR_BG, null);
+            try buf.clear(.{ 0.0, 0.0, 0.0, 1.0 }, null);
 
             const tbs = try allocator.alloc(*UnifiedTextBuffer, TEXT_COUNT);
             const views = try allocator.alloc(*UnifiedTextBufferView, TEXT_COUNT);
@@ -234,8 +223,8 @@ fn runTranslucentTextBuffers(
 
             for (0..TEXT_COUNT) |j| {
                 tbs[j], views[j] = try setupTextBuffer(allocator, pool, TEXT_CONTENT, 100);
-                tbs[j].setDefaultFg(rgba(0.8, 0.8, 0.8, 1.0));
-                tbs[j].setDefaultBg(rgba(0.2, 0.2, 0.2, 0.5));
+                tbs[j].setDefaultFg(.{ 0.8, 0.8, 0.8, 1.0 });
+                tbs[j].setDefaultBg(.{ 0.2, 0.2, 0.2, 0.5 });
                 try tbs[j].setText(TEXT_CONTENT);
             }
 
@@ -274,7 +263,7 @@ fn runTranslucentTextBuffers(
     if (run_translucent_opacity) {
         var stats = BenchStats{};
         for (0..iterations) |i| {
-            try buf.clear(CLEAR_BG, null);
+            try buf.clear(.{ 0.0, 0.0, 0.0, 1.0 }, null);
 
             const tbs = try allocator.alloc(*UnifiedTextBuffer, TEXT_COUNT);
             const views = try allocator.alloc(*UnifiedTextBufferView, TEXT_COUNT);
@@ -283,8 +272,8 @@ fn runTranslucentTextBuffers(
 
             for (0..TEXT_COUNT) |j| {
                 tbs[j], views[j] = try setupTextBuffer(allocator, pool, TEXT_CONTENT, 100);
-                tbs[j].setDefaultFg(rgba(0.8, 0.8, 0.8, 1.0));
-                tbs[j].setDefaultBg(rgba(0.2, 0.2, 0.2, 1.0));
+                tbs[j].setDefaultFg(.{ 0.8, 0.8, 0.8, 1.0 });
+                tbs[j].setDefaultBg(.{ 0.2, 0.2, 0.2, 1.0 });
                 try tbs[j].setText(TEXT_CONTENT);
             }
 

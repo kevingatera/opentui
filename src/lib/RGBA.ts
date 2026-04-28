@@ -1,13 +1,13 @@
 export type RGBTriplet = readonly [number, number, number]
-export type ColorIntent = "rgb" | "indexed" | "default"
+export type ColorKind = "rgb" | "indexed" | "default"
 export type ColorInput = string | RGBA
 
+export const COLOR_TAG_RGB = 256
+export const COLOR_TAG_DEFAULT = 257
 export const DEFAULT_FOREGROUND_RGB: RGBTriplet = [255, 255, 255]
 export const DEFAULT_BACKGROUND_RGB: RGBTriplet = [0, 0, 0]
 
-const INTENT_RGB = 0
-const INTENT_INDEXED = 1
-const INTENT_DEFAULT = 2
+const RGBA_BUFFER_STRIDE = 5
 
 const ANSI16_RGB: readonly RGBTriplet[] = [
   [0x00, 0x00, 0x00],
@@ -32,27 +32,43 @@ const ANSI_256_CUBE_LEVELS = [0, 95, 135, 175, 215, 255] as const
 
 export interface NormalizedColorValue {
   rgba: RGBA
+  tag: number
 }
 
-function packMeta(intent: number, slot = 0): number {
-  return ((slot & 0xff) | ((intent & 0xff) << 8)) >>> 0
+function normalizeColorTag(tag: number | undefined): number {
+  const normalizedTag = tag != null && Number.isFinite(tag) ? Math.round(tag) : COLOR_TAG_RGB
+
+  if (normalizedTag === COLOR_TAG_RGB || normalizedTag === COLOR_TAG_DEFAULT) {
+    return normalizedTag
+  }
+
+  if (Number.isInteger(normalizedTag) && normalizedTag >= 0 && normalizedTag <= 255) {
+    return normalizedTag
+  }
+
+  return COLOR_TAG_RGB
 }
 
-function toU8(value: number): number {
-  return Math.round(Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0)) * 255)
+function normalizeRGBABuffer(buffer: Float32Array): Float32Array {
+  if (buffer.length === RGBA_BUFFER_STRIDE) {
+    buffer[4] = normalizeColorTag(buffer[4])
+    return buffer
+  }
+
+  const normalized = new Float32Array(RGBA_BUFFER_STRIDE)
+  normalized[0] = buffer[0] ?? 0
+  normalized[1] = buffer[1] ?? 0
+  normalized[2] = buffer[2] ?? 0
+  normalized[3] = buffer[3] ?? 0
+  normalized[4] = COLOR_TAG_RGB
+
+  return normalized
 }
 
-function toByte(value: number): number {
-  return Math.round(Math.max(0, Math.min(255, Number.isFinite(value) ? value : 0)))
-}
-
-function packRGBA8(r: number, g: number, b: number, a: number, meta: number): Uint16Array {
-  return new Uint16Array([
-    (toByte(r) & 0xff) | (((meta >>> 0) & 0xff) << 8),
-    (toByte(g) & 0xff) | (((meta >>> 8) & 0xff) << 8),
-    (toByte(b) & 0xff) | (((meta >>> 16) & 0xff) << 8),
-    (toByte(a) & 0xff) | (((meta >>> 24) & 0xff) << 8),
-  ])
+function withTag(rgba: RGBA, tag: number): RGBA {
+  const tagged = RGBA.clone(rgba)
+  tagged.tag = tag
+  return tagged
 }
 
 function rgbaForAnsi256Index(index: number): RGBA {
@@ -87,28 +103,39 @@ export function ansi256IndexToRgb(index: number): RGBTriplet {
   return [value, value, value]
 }
 
-export class RGBA {
-  buffer: Uint16Array
-
-  constructor(buffer: Uint16Array) {
-    this.buffer = new Uint16Array(4)
-    this.buffer.set(buffer.subarray(0, 4))
+export function decodeColorTag(tag: number): { kind: ColorKind; index?: number } {
+  if (tag === COLOR_TAG_DEFAULT) {
+    return { kind: "default" }
   }
 
-  static fromArray(array: Uint16Array): RGBA {
+  if (tag === COLOR_TAG_RGB) {
+    return { kind: "rgb" }
+  }
+
+  return { kind: "indexed", index: normalizeIndexedColorIndex(tag) }
+}
+
+export class RGBA {
+  buffer: Float32Array
+
+  constructor(buffer: Float32Array) {
+    this.buffer = normalizeRGBABuffer(buffer)
+  }
+
+  static fromArray(array: Float32Array) {
     return new RGBA(array)
   }
 
-  static fromValues(r: number, g: number, b: number, a: number = 1): RGBA {
-    return new RGBA(packRGBA8(toU8(r), toU8(g), toU8(b), toU8(a), packMeta(INTENT_RGB)))
+  static fromValues(r: number, g: number, b: number, a: number = 1.0, tag: number = COLOR_TAG_RGB) {
+    return new RGBA(new Float32Array([r, g, b, a, normalizeColorTag(tag)]))
   }
 
-  static clone(rgba: RGBA): RGBA {
-    return new RGBA(rgba.buffer)
+  static clone(rgba: RGBA) {
+    return RGBA.fromValues(rgba.r, rgba.g, rgba.b, rgba.a, rgba.tag)
   }
 
-  static fromInts(r: number, g: number, b: number, a: number = 255): RGBA {
-    return new RGBA(packRGBA8(r, g, b, a, packMeta(INTENT_RGB)))
+  static fromInts(r: number, g: number, b: number, a: number = 255, tag: number = COLOR_TAG_RGB) {
+    return new RGBA(new Float32Array([r / 255, g / 255, b / 255, a / 255, normalizeColorTag(tag)]))
   }
 
   static fromHex(hex: string): RGBA {
@@ -116,107 +143,87 @@ export class RGBA {
   }
 
   static fromIndex(index: number, snapshot?: ColorInput): RGBA {
-    const normalized = normalizeIndexedColorIndex(index)
-    const rgba = snapshot ? parseColor(snapshot) : rgbaForAnsi256Index(normalized)
-    const [r, g, b, a] = rgba.toInts()
-    return new RGBA(packRGBA8(r, g, b, a, packMeta(INTENT_INDEXED, normalized)))
+    const normalizedIndex = normalizeIndexedColorIndex(index)
+    return withTag(snapshot ? parseColor(snapshot) : rgbaForAnsi256Index(normalizedIndex), normalizedIndex)
   }
 
   static defaultForeground(snapshot?: ColorInput): RGBA {
-    const rgba = snapshot ? parseColor(snapshot) : RGBA.fromInts(...DEFAULT_FOREGROUND_RGB)
-    const [r, g, b, a] = rgba.toInts()
-    return new RGBA(packRGBA8(r, g, b, a, packMeta(INTENT_DEFAULT)))
+    return withTag(snapshot ? parseColor(snapshot) : RGBA.fromInts(...DEFAULT_FOREGROUND_RGB), COLOR_TAG_DEFAULT)
   }
 
   static defaultBackground(snapshot?: ColorInput): RGBA {
-    const rgba = snapshot ? parseColor(snapshot) : RGBA.fromInts(...DEFAULT_BACKGROUND_RGB)
-    const [r, g, b, a] = rgba.toInts()
-    return new RGBA(packRGBA8(r, g, b, a, packMeta(INTENT_DEFAULT)))
+    return withTag(snapshot ? parseColor(snapshot) : RGBA.fromInts(...DEFAULT_BACKGROUND_RGB), COLOR_TAG_DEFAULT)
+  }
+
+  static getIntentTag(rgba: RGBA): number {
+    return rgba.tag
   }
 
   toInts(): [number, number, number, number] {
-    return [this.buffer[0] & 0xff, this.buffer[1] & 0xff, this.buffer[2] & 0xff, this.buffer[3] & 0xff]
+    return [Math.round(this.r * 255), Math.round(this.g * 255), Math.round(this.b * 255), Math.round(this.a * 255)]
   }
 
   get r(): number {
-    return (this.buffer[0] & 0xff) / 255
+    return this.buffer[0]
   }
 
   set r(value: number) {
-    this.buffer[0] = (this.buffer[0] & 0xff00) | toU8(value)
+    this.buffer[0] = value
   }
 
   get g(): number {
-    return (this.buffer[1] & 0xff) / 255
+    return this.buffer[1]
   }
 
   set g(value: number) {
-    this.buffer[1] = (this.buffer[1] & 0xff00) | toU8(value)
+    this.buffer[1] = value
   }
 
   get b(): number {
-    return (this.buffer[2] & 0xff) / 255
+    return this.buffer[2]
   }
 
   set b(value: number) {
-    this.buffer[2] = (this.buffer[2] & 0xff00) | toU8(value)
+    this.buffer[2] = value
   }
 
   get a(): number {
-    return (this.buffer[3] & 0xff) / 255
+    return this.buffer[3]
   }
 
   set a(value: number) {
-    this.buffer[3] = (this.buffer[3] & 0xff00) | toU8(value)
+    this.buffer[3] = value
   }
 
-  get meta(): number {
-    return (
-      ((this.buffer[0] >>> 8) |
-        ((this.buffer[1] >>> 8) << 8) |
-        ((this.buffer[2] >>> 8) << 16) |
-        ((this.buffer[3] >>> 8) << 24)) >>>
-      0
-    )
+  get tag(): number {
+    return normalizeColorTag(this.buffer[4])
   }
 
-  get intent(): ColorIntent {
-    switch ((this.meta >>> 8) & 0xff) {
-      case INTENT_INDEXED:
-        return "indexed"
-      case INTENT_DEFAULT:
-        return "default"
-      default:
-        return "rgb"
-    }
+  set tag(value: number) {
+    this.buffer[4] = normalizeColorTag(value)
   }
 
-  get slot(): number {
-    return this.meta & 0xff
-  }
-
-  map<R>(fn: (value: number) => R): [R, R, R, R] {
+  map<R>(fn: (value: number) => R) {
     return [fn(this.r), fn(this.g), fn(this.b), fn(this.a)]
   }
 
-  toString(): string {
+  toString() {
     return `rgba(${this.r.toFixed(2)}, ${this.g.toFixed(2)}, ${this.b.toFixed(2)}, ${this.a.toFixed(2)})`
   }
 
   equals(other?: RGBA): boolean {
     if (!other) return false
     return (
-      this.buffer[0] === other.buffer[0] &&
-      this.buffer[1] === other.buffer[1] &&
-      this.buffer[2] === other.buffer[2] &&
-      this.buffer[3] === other.buffer[3]
+      this.r === other.r && this.g === other.g && this.b === other.b && this.a === other.a && this.tag === other.tag
     )
   }
 }
 
 export function normalizeColorValue(value: ColorInput | null | undefined): NormalizedColorValue | null {
   if (value == null) return null
-  return { rgba: parseColor(value) }
+
+  const rgba = parseColor(value)
+  return { rgba, tag: rgba.tag }
 }
 
 export function hexToRgb(hex: string): RGBA {
@@ -233,18 +240,25 @@ export function hexToRgb(hex: string): RGBA {
     return RGBA.fromValues(1, 0, 1, 1)
   }
 
-  const r = parseInt(hex.substring(0, 2), 16)
-  const g = parseInt(hex.substring(2, 4), 16)
-  const b = parseInt(hex.substring(4, 6), 16)
-  const a = hex.length === 8 ? parseInt(hex.substring(6, 8), 16) : 255
+  const r = parseInt(hex.substring(0, 2), 16) / 255
+  const g = parseInt(hex.substring(2, 4), 16) / 255
+  const b = parseInt(hex.substring(4, 6), 16) / 255
+  const a = hex.length === 8 ? parseInt(hex.substring(6, 8), 16) / 255 : 1
 
-  return RGBA.fromInts(r, g, b, a)
+  return RGBA.fromValues(r, g, b, a)
 }
 
 export function rgbToHex(rgb: RGBA): string {
-  const [r, g, b, a] = rgb.toInts()
-  const components = a === 255 ? [r, g, b] : [r, g, b, a]
-  return "#" + components.map((x) => x.toString(16).padStart(2, "0")).join("")
+  const components = rgb.a === 1 ? [rgb.r, rgb.g, rgb.b] : [rgb.r, rgb.g, rgb.b, rgb.a]
+  return (
+    "#" +
+    components
+      .map((x) => {
+        const hex = Math.floor(Math.max(0, Math.min(1, x) * 255)).toString(16)
+        return hex.length === 1 ? "0" + hex : hex
+      })
+      .join("")
+  )
 }
 
 export function hsvToRgb(h: number, s: number, v: number): RGBA {
