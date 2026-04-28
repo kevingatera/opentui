@@ -63,7 +63,7 @@ test "OptimizedBuffer - clear fills with default char" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
     try buf.clear(bg, null);
 
     var y: u32 = 0;
@@ -90,10 +90,10 @@ test "OptimizedBuffer - drawText with ASCII" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
     try buf.clear(bg, null);
 
-    const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
+    const fg = ansi.rgbaFromFloats(1.0, 1.0, 1.0, 1.0);
     try buf.drawText("Hello", 0, 0, fg, bg, 0);
 
     const cell_h = buf.get(0, 0).?;
@@ -103,7 +103,7 @@ test "OptimizedBuffer - drawText with ASCII" {
     try std.testing.expectEqual(@as(u32, 'e'), cell_e.char);
 }
 
-test "OptimizedBuffer - alpha blending downgrades blended tags to rgb" {
+test "OptimizedBuffer - alpha blending downgrades blended metadata to rgb" {
     const pool = gp.initGlobalPool(std.testing.allocator);
     defer gp.deinitGlobalPool();
     var local_link_pool = link.LinkPool.init(std.testing.allocator);
@@ -117,32 +117,27 @@ test "OptimizedBuffer - alpha blending downgrades blended tags to rgb" {
     );
     defer buf.deinit();
 
-    const base_fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
-    const base_bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const base_bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
     try buf.clear(base_bg, null);
 
     try buf.setCellWithAlphaBlending(
         0,
         0,
         'B',
-        RGBA{ 1.0, 0.0, 0.0, 0.5 },
+        ansi.packRGBA8(255, 0, 0, 128, ansi.packMeta(.indexed, 3)),
         base_bg,
         0,
-        ansi.indexedColorTag(3),
-        ansi.indexedColorTag(4),
     );
 
     const fg_blended_cell = buf.get(0, 0).?;
-    try std.testing.expectEqual(ansi.COLOR_TAG_RGB, fg_blended_cell.fg_tag);
-    try std.testing.expectEqual(ansi.indexedColorTag(4), fg_blended_cell.bg_tag);
+    try std.testing.expectEqual(ansi.ColorIntent.rgb, ansi.intent(fg_blended_cell.fg));
+    try std.testing.expectEqual(ansi.ColorIntent.rgb, ansi.intent(fg_blended_cell.bg));
 
     // Establish a destination foreground, then blend background alpha over it.
     buf.set(0, 0, .{
         .char = 'A',
-        .fg = base_fg,
-        .bg = base_bg,
-        .fg_tag = ansi.indexedColorTag(1),
-        .bg_tag = ansi.indexedColorTag(2),
+        .fg = ansi.indexedColor(1, 255, 255, 255),
+        .bg = ansi.indexedColor(2, 0, 0, 0),
         .attributes = 0,
     });
 
@@ -150,19 +145,59 @@ test "OptimizedBuffer - alpha blending downgrades blended tags to rgb" {
         0,
         0,
         'C',
-        RGBA{ 1.0, 0.0, 0.0, 1.0 },
-        RGBA{ 0.0, 1.0, 0.0, 0.5 },
+        ansi.indexedColor(5, 255, 0, 0),
+        ansi.packRGBA8(0, 255, 0, 128, ansi.packMeta(.indexed, 6)),
         0,
-        ansi.indexedColorTag(5),
-        ansi.indexedColorTag(6),
     );
 
     const bg_blended_cell = buf.get(0, 0).?;
-    try std.testing.expectEqual(ansi.indexedColorTag(5), bg_blended_cell.fg_tag);
-    try std.testing.expectEqual(ansi.COLOR_TAG_RGB, bg_blended_cell.bg_tag);
+    try std.testing.expectEqual(ansi.ColorIntent.indexed, ansi.intent(bg_blended_cell.fg));
+    try std.testing.expectEqual(@as(u8, 5), ansi.slot(bg_blended_cell.fg));
+    try std.testing.expectEqual(ansi.ColorIntent.rgb, ansi.intent(bg_blended_cell.bg));
 }
 
-test "OptimizedBuffer - drawFrameBuffer preserves explicit tags on opaque copy" {
+test "OptimizedBuffer - transparent framebuffer cell background stays transparent over backdrop" {
+    const pool = gp.initGlobalPool(std.testing.allocator);
+    defer gp.deinitGlobalPool();
+    var local_link_pool = link.LinkPool.init(std.testing.allocator);
+    defer local_link_pool.deinit();
+
+    var src = try OptimizedBuffer.init(
+        std.testing.allocator,
+        1,
+        1,
+        .{ .pool = pool, .respectAlpha = true, .id = "transparent-src-buffer" },
+    );
+    defer src.deinit();
+
+    var dst = try OptimizedBuffer.init(
+        std.testing.allocator,
+        1,
+        1,
+        .{ .pool = pool, .id = "transparent-dst-buffer" },
+    );
+    defer dst.deinit();
+
+    const transparent_bg = ansi.rgbColor(0, 0, 0, 0);
+    try src.clear(transparent_bg, null);
+    try dst.clear(transparent_bg, null);
+    dst.setBlendBackdropColor(ansi.rgbColor(0, 0, 0, 255));
+
+    src.set(0, 0, .{
+        .char = 'X',
+        .fg = ansi.rgbColor(255, 255, 255, 255),
+        .bg = transparent_bg,
+        .attributes = 0,
+    });
+
+    dst.drawFrameBuffer(0, 0, src, null, null, null, null);
+
+    const cell = dst.get(0, 0).?;
+    try std.testing.expectEqual(@as(u32, 'X'), cell.char);
+    try std.testing.expectEqual(@as(u8, 0), ansi.alpha(cell.bg));
+}
+
+test "OptimizedBuffer - drawFrameBuffer preserves packed metadata on opaque copy" {
     const pool = gp.initGlobalPool(std.testing.allocator);
     defer gp.deinitGlobalPool();
     var local_link_pool = link.LinkPool.init(std.testing.allocator);
@@ -184,27 +219,26 @@ test "OptimizedBuffer - drawFrameBuffer preserves explicit tags on opaque copy" 
     );
     defer dst.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
     try src.clear(bg, null);
     try dst.clear(bg, null);
 
     src.set(0, 0, .{
         .char = 'X',
-        .fg = RGBA{ 1.0, 1.0, 1.0, 1.0 },
-        .bg = RGBA{ 0.0, 0.5, 0.5, 1.0 },
-        .fg_tag = ansi.COLOR_TAG_DEFAULT,
-        .bg_tag = ansi.indexedColorTag(6),
+        .fg = ansi.defaultColor(255, 255, 255, 255),
+        .bg = ansi.indexedColor(6, 0, 128, 128),
         .attributes = 0,
     });
 
     dst.drawFrameBuffer(0, 0, src, null, null, null, null);
 
     const copied = dst.get(0, 0).?;
-    try std.testing.expectEqual(ansi.COLOR_TAG_DEFAULT, copied.fg_tag);
-    try std.testing.expectEqual(ansi.indexedColorTag(6), copied.bg_tag);
+    try std.testing.expectEqual(ansi.ColorIntent.default, ansi.intent(copied.fg));
+    try std.testing.expectEqual(ansi.ColorIntent.indexed, ansi.intent(copied.bg));
+    try std.testing.expectEqual(@as(u8, 6), ansi.slot(copied.bg));
 }
 
-test "OptimizedBuffer - drawTextBuffer transparent fast path preserves destination background tags" {
+test "OptimizedBuffer - drawTextBuffer transparent fast path preserves destination background metadata" {
     const pool = gp.initGlobalPool(std.testing.allocator);
     defer gp.deinitGlobalPool();
     var local_link_pool = link.LinkPool.init(std.testing.allocator);
@@ -213,8 +247,8 @@ test "OptimizedBuffer - drawTextBuffer transparent fast path preserves destinati
     var tb = try TextBuffer.init(std.testing.allocator, pool, &local_link_pool, .unicode);
     defer tb.deinit();
     try tb.setText("A");
-    tb.setDefaultFgWithTag(RGBA{ 1.0, 1.0, 1.0, 1.0 }, ansi.COLOR_TAG_DEFAULT);
-    tb.setDefaultBgWithTag(RGBA{ 0.0, 0.0, 0.0, 0.0 }, ansi.COLOR_TAG_DEFAULT);
+    tb.setDefaultFg(ansi.defaultColor(255, 255, 255, 255));
+    tb.setDefaultBg(ansi.defaultColor(0, 0, 0, 0));
 
     var view = try TextBufferView.init(std.testing.allocator, tb);
     defer view.deinit();
@@ -227,13 +261,11 @@ test "OptimizedBuffer - drawTextBuffer transparent fast path preserves destinati
     );
     defer buf.deinit();
 
-    const stale_bg = RGBA{ 0.0, 0.0, 1.0, 1.0 };
+    const stale_bg = ansi.indexedColor(6, 0, 0, 255);
     buf.set(0, 0, .{
         .char = 'Z',
-        .fg = RGBA{ 1.0, 0.0, 0.0, 1.0 },
+        .fg = ansi.indexedColor(1, 255, 0, 0),
         .bg = stale_bg,
-        .fg_tag = ansi.indexedColorTag(1),
-        .bg_tag = ansi.indexedColorTag(6),
         .attributes = ansi.TextAttributes.BOLD,
     });
 
@@ -241,12 +273,13 @@ test "OptimizedBuffer - drawTextBuffer transparent fast path preserves destinati
 
     const cell = buf.get(0, 0).?;
     try std.testing.expectEqual(@as(u32, 'A'), cell.char);
-    try std.testing.expectEqual(ansi.COLOR_TAG_DEFAULT, cell.fg_tag);
-    try std.testing.expectEqual(ansi.indexedColorTag(6), cell.bg_tag);
+    try std.testing.expectEqual(ansi.ColorIntent.default, ansi.intent(cell.fg));
+    try std.testing.expectEqual(ansi.ColorIntent.indexed, ansi.intent(cell.bg));
+    try std.testing.expectEqual(@as(u8, 6), ansi.slot(cell.bg));
     try std.testing.expectEqual(stale_bg, cell.bg);
 }
 
-test "OptimizedBuffer - drawTextBuffer transparent non-ascii preserves destination background tags" {
+test "OptimizedBuffer - drawTextBuffer transparent non-ascii preserves destination background metadata" {
     const pool = gp.initGlobalPool(std.testing.allocator);
     defer gp.deinitGlobalPool();
     var local_link_pool = link.LinkPool.init(std.testing.allocator);
@@ -255,8 +288,8 @@ test "OptimizedBuffer - drawTextBuffer transparent non-ascii preserves destinati
     var tb = try TextBuffer.init(std.testing.allocator, pool, &local_link_pool, .unicode);
     defer tb.deinit();
     try tb.setText("·");
-    tb.setDefaultFgWithTag(RGBA{ 1.0, 1.0, 1.0, 1.0 }, ansi.COLOR_TAG_DEFAULT);
-    tb.setDefaultBgWithTag(RGBA{ 0.0, 0.0, 0.0, 0.0 }, ansi.COLOR_TAG_DEFAULT);
+    tb.setDefaultFg(ansi.defaultColor(255, 255, 255, 255));
+    tb.setDefaultBg(ansi.defaultColor(0, 0, 0, 0));
 
     var view = try TextBufferView.init(std.testing.allocator, tb);
     defer view.deinit();
@@ -269,13 +302,11 @@ test "OptimizedBuffer - drawTextBuffer transparent non-ascii preserves destinati
     );
     defer buf.deinit();
 
-    const stale_bg = RGBA{ 0.0, 0.0, 1.0, 1.0 };
+    const stale_bg = ansi.indexedColor(6, 0, 0, 255);
     buf.set(0, 0, .{
         .char = 'Z',
-        .fg = RGBA{ 1.0, 0.0, 0.0, 1.0 },
+        .fg = ansi.indexedColor(1, 255, 0, 0),
         .bg = stale_bg,
-        .fg_tag = ansi.indexedColorTag(1),
-        .bg_tag = ansi.indexedColorTag(6),
         .attributes = ansi.TextAttributes.BOLD,
     });
 
@@ -283,8 +314,9 @@ test "OptimizedBuffer - drawTextBuffer transparent non-ascii preserves destinati
 
     const cell = buf.get(0, 0).?;
     try std.testing.expect(gp.isGraphemeChar(cell.char));
-    try std.testing.expectEqual(ansi.COLOR_TAG_DEFAULT, cell.fg_tag);
-    try std.testing.expectEqual(ansi.indexedColorTag(6), cell.bg_tag);
+    try std.testing.expectEqual(ansi.ColorIntent.default, ansi.intent(cell.fg));
+    try std.testing.expectEqual(ansi.ColorIntent.indexed, ansi.intent(cell.bg));
+    try std.testing.expectEqual(@as(u8, 6), ansi.slot(cell.bg));
     try std.testing.expectEqual(stale_bg, cell.bg);
 }
 
@@ -302,8 +334,8 @@ test "OptimizedBuffer - repeated emoji rendering should not exhaust pool" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
-    const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
+    const fg = ansi.rgbaFromFloats(1.0, 1.0, 1.0, 1.0);
 
     var i: u32 = 0;
     while (i < 1000) : (i += 1) {
@@ -329,8 +361,8 @@ test "OptimizedBuffer - repeated CJK rendering should not exhaust pool" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
-    const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
+    const fg = ansi.rgbaFromFloats(1.0, 1.0, 1.0, 1.0);
 
     var i: u32 = 0;
     while (i < 1000) : (i += 1) {
@@ -364,7 +396,7 @@ test "OptimizedBuffer - drawTextBuffer repeatedly should not exhaust pool" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
 
     var i: u32 = 0;
     while (i < 1000) : (i += 1) {
@@ -387,8 +419,8 @@ test "OptimizedBuffer - mixed ASCII and emoji repeated rendering" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
-    const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
+    const fg = ansi.rgbaFromFloats(1.0, 1.0, 1.0, 1.0);
 
     var i: u32 = 0;
     while (i < 500) : (i += 1) {
@@ -416,8 +448,8 @@ test "OptimizedBuffer - overwriting graphemes repeatedly" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
-    const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
+    const fg = ansi.rgbaFromFloats(1.0, 1.0, 1.0, 1.0);
 
     var i: u32 = 0;
     while (i < 1000) : (i += 1) {
@@ -444,8 +476,8 @@ test "OptimizedBuffer - rendering to different positions" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
-    const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
+    const fg = ansi.rgbaFromFloats(1.0, 1.0, 1.0, 1.0);
 
     var i: u32 = 0;
     while (i < 100) : (i += 1) {
@@ -499,7 +531,7 @@ test "OptimizedBuffer - large text buffer with wrapping repeated render" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
 
     var i: u32 = 0;
     while (i < 200) : (i += 1) {
@@ -522,8 +554,8 @@ test "OptimizedBuffer - grapheme tracker counts" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
-    const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
+    const fg = ansi.rgbaFromFloats(1.0, 1.0, 1.0, 1.0);
 
     try buf.drawText("🌟🎨🚀", 0, 0, fg, bg, 0);
 
@@ -555,8 +587,8 @@ test "OptimizedBuffer - alternating emojis should not leak" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
-    const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
+    const fg = ansi.rgbaFromFloats(1.0, 1.0, 1.0, 1.0);
 
     var i: u32 = 0;
     while (i < 500) : (i += 1) {
@@ -593,7 +625,7 @@ test "OptimizedBuffer - drawTextBuffer without clear should not exhaust pool" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
     try buf.clear(bg, null);
 
     var i: u32 = 0;
@@ -627,7 +659,7 @@ test "OptimizedBuffer - many small graphemes without clear" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
     try buf.clear(bg, null);
 
     var i: u32 = 0;
@@ -669,7 +701,7 @@ test "OptimizedBuffer - stress test with many graphemes" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
     try buf.clear(bg, null);
 
     var i: u32 = 0;
@@ -707,7 +739,7 @@ test "OptimizedBuffer - pool slot exhaustion test" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
 
     var i: u32 = 0;
     while (i < 10000) : (i += 1) {
@@ -746,7 +778,7 @@ test "OptimizedBuffer - many unique graphemes with small pool" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
 
     var render_count: u32 = 0;
     var failure_count: u32 = 0;
@@ -881,7 +913,7 @@ test "OptimizedBuffer - continuous render without clear with small pool" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
     try buf.clear(bg, null);
 
     var i: u32 = 0;
@@ -913,7 +945,7 @@ test "OptimizedBuffer - graphemes with scissor clipping and small pool" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
     try buf.clear(bg, null);
 
     try buf.pushScissorRect(0, 0, 5, 5);
@@ -939,9 +971,9 @@ test "OptimizedBuffer - drawText with alpha blending and scissor" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
-    const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
-    const bg_alpha = RGBA{ 0.0, 0.0, 0.0, 0.5 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
+    const fg = ansi.rgbaFromFloats(1.0, 1.0, 1.0, 1.0);
+    const bg_alpha = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 0.5);
 
     try buf.clear(bg, null);
 
@@ -968,9 +1000,9 @@ test "OptimizedBuffer - many unique graphemes with alpha and small pool" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
-    const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
-    const bg_alpha = RGBA{ 0.0, 0.0, 0.0, 0.5 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
+    const fg = ansi.rgbaFromFloats(1.0, 1.0, 1.0, 1.0);
+    const bg_alpha = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 0.5);
 
     try buf.clear(bg, null);
 
@@ -1006,8 +1038,8 @@ test "OptimizedBuffer - fill buffer with many unique graphemes" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
-    const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
+    const fg = ansi.rgbaFromFloats(1.0, 1.0, 1.0, 1.0);
 
     try buf.clear(bg, null);
 
@@ -1045,8 +1077,8 @@ test "OptimizedBuffer - verify pool growth works correctly" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
-    const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
+    const fg = ansi.rgbaFromFloats(1.0, 1.0, 1.0, 1.0);
 
     try buf.clear(bg, null);
 
@@ -1081,8 +1113,8 @@ test "OptimizedBuffer - repeated overwriting of same grapheme" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
-    const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
+    const fg = ansi.rgbaFromFloats(1.0, 1.0, 1.0, 1.0);
 
     try buf.drawText("•", 0, 0, fg, bg, 0);
 
@@ -1117,8 +1149,8 @@ test "OptimizedBuffer - two-buffer pattern should not leak" {
     );
     defer currentBuffer.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
-    const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
+    const fg = ansi.rgbaFromFloats(1.0, 1.0, 1.0, 1.0);
 
     var frame: u32 = 0;
     while (frame < 100) : (frame += 1) {
@@ -1146,8 +1178,8 @@ test "OptimizedBuffer - set and clear cycle should not leak" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
-    const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
+    const fg = ansi.rgbaFromFloats(1.0, 1.0, 1.0, 1.0);
 
     var frame: u32 = 0;
     while (frame < 200) : (frame += 1) {
@@ -1179,7 +1211,7 @@ test "OptimizedBuffer - repeated drawTextBuffer without clear should not leak" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
     try buf.clear(bg, null);
 
     var frame: u32 = 0;
@@ -1219,7 +1251,7 @@ test "OptimizedBuffer - renderer two-buffer swap pattern should not leak" {
     );
     defer next.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
     try current.clear(bg, null);
 
     var frame: u32 = 0;
@@ -1249,8 +1281,8 @@ test "OptimizedBuffer - set should not clear newly written adjacent grapheme con
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
-    const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
+    const fg = ansi.rgbaFromFloats(1.0, 1.0, 1.0, 1.0);
     try buf.clear(bg, null);
 
     const old_gid = try local_pool.alloc("🌟");
@@ -1296,8 +1328,8 @@ test "OptimizedBuffer - set span cleanup keeps shared link refcounts consistent"
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
-    const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
+    const fg = ansi.rgbaFromFloats(1.0, 1.0, 1.0, 1.0);
     try buf.clear(bg, null);
 
     const link_id = try local_link_pool.alloc("https://example.com");
@@ -1340,8 +1372,8 @@ test "OptimizedBuffer - syncCell updates grapheme tracker for start transitions"
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
-    const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
+    const fg = ansi.rgbaFromFloats(1.0, 1.0, 1.0, 1.0);
     try buf.clear(bg, null);
 
     const gid_old = try local_pool.alloc("你");
@@ -1388,7 +1420,7 @@ test "OptimizedBuffer - sustained rendering should not leak" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
     try buf.clear(bg, null);
 
     var frame: u32 = 0;
@@ -1418,7 +1450,7 @@ test "OptimizedBuffer - rendering with changing content should not leak" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
     try buf.clear(bg, null);
 
     var frame: u32 = 0;
@@ -1478,7 +1510,7 @@ test "OptimizedBuffer - multiple TextBuffers rendering simultaneously should not
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
     try buf.clear(bg, null);
 
     var frame: u32 = 0;
@@ -1504,8 +1536,8 @@ test "OptimizedBuffer - grapheme refcount management" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
-    const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
+    const fg = ansi.rgbaFromFloats(1.0, 1.0, 1.0, 1.0);
 
     try buf.drawText("•", 0, 0, fg, bg, 0);
     const initial_cell = buf.get(0, 0).?;
@@ -1551,7 +1583,7 @@ test "OptimizedBuffer - drawTextBuffer with graphemes then clear removes all poo
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
 
     try buf.drawTextBuffer(view, 0, 0);
 
@@ -1639,7 +1671,7 @@ test "OptimizedBuffer - drawTextBuffer with negative y coordinate should not pan
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
     try buf.clear(bg, null);
 
     // Draw text buffer at negative y coordinate (-2)
@@ -1708,8 +1740,8 @@ test "OptimizedBuffer - link encoding round-trip" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
-    const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
+    const fg = ansi.rgbaFromFloats(1.0, 1.0, 1.0, 1.0);
     try buf.clear(bg, null);
 
     // Allocate a link
@@ -1744,8 +1776,8 @@ test "OptimizedBuffer - link tracker per-cell counting" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
-    const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
+    const fg = ansi.rgbaFromFloats(1.0, 1.0, 1.0, 1.0);
     try buf.clear(bg, null);
 
     // Allocate a link
@@ -1793,8 +1825,8 @@ test "OptimizedBuffer - fillRect removes links" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
-    const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
+    const fg = ansi.rgbaFromFloats(1.0, 1.0, 1.0, 1.0);
     try buf.clear(bg, null);
 
     // Allocate a link
@@ -1810,7 +1842,7 @@ test "OptimizedBuffer - fillRect removes links" {
     try std.testing.expect(ansi.TextAttributes.hasLink(buf.get(10, 0).?.attributes));
 
     // Fill rect over first link
-    try buf.fillRect(0, 0, 6, 1, bg, ansi.COLOR_TAG_RGB);
+    try buf.fillRect(0, 0, 6, 1, bg);
 
     // Cells in rect should have no link
     try std.testing.expect(!ansi.TextAttributes.hasLink(buf.get(0, 0).?.attributes));
@@ -1832,26 +1864,26 @@ test "OptimizedBuffer - fillRect alpha path preserves underlying text without tr
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
-    const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
+    const fg = ansi.rgbaFromFloats(1.0, 1.0, 1.0, 1.0);
     try buf.clear(bg, null);
     try buf.drawText("X", 1, 1, fg, bg, 0);
 
     try std.testing.expect(!buf.grapheme_tracker.hasAny());
     try std.testing.expect(!buf.link_tracker.hasAny());
 
-    const overlay_bg = RGBA{ 0.0, 0.0, 1.0, 0.5 };
-    try buf.fillRect(0, 0, 3, 3, overlay_bg, ansi.COLOR_TAG_RGB);
+    const overlay_bg = ansi.rgbaFromFloats(0.0, 0.0, 1.0, 0.5);
+    try buf.fillRect(0, 0, 3, 3, overlay_bg);
 
     const preserved = buf.get(1, 1).?;
     try std.testing.expectEqual(@as(u32, 'X'), preserved.char);
-    try std.testing.expect(preserved.bg[2] > 0.1);
-    try std.testing.expect(preserved.fg[2] > 0.5);
+    try std.testing.expect(ansi.blueF(preserved.bg) > 0.1);
+    try std.testing.expect(ansi.blueF(preserved.fg) > 0.5);
 
     const filled = buf.get(0, 0).?;
     try std.testing.expectEqual(@as(u32, buffer_mod.DEFAULT_SPACE_CHAR), filled.char);
-    try std.testing.expect(filled.bg[2] > 0.1);
-    try std.testing.expect(filled.fg[0] > 0.9);
+    try std.testing.expect(ansi.blueF(filled.bg) > 0.1);
+    try std.testing.expect(ansi.redF(filled.fg) > 0.9);
 }
 
 test "OptimizedBuffer - fillRect transparent path is a no-op without trackers" {
@@ -1866,10 +1898,10 @@ test "OptimizedBuffer - fillRect transparent path is a no-op without trackers" {
     );
     defer buf.deinit();
 
-    const red_bg = RGBA{ 1.0, 0.0, 0.0, 1.0 };
-    const yellow_fg = RGBA{ 1.0, 1.0, 0.0, 1.0 };
-    const green_fg = RGBA{ 0.0, 1.0, 0.0, 1.0 };
-    const blue_bg = RGBA{ 0.0, 0.0, 1.0, 1.0 };
+    const red_bg = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
+    const yellow_fg = ansi.rgbaFromFloats(1.0, 1.0, 0.0, 1.0);
+    const green_fg = ansi.rgbaFromFloats(0.0, 1.0, 0.0, 1.0);
+    const blue_bg = ansi.rgbaFromFloats(0.0, 0.0, 1.0, 1.0);
     try buf.clear(red_bg, null);
     try buf.drawText("X", 1, 1, yellow_fg, red_bg, ansi.TextAttributes.BOLD);
     try buf.drawText(" ", 0, 1, green_fg, blue_bg, ansi.TextAttributes.UNDERLINE);
@@ -1877,31 +1909,31 @@ test "OptimizedBuffer - fillRect transparent path is a no-op without trackers" {
     try std.testing.expect(!buf.grapheme_tracker.hasAny());
     try std.testing.expect(!buf.link_tracker.hasAny());
 
-    const transparent_bg = RGBA{ 0.0, 0.0, 0.0, 0.0 };
-    try buf.fillRect(0, 0, 3, 3, transparent_bg, ansi.COLOR_TAG_RGB);
+    const transparent_bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 0.0);
+    try buf.fillRect(0, 0, 3, 3, transparent_bg);
 
     const preserved = buf.get(1, 1).?;
     try std.testing.expectEqual(@as(u32, 'X'), preserved.char);
-    try std.testing.expectEqual(yellow_fg[0], preserved.fg[0]);
-    try std.testing.expectEqual(yellow_fg[1], preserved.fg[1]);
-    try std.testing.expectEqual(yellow_fg[2], preserved.fg[2]);
-    try std.testing.expectEqual(red_bg[0], preserved.bg[0]);
-    try std.testing.expectEqual(red_bg[1], preserved.bg[1]);
-    try std.testing.expectEqual(red_bg[2], preserved.bg[2]);
+    try std.testing.expectEqual(ansi.redF(yellow_fg), ansi.redF(preserved.fg));
+    try std.testing.expectEqual(ansi.greenF(yellow_fg), ansi.greenF(preserved.fg));
+    try std.testing.expectEqual(ansi.blueF(yellow_fg), ansi.blueF(preserved.fg));
+    try std.testing.expectEqual(ansi.redF(red_bg), ansi.redF(preserved.bg));
+    try std.testing.expectEqual(ansi.greenF(red_bg), ansi.greenF(preserved.bg));
+    try std.testing.expectEqual(ansi.blueF(red_bg), ansi.blueF(preserved.bg));
     try std.testing.expectEqual(ansi.TextAttributes.BOLD, preserved.attributes);
 
     const unchangedSpace = buf.get(0, 1).?;
     try std.testing.expectEqual(@as(u32, buffer_mod.DEFAULT_SPACE_CHAR), unchangedSpace.char);
-    try std.testing.expectEqual(green_fg[0], unchangedSpace.fg[0]);
-    try std.testing.expectEqual(green_fg[1], unchangedSpace.fg[1]);
-    try std.testing.expectEqual(green_fg[2], unchangedSpace.fg[2]);
-    try std.testing.expectEqual(blue_bg[0], unchangedSpace.bg[0]);
-    try std.testing.expectEqual(blue_bg[1], unchangedSpace.bg[1]);
-    try std.testing.expectEqual(blue_bg[2], unchangedSpace.bg[2]);
+    try std.testing.expectEqual(ansi.redF(green_fg), ansi.redF(unchangedSpace.fg));
+    try std.testing.expectEqual(ansi.greenF(green_fg), ansi.greenF(unchangedSpace.fg));
+    try std.testing.expectEqual(ansi.blueF(green_fg), ansi.blueF(unchangedSpace.fg));
+    try std.testing.expectEqual(ansi.redF(blue_bg), ansi.redF(unchangedSpace.bg));
+    try std.testing.expectEqual(ansi.greenF(blue_bg), ansi.greenF(unchangedSpace.bg));
+    try std.testing.expectEqual(ansi.blueF(blue_bg), ansi.blueF(unchangedSpace.bg));
     try std.testing.expectEqual(ansi.TextAttributes.UNDERLINE, unchangedSpace.attributes);
 }
 
-test "OptimizedBuffer - drawBox transparent border preserves destination background tags without trackers" {
+test "OptimizedBuffer - drawBox transparent border preserves destination background metadata without trackers" {
     const pool = gp.initGlobalPool(std.testing.allocator);
     defer gp.deinitGlobalPool();
 
@@ -1913,17 +1945,15 @@ test "OptimizedBuffer - drawBox transparent border preserves destination backgro
     );
     defer buf.deinit();
 
-    const red_bg = RGBA{ 1.0, 0.0, 0.0, 1.0 };
-    const yellow_fg = RGBA{ 1.0, 1.0, 0.0, 1.0 };
-    const green_fg = RGBA{ 0.0, 1.0, 0.0, 1.0 };
-    const transparent_bg = RGBA{ 0.0, 0.0, 0.0, 0.0 };
-    try buf.clearWithTags(red_bg, null, ansi.indexedColorTag(6));
+    const red_bg = ansi.indexedColor(6, 255, 0, 0);
+    const yellow_fg = ansi.defaultColor(255, 255, 0, 255);
+    const green_fg = ansi.indexedColor(4, 0, 255, 0);
+    const transparent_bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 0.0);
+    try buf.clear(red_bg, null);
     buf.set(0, 1, .{
         .char = 'A',
         .fg = yellow_fg,
         .bg = red_bg,
-        .fg_tag = ansi.COLOR_TAG_DEFAULT,
-        .bg_tag = ansi.indexedColorTag(6),
         .attributes = ansi.TextAttributes.BOLD,
     });
 
@@ -1931,18 +1961,20 @@ test "OptimizedBuffer - drawBox transparent border preserves destination backgro
     try std.testing.expect(!buf.link_tracker.hasAny());
 
     const border_chars = [_]u32{ 0x250c, 0x2510, 0x2514, 0x2518, 0x2500, 0x2502, 0, 0, 0, 0, 0 };
-    try buf.drawBox(0, 0, 4, 4, &border_chars, .{ .left = true }, green_fg, transparent_bg, false, null, 0, null, 0, ansi.indexedColorTag(4), ansi.COLOR_TAG_RGB);
+    try buf.drawBox(0, 0, 4, 4, &border_chars, .{ .left = true }, green_fg, transparent_bg, false, null, 0, null, 0);
 
     const cell = buf.get(0, 1).?;
     try std.testing.expectEqual(@as(u32, 0x2502), cell.char);
-    try std.testing.expectEqual(green_fg[0], cell.fg[0]);
-    try std.testing.expectEqual(green_fg[1], cell.fg[1]);
-    try std.testing.expectEqual(green_fg[2], cell.fg[2]);
-    try std.testing.expectEqual(ansi.indexedColorTag(4), cell.fg_tag);
-    try std.testing.expectEqual(red_bg[0], cell.bg[0]);
-    try std.testing.expectEqual(red_bg[1], cell.bg[1]);
-    try std.testing.expectEqual(red_bg[2], cell.bg[2]);
-    try std.testing.expectEqual(ansi.indexedColorTag(6), cell.bg_tag);
+    try std.testing.expectEqual(ansi.redF(green_fg), ansi.redF(cell.fg));
+    try std.testing.expectEqual(ansi.greenF(green_fg), ansi.greenF(cell.fg));
+    try std.testing.expectEqual(ansi.blueF(green_fg), ansi.blueF(cell.fg));
+    try std.testing.expectEqual(ansi.ColorIntent.indexed, ansi.intent(cell.fg));
+    try std.testing.expectEqual(@as(u8, 4), ansi.slot(cell.fg));
+    try std.testing.expectEqual(ansi.redF(red_bg), ansi.redF(cell.bg));
+    try std.testing.expectEqual(ansi.greenF(red_bg), ansi.greenF(cell.bg));
+    try std.testing.expectEqual(ansi.blueF(red_bg), ansi.blueF(cell.bg));
+    try std.testing.expectEqual(ansi.ColorIntent.indexed, ansi.intent(cell.bg));
+    try std.testing.expectEqual(@as(u8, 6), ansi.slot(cell.bg));
     try std.testing.expectEqual(@as(u32, 0), cell.attributes);
 }
 
@@ -1960,8 +1992,8 @@ test "OptimizedBuffer - link reuse after free" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
-    const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
+    const fg = ansi.rgbaFromFloats(1.0, 1.0, 1.0, 1.0);
 
     // Allocate first link
     const link_id1 = try local_link_pool.alloc("https://first.com");
@@ -1996,9 +2028,9 @@ test "OptimizedBuffer - alpha blending preserves overlay link not dest link" {
     );
     defer buf.deinit();
 
-    const bg_opaque = RGBA{ 0.0, 0.0, 0.0, 1.0 };
-    const bg_alpha = RGBA{ 0.5, 0.5, 0.5, 0.5 };
-    const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
+    const bg_opaque = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
+    const bg_alpha = ansi.rgbaFromFloats(0.5, 0.5, 0.5, 0.5);
+    const fg = ansi.rgbaFromFloats(1.0, 1.0, 1.0, 1.0);
     try buf.clear(bg_opaque, null);
 
     // Draw underlying text with link A
@@ -2037,9 +2069,9 @@ test "OptimizedBuffer - alpha blending with no link clears underlying link" {
     );
     defer buf.deinit();
 
-    const bg_opaque = RGBA{ 0.0, 0.0, 0.0, 1.0 };
-    const bg_alpha = RGBA{ 0.5, 0.5, 0.5, 0.5 };
-    const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
+    const bg_opaque = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
+    const bg_alpha = ansi.rgbaFromFloats(0.5, 0.5, 0.5, 0.5);
+    const fg = ansi.rgbaFromFloats(1.0, 1.0, 1.0, 1.0);
     try buf.clear(bg_opaque, null);
 
     // Draw underlying text with link
@@ -2077,7 +2109,7 @@ test "OptimizedBuffer - drawGrayscaleBuffer basic rendering" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
     try buf.clear(bg, null);
 
     // Create a 3x3 intensity buffer with varying values
@@ -2087,18 +2119,18 @@ test "OptimizedBuffer - drawGrayscaleBuffer basic rendering" {
         1.0,  0.0,  0.5,
     };
 
-    buf.drawGrayscaleBuffer(2, 1, &intensities, 3, 3, null, bg, ansi.COLOR_TAG_RGB, ansi.COLOR_TAG_RGB);
+    buf.drawGrayscaleBuffer(2, 1, &intensities, 3, 3, null, bg);
 
     const cell_0_0 = buf.get(2, 1).?;
     try std.testing.expectEqual(@as(u32, 32), cell_0_0.char);
 
     const cell_1_0 = buf.get(3, 1).?;
     try std.testing.expect(cell_1_0.char != 32);
-    try std.testing.expect(cell_1_0.fg[0] > 0.3);
+    try std.testing.expect(ansi.redF(cell_1_0.fg) > 0.3);
 
     const cell_2_0 = buf.get(4, 1).?;
     try std.testing.expect(cell_2_0.char != 32);
-    try std.testing.expect(cell_2_0.fg[0] > 0.9);
+    try std.testing.expect(ansi.redF(cell_2_0.fg) > 0.9);
 }
 
 test "OptimizedBuffer - drawGrayscaleBuffer negative position clipping" {
@@ -2115,7 +2147,7 @@ test "OptimizedBuffer - drawGrayscaleBuffer negative position clipping" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
     try buf.clear(bg, null);
 
     // Create a 4x4 intensity buffer
@@ -2126,7 +2158,7 @@ test "OptimizedBuffer - drawGrayscaleBuffer negative position clipping" {
         0.5, 0.5, 0.5, 0.5,
     };
 
-    buf.drawGrayscaleBuffer(-1, -1, &intensities, 4, 4, null, bg, ansi.COLOR_TAG_RGB, ansi.COLOR_TAG_RGB);
+    buf.drawGrayscaleBuffer(-1, -1, &intensities, 4, 4, null, bg);
 
     const cell_0_0 = buf.get(0, 0).?;
     try std.testing.expect(cell_0_0.char != 32);
@@ -2149,7 +2181,7 @@ test "OptimizedBuffer - drawGrayscaleBuffer negative position fully clipped" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
     try buf.clear(bg, null);
 
     const intensities = [_]f32{
@@ -2159,7 +2191,7 @@ test "OptimizedBuffer - drawGrayscaleBuffer negative position fully clipped" {
         1.0, 1.0, 1.0, 1.0,
     };
 
-    buf.drawGrayscaleBuffer(-10, -10, &intensities, 4, 4, null, bg, ansi.COLOR_TAG_RGB, ansi.COLOR_TAG_RGB);
+    buf.drawGrayscaleBuffer(-10, -10, &intensities, 4, 4, null, bg);
 
     const cell = buf.get(0, 0).?;
     try std.testing.expectEqual(@as(u32, 32), cell.char);
@@ -2179,7 +2211,7 @@ test "OptimizedBuffer - drawGrayscaleBuffer respects scissor rect" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
     try buf.clear(bg, null);
 
     try buf.pushScissorRect(0, 0, 2, 2);
@@ -2191,7 +2223,7 @@ test "OptimizedBuffer - drawGrayscaleBuffer respects scissor rect" {
         1.0, 1.0, 1.0, 1.0,
     };
 
-    buf.drawGrayscaleBuffer(0, 0, &intensities, 4, 4, null, bg, ansi.COLOR_TAG_RGB, ansi.COLOR_TAG_RGB);
+    buf.drawGrayscaleBuffer(0, 0, &intensities, 4, 4, null, bg);
 
     const cell_0_0 = buf.get(0, 0).?;
     const cell_1_1 = buf.get(1, 1).?;
@@ -2218,7 +2250,7 @@ test "OptimizedBuffer - drawGrayscaleBuffer intensity to character mapping" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
     try buf.clear(bg, null);
 
     const intensities = [_]f32{
@@ -2228,7 +2260,7 @@ test "OptimizedBuffer - drawGrayscaleBuffer intensity to character mapping" {
         1.0,
     };
 
-    buf.drawGrayscaleBuffer(0, 0, &intensities, 4, 1, null, bg, ansi.COLOR_TAG_RGB, ansi.COLOR_TAG_RGB);
+    buf.drawGrayscaleBuffer(0, 0, &intensities, 4, 1, null, bg);
 
     const cell_0 = buf.get(0, 0).?;
     try std.testing.expectEqual(@as(u32, 32), cell_0.char);
@@ -2237,9 +2269,9 @@ test "OptimizedBuffer - drawGrayscaleBuffer intensity to character mapping" {
     try std.testing.expect(cell_1.char != 32);
 
     const cell_3 = buf.get(3, 0).?;
-    try std.testing.expect(cell_3.fg[0] > 0.9);
-    try std.testing.expect(cell_3.fg[1] > 0.9);
-    try std.testing.expect(cell_3.fg[2] > 0.9);
+    try std.testing.expect(ansi.redF(cell_3.fg) > 0.9);
+    try std.testing.expect(ansi.greenF(cell_3.fg) > 0.9);
+    try std.testing.expect(ansi.blueF(cell_3.fg) > 0.9);
 }
 
 test "OptimizedBuffer - drawGrayscaleBuffer alpha blending preserves underlying bg" {
@@ -2256,30 +2288,30 @@ test "OptimizedBuffer - drawGrayscaleBuffer alpha blending preserves underlying 
     );
     defer buf.deinit();
 
-    const red_bg = RGBA{ 1.0, 0.0, 0.0, 1.0 };
+    const red_bg = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
     try buf.clear(red_bg, null);
 
     const initial_cell = buf.get(1, 1).?;
-    try std.testing.expectEqual(@as(f32, 1.0), initial_cell.bg[0]);
-    try std.testing.expectEqual(@as(f32, 0.0), initial_cell.bg[1]);
-    try std.testing.expectEqual(@as(f32, 0.0), initial_cell.bg[2]);
+    try std.testing.expectEqual(@as(u8, 255), ansi.red(initial_cell.bg));
+    try std.testing.expectEqual(@as(u8, 0), ansi.green(initial_cell.bg));
+    try std.testing.expectEqual(@as(u8, 0), ansi.blue(initial_cell.bg));
 
-    const semi_transparent_bg = RGBA{ 0.0, 0.0, 1.0, 0.5 };
+    const semi_transparent_bg = ansi.rgbaFromFloats(0.0, 0.0, 1.0, 0.5);
     const intensities = [_]f32{
         1.0, 1.0, 1.0,
         1.0, 1.0, 1.0,
         1.0, 1.0, 1.0,
     };
 
-    buf.drawGrayscaleBuffer(0, 0, &intensities, 3, 3, null, semi_transparent_bg, ansi.COLOR_TAG_RGB, ansi.COLOR_TAG_RGB);
+    buf.drawGrayscaleBuffer(0, 0, &intensities, 3, 3, null, semi_transparent_bg);
 
     const cell = buf.get(1, 1).?;
-    try std.testing.expect(cell.bg[0] > 0.1);
-    try std.testing.expect(cell.bg[2] > 0.1);
+    try std.testing.expect(ansi.redF(cell.bg) > 0.1);
+    try std.testing.expect(ansi.blueF(cell.bg) > 0.1);
 
-    try std.testing.expect(cell.fg[0] > 0.9);
-    try std.testing.expect(cell.fg[1] > 0.9);
-    try std.testing.expect(cell.fg[2] > 0.9);
+    try std.testing.expect(ansi.redF(cell.fg) > 0.9);
+    try std.testing.expect(ansi.greenF(cell.fg) > 0.9);
+    try std.testing.expect(ansi.blueF(cell.fg) > 0.9);
 }
 
 test "OptimizedBuffer - drawGrayscaleBuffer fully transparent bg preserves underlying" {
@@ -2296,24 +2328,24 @@ test "OptimizedBuffer - drawGrayscaleBuffer fully transparent bg preserves under
     );
     defer buf.deinit();
 
-    const green_bg = RGBA{ 0.0, 1.0, 0.0, 1.0 };
+    const green_bg = ansi.rgbaFromFloats(0.0, 1.0, 0.0, 1.0);
     try buf.clear(green_bg, null);
 
-    const transparent_bg = RGBA{ 0.0, 0.0, 1.0, 0.0 };
+    const transparent_bg = ansi.rgbaFromFloats(0.0, 0.0, 1.0, 0.0);
     const intensities = [_]f32{
         1.0, 1.0, 1.0,
         1.0, 1.0, 1.0,
         1.0, 1.0, 1.0,
     };
 
-    buf.drawGrayscaleBuffer(0, 0, &intensities, 3, 3, null, transparent_bg, ansi.COLOR_TAG_RGB, ansi.COLOR_TAG_RGB);
+    buf.drawGrayscaleBuffer(0, 0, &intensities, 3, 3, null, transparent_bg);
 
     const cell = buf.get(1, 1).?;
-    try std.testing.expectEqual(@as(f32, 0.0), cell.bg[0]);
-    try std.testing.expectEqual(@as(f32, 1.0), cell.bg[1]);
-    try std.testing.expectEqual(@as(f32, 0.0), cell.bg[2]);
+    try std.testing.expectEqual(@as(u8, 0), ansi.red(cell.bg));
+    try std.testing.expectEqual(@as(u8, 255), ansi.green(cell.bg));
+    try std.testing.expectEqual(@as(u8, 0), ansi.blue(cell.bg));
 
-    try std.testing.expect(cell.fg[0] > 0.9);
+    try std.testing.expect(ansi.redF(cell.fg) > 0.9);
 }
 
 test "OptimizedBuffer - drawGrayscaleBuffer opaque bg overwrites underlying" {
@@ -2330,22 +2362,22 @@ test "OptimizedBuffer - drawGrayscaleBuffer opaque bg overwrites underlying" {
     );
     defer buf.deinit();
 
-    const red_bg = RGBA{ 1.0, 0.0, 0.0, 1.0 };
+    const red_bg = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
     try buf.clear(red_bg, null);
 
-    const blue_bg = RGBA{ 0.0, 0.0, 1.0, 1.0 };
+    const blue_bg = ansi.rgbaFromFloats(0.0, 0.0, 1.0, 1.0);
     const intensities = [_]f32{
         1.0, 1.0, 1.0,
         1.0, 1.0, 1.0,
         1.0, 1.0, 1.0,
     };
 
-    buf.drawGrayscaleBuffer(0, 0, &intensities, 3, 3, null, blue_bg, ansi.COLOR_TAG_RGB, ansi.COLOR_TAG_RGB);
+    buf.drawGrayscaleBuffer(0, 0, &intensities, 3, 3, null, blue_bg);
 
     const cell = buf.get(1, 1).?;
-    try std.testing.expectEqual(@as(f32, 0.0), cell.bg[0]);
-    try std.testing.expectEqual(@as(f32, 0.0), cell.bg[1]);
-    try std.testing.expectEqual(@as(f32, 1.0), cell.bg[2]);
+    try std.testing.expectEqual(@as(u8, 0), ansi.red(cell.bg));
+    try std.testing.expectEqual(@as(u8, 0), ansi.green(cell.bg));
+    try std.testing.expectEqual(@as(u8, 255), ansi.blue(cell.bg));
 }
 
 test "OptimizedBuffer - drawGrayscaleBuffer with opacity stack" {
@@ -2362,25 +2394,25 @@ test "OptimizedBuffer - drawGrayscaleBuffer with opacity stack" {
     );
     defer buf.deinit();
 
-    const red_bg = RGBA{ 1.0, 0.0, 0.0, 1.0 };
+    const red_bg = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
     try buf.clear(red_bg, null);
 
     try buf.pushOpacity(0.5);
 
-    const blue_bg = RGBA{ 0.0, 0.0, 1.0, 1.0 };
+    const blue_bg = ansi.rgbaFromFloats(0.0, 0.0, 1.0, 1.0);
     const intensities = [_]f32{
         1.0, 1.0, 1.0,
         1.0, 1.0, 1.0,
         1.0, 1.0, 1.0,
     };
 
-    buf.drawGrayscaleBuffer(0, 0, &intensities, 3, 3, null, blue_bg, ansi.COLOR_TAG_RGB, ansi.COLOR_TAG_RGB);
+    buf.drawGrayscaleBuffer(0, 0, &intensities, 3, 3, null, blue_bg);
 
     buf.popOpacity();
 
     const cell = buf.get(1, 1).?;
-    try std.testing.expect(cell.bg[0] > 0.1);
-    try std.testing.expect(cell.bg[2] > 0.1);
+    try std.testing.expect(ansi.redF(cell.bg) > 0.1);
+    try std.testing.expect(ansi.blueF(cell.bg) > 0.1);
 }
 
 test "OptimizedBuffer - drawGrayscaleBufferSupersampled alpha blending" {
@@ -2397,7 +2429,7 @@ test "OptimizedBuffer - drawGrayscaleBufferSupersampled alpha blending" {
     );
     defer buf.deinit();
 
-    const red_bg = RGBA{ 1.0, 0.0, 0.0, 1.0 };
+    const red_bg = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
     try buf.clear(red_bg, null);
 
     const intensities = [_]f32{
@@ -2407,12 +2439,12 @@ test "OptimizedBuffer - drawGrayscaleBufferSupersampled alpha blending" {
         1.0, 1.0, 1.0, 1.0,
     };
 
-    const semi_transparent_bg = RGBA{ 0.0, 0.0, 1.0, 0.5 };
-    buf.drawGrayscaleBufferSupersampled(0, 0, &intensities, 4, 4, null, semi_transparent_bg, ansi.COLOR_TAG_RGB, ansi.COLOR_TAG_RGB);
+    const semi_transparent_bg = ansi.rgbaFromFloats(0.0, 0.0, 1.0, 0.5);
+    buf.drawGrayscaleBufferSupersampled(0, 0, &intensities, 4, 4, null, semi_transparent_bg);
 
     const cell = buf.get(0, 0).?;
-    try std.testing.expect(cell.bg[0] > 0.1);
-    try std.testing.expect(cell.bg[2] > 0.1);
+    try std.testing.expect(ansi.redF(cell.bg) > 0.1);
+    try std.testing.expect(ansi.blueF(cell.bg) > 0.1);
 }
 
 test "OptimizedBuffer - drawGrayscaleBufferSupersampled fully transparent preserves bg" {
@@ -2429,7 +2461,7 @@ test "OptimizedBuffer - drawGrayscaleBufferSupersampled fully transparent preser
     );
     defer buf.deinit();
 
-    const green_bg = RGBA{ 0.0, 1.0, 0.0, 1.0 };
+    const green_bg = ansi.rgbaFromFloats(0.0, 1.0, 0.0, 1.0);
     try buf.clear(green_bg, null);
 
     const intensities = [_]f32{
@@ -2439,13 +2471,13 @@ test "OptimizedBuffer - drawGrayscaleBufferSupersampled fully transparent preser
         1.0, 1.0, 1.0, 1.0,
     };
 
-    const transparent_bg = RGBA{ 0.0, 0.0, 1.0, 0.0 };
-    buf.drawGrayscaleBufferSupersampled(0, 0, &intensities, 4, 4, null, transparent_bg, ansi.COLOR_TAG_RGB, ansi.COLOR_TAG_RGB);
+    const transparent_bg = ansi.rgbaFromFloats(0.0, 0.0, 1.0, 0.0);
+    buf.drawGrayscaleBufferSupersampled(0, 0, &intensities, 4, 4, null, transparent_bg);
 
     const cell = buf.get(0, 0).?;
-    try std.testing.expectEqual(@as(f32, 0.0), cell.bg[0]);
-    try std.testing.expectEqual(@as(f32, 1.0), cell.bg[1]);
-    try std.testing.expectEqual(@as(f32, 0.0), cell.bg[2]);
+    try std.testing.expectEqual(@as(u8, 0), ansi.red(cell.bg));
+    try std.testing.expectEqual(@as(u8, 255), ansi.green(cell.bg));
+    try std.testing.expectEqual(@as(u8, 0), ansi.blue(cell.bg));
 }
 
 test "OptimizedBuffer - drawGrayscaleBufferSupersampled respects scissor" {
@@ -2462,7 +2494,7 @@ test "OptimizedBuffer - drawGrayscaleBufferSupersampled respects scissor" {
     );
     defer buf.deinit();
 
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
     try buf.clear(bg, null);
 
     try buf.pushScissorRect(0, 0, 1, 1);
@@ -2474,7 +2506,7 @@ test "OptimizedBuffer - drawGrayscaleBufferSupersampled respects scissor" {
         1.0, 1.0, 1.0, 1.0,
     };
 
-    buf.drawGrayscaleBufferSupersampled(0, 0, &intensities, 4, 4, null, bg, ansi.COLOR_TAG_RGB, ansi.COLOR_TAG_RGB);
+    buf.drawGrayscaleBufferSupersampled(0, 0, &intensities, 4, 4, null, bg);
 
     const inCell = buf.get(0, 0).?;
     const outCell = buf.get(2, 2).?;
@@ -2498,7 +2530,7 @@ test "OptimizedBuffer - drawGrayscaleBufferSupersampled with opacity stack" {
     );
     defer buf.deinit();
 
-    const red_bg = RGBA{ 1.0, 0.0, 0.0, 1.0 };
+    const red_bg = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
     try buf.clear(red_bg, null);
 
     try buf.pushOpacity(0.5);
@@ -2510,14 +2542,14 @@ test "OptimizedBuffer - drawGrayscaleBufferSupersampled with opacity stack" {
         1.0, 1.0, 1.0, 1.0,
     };
 
-    const blue_bg = RGBA{ 0.0, 0.0, 1.0, 1.0 };
-    buf.drawGrayscaleBufferSupersampled(0, 0, &intensities, 4, 4, null, blue_bg, ansi.COLOR_TAG_RGB, ansi.COLOR_TAG_RGB);
+    const blue_bg = ansi.rgbaFromFloats(0.0, 0.0, 1.0, 1.0);
+    buf.drawGrayscaleBufferSupersampled(0, 0, &intensities, 4, 4, null, blue_bg);
 
     buf.popOpacity();
 
     const cell = buf.get(0, 0).?;
-    try std.testing.expect(cell.bg[0] > 0.1);
-    try std.testing.expect(cell.bg[2] > 0.1);
+    try std.testing.expect(ansi.redF(cell.bg) > 0.1);
+    try std.testing.expect(ansi.blueF(cell.bg) > 0.1);
 }
 
 test "OptimizedBuffer - blendColors with transparent destination" {
@@ -2534,17 +2566,18 @@ test "OptimizedBuffer - blendColors with transparent destination" {
     );
     defer buf.deinit();
 
-    const transparent_bg = RGBA{ 0.0, 0.0, 0.0, 0.0 };
+    const transparent_bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 0.0);
     try buf.clear(transparent_bg, null);
 
-    const semi_white = RGBA{ 1.0, 1.0, 1.0, 0.5 };
-    const transparent_fg = RGBA{ 0.0, 0.0, 0.0, 0.0 };
-    try buf.setCellWithAlphaBlending(0, 0, 'X', semi_white, transparent_fg, 0, ansi.COLOR_TAG_RGB, ansi.COLOR_TAG_RGB);
+    const semi_white = ansi.rgbaFromFloats(1.0, 1.0, 1.0, 0.5);
+    const transparent_fg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 0.0);
+    try buf.setCellWithAlphaBlending(0, 0, 'X', semi_white, transparent_fg, 0);
 
     const cell = buf.get(0, 0).?;
-    try std.testing.expect(cell.fg[0] > 0.45);
-    try std.testing.expect(cell.fg[0] < 0.55);
-    try std.testing.expectEqual(@as(f32, 0.5), cell.fg[3]);
+    try std.testing.expectEqual(@as(u8, 255), ansi.red(cell.fg));
+    try std.testing.expectEqual(@as(u8, 255), ansi.green(cell.fg));
+    try std.testing.expectEqual(@as(u8, 255), ansi.blue(cell.fg));
+    try std.testing.expectEqual(@as(u8, 128), ansi.alpha(cell.fg));
 }
 
 test "OptimizedBuffer - blend backdrop flattens transparent destination" {
@@ -2557,25 +2590,22 @@ test "OptimizedBuffer - blend backdrop flattens transparent destination" {
         std.testing.allocator,
         2,
         2,
-        .{ .pool = pool, .id = "test-buffer", .blendBackdropColor = RGBA{ 1.0, 1.0, 1.0, 1.0 } },
+        .{ .pool = pool, .id = "test-buffer", .blendBackdropColor = ansi.rgbaFromFloats(1.0, 1.0, 1.0, 1.0) },
     );
     defer buf.deinit();
 
-    const transparent_bg = RGBA{ 0.0, 0.0, 0.0, 0.0 };
+    const transparent_bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 0.0);
     try buf.clear(transparent_bg, null);
 
-    const opaque_fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
-    const semi_black_bg = RGBA{ 0.0, 0.0, 0.0, 0.5 };
-    try buf.setCellWithAlphaBlending(0, 0, buffer_mod.DEFAULT_SPACE_CHAR, opaque_fg, semi_black_bg, 0, ansi.COLOR_TAG_RGB, ansi.COLOR_TAG_RGB);
+    const opaque_fg = ansi.rgbaFromFloats(1.0, 1.0, 1.0, 1.0);
+    const semi_black_bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 0.5);
+    try buf.setCellWithAlphaBlending(0, 0, buffer_mod.DEFAULT_SPACE_CHAR, opaque_fg, semi_black_bg, 0);
 
     const cell = buf.get(0, 0).?;
-    try std.testing.expect(cell.bg[0] > 0.45);
-    try std.testing.expect(cell.bg[0] < 0.48);
-    try std.testing.expect(cell.bg[1] > 0.45);
-    try std.testing.expect(cell.bg[1] < 0.48);
-    try std.testing.expect(cell.bg[2] > 0.45);
-    try std.testing.expect(cell.bg[2] < 0.48);
-    try std.testing.expectEqual(@as(f32, 0.5), cell.bg[3]);
+    try std.testing.expectEqual(@as(u8, 127), ansi.red(cell.bg));
+    try std.testing.expectEqual(@as(u8, 127), ansi.green(cell.bg));
+    try std.testing.expectEqual(@as(u8, 127), ansi.blue(cell.bg));
+    try std.testing.expectEqual(@as(u8, 255), ansi.alpha(cell.bg));
 }
 
 test "OptimizedBuffer - drawGrayscaleBuffer with custom fg color" {
@@ -2592,7 +2622,7 @@ test "OptimizedBuffer - drawGrayscaleBuffer with custom fg color" {
     );
     defer buf.deinit();
 
-    const black_bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const black_bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
     try buf.clear(black_bg, null);
 
     const intensities = [_]f32{
@@ -2601,13 +2631,13 @@ test "OptimizedBuffer - drawGrayscaleBuffer with custom fg color" {
         1.0, 1.0, 1.0,
     };
 
-    const red_fg = RGBA{ 1.0, 0.0, 0.0, 1.0 };
-    buf.drawGrayscaleBuffer(0, 0, &intensities, 3, 3, red_fg, black_bg, ansi.COLOR_TAG_RGB, ansi.COLOR_TAG_RGB);
+    const red_fg = ansi.rgbaFromFloats(1.0, 0.0, 0.0, 1.0);
+    buf.drawGrayscaleBuffer(0, 0, &intensities, 3, 3, red_fg, black_bg);
 
     const cell = buf.get(1, 1).?;
-    try std.testing.expect(cell.fg[0] > 0.9);
-    try std.testing.expect(cell.fg[1] < 0.1);
-    try std.testing.expect(cell.fg[2] < 0.1);
+    try std.testing.expect(ansi.redF(cell.fg) > 0.9);
+    try std.testing.expect(ansi.greenF(cell.fg) < 0.1);
+    try std.testing.expect(ansi.blueF(cell.fg) < 0.1);
 }
 
 test "OptimizedBuffer - drawGrayscaleBuffer custom fg with partial intensity" {
@@ -2624,7 +2654,7 @@ test "OptimizedBuffer - drawGrayscaleBuffer custom fg with partial intensity" {
     );
     defer buf.deinit();
 
-    const blue_bg = RGBA{ 0.0, 0.0, 1.0, 1.0 };
+    const blue_bg = ansi.rgbaFromFloats(0.0, 0.0, 1.0, 1.0);
     try buf.clear(blue_bg, null);
 
     const intensities = [_]f32{
@@ -2633,13 +2663,13 @@ test "OptimizedBuffer - drawGrayscaleBuffer custom fg with partial intensity" {
         0.5, 0.5, 0.5,
     };
 
-    const green_fg = RGBA{ 0.0, 1.0, 0.0, 1.0 };
-    const transparent_bg = RGBA{ 0.0, 0.0, 0.0, 0.0 };
-    buf.drawGrayscaleBuffer(0, 0, &intensities, 3, 3, green_fg, transparent_bg, ansi.COLOR_TAG_RGB, ansi.COLOR_TAG_RGB);
+    const green_fg = ansi.rgbaFromFloats(0.0, 1.0, 0.0, 1.0);
+    const transparent_bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 0.0);
+    buf.drawGrayscaleBuffer(0, 0, &intensities, 3, 3, green_fg, transparent_bg);
 
     const cell = buf.get(1, 1).?;
-    try std.testing.expect(cell.fg[1] > 0.2);
-    try std.testing.expect(cell.fg[2] > 0.2);
+    try std.testing.expect(ansi.greenF(cell.fg) > 0.2);
+    try std.testing.expect(ansi.blueF(cell.fg) > 0.2);
 }
 
 test "OptimizedBuffer - drawGrayscaleBufferSupersampled with custom fg color" {
@@ -2656,7 +2686,7 @@ test "OptimizedBuffer - drawGrayscaleBufferSupersampled with custom fg color" {
     );
     defer buf.deinit();
 
-    const black_bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const black_bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
     try buf.clear(black_bg, null);
 
     const intensities = [_]f32{
@@ -2666,13 +2696,13 @@ test "OptimizedBuffer - drawGrayscaleBufferSupersampled with custom fg color" {
         1.0, 1.0, 1.0, 1.0,
     };
 
-    const cyan_fg = RGBA{ 0.0, 1.0, 1.0, 1.0 };
-    buf.drawGrayscaleBufferSupersampled(0, 0, &intensities, 4, 4, cyan_fg, black_bg, ansi.COLOR_TAG_RGB, ansi.COLOR_TAG_RGB);
+    const cyan_fg = ansi.rgbaFromFloats(0.0, 1.0, 1.0, 1.0);
+    buf.drawGrayscaleBufferSupersampled(0, 0, &intensities, 4, 4, cyan_fg, black_bg);
 
     const cell = buf.get(0, 0).?;
-    try std.testing.expect(cell.fg[0] < 0.1);
-    try std.testing.expect(cell.fg[1] > 0.9);
-    try std.testing.expect(cell.fg[2] > 0.9);
+    try std.testing.expect(ansi.redF(cell.fg) < 0.1);
+    try std.testing.expect(ansi.greenF(cell.fg) > 0.9);
+    try std.testing.expect(ansi.blueF(cell.fg) > 0.9);
 }
 
 // Overwriting a grapheme cell with the same ID but different extent bits must
@@ -2693,8 +2723,8 @@ test "buffer - set same grapheme ID with different extents keeps slot alive" {
     });
     defer buf.deinit();
 
-    const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const fg = ansi.rgbaFromFloats(1.0, 1.0, 1.0, 1.0);
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
 
     const emoji = "👋";
 
@@ -2733,8 +2763,8 @@ test "renderer - grapheme WrongGeneration repro with pool slot reuse" {
     );
     defer cli_renderer.destroy();
 
-    const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const fg = ansi.rgbaFromFloats(1.0, 1.0, 1.0, 1.0);
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
 
     {
         const next = cli_renderer.getNextBuffer();
@@ -2808,8 +2838,8 @@ test "renderer - CJK graphemes shifting left must preserve continuation cells (#
     );
     defer cli_renderer.destroy();
 
-    const fg = RGBA{ 1.0, 1.0, 1.0, 1.0 };
-    const bg = RGBA{ 0.0, 0.0, 0.0, 1.0 };
+    const fg = ansi.rgbaFromFloats(1.0, 1.0, 1.0, 1.0);
+    const bg = ansi.rgbaFromFloats(0.0, 0.0, 0.0, 1.0);
 
     // Frame 1: "abcd你好世" — CJK chars start at column 4
     // Layout: a(0) b(1) c(2) d(3) 你(4,5) 好(6,7) 世(8,9) spaces(10..19)

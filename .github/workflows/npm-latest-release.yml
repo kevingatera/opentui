@@ -57,6 +57,15 @@ jobs:
           # Copy native packages to core's node_modules
           if [ -d "npm-packages/core-native-packages" ]; then
             mkdir -p packages/core/node_modules/@opentui
+
+            # Replace Bun-managed symlinks with the packaged native directories.
+            rm -rf packages/core/node_modules/@opentui/core-darwin-x64
+            rm -rf packages/core/node_modules/@opentui/core-darwin-arm64
+            rm -rf packages/core/node_modules/@opentui/core-linux-x64
+            rm -rf packages/core/node_modules/@opentui/core-linux-arm64
+            rm -rf packages/core/node_modules/@opentui/core-win32-x64
+            rm -rf packages/core/node_modules/@opentui/core-win32-arm64
+
             cp -r npm-packages/core-native-packages/* packages/core/node_modules/@opentui/
             echo "Copied native packages"
           fi
@@ -70,6 +79,11 @@ jobs:
           if [ -d "npm-packages/solid-dist" ]; then
             cp -r npm-packages/solid-dist packages/solid/dist
             echo "Copied solid dist"
+          fi
+
+          if [ -d "npm-packages/keymap-dist" ]; then
+            cp -r npm-packages/keymap-dist packages/keymap/dist
+            echo "Copied keymap dist"
           fi
 
           echo "Package extraction complete"
@@ -98,6 +112,10 @@ jobs:
           echo ""
           echo "📦 Checking @opentui/solid..."
           cd ../../solid/dist && npm pack --dry-run
+
+          echo ""
+          echo "📦 Checking @opentui/keymap..."
+          cd ../../keymap/dist && npm pack --dry-run
 
           echo ""
           echo "=========================================="

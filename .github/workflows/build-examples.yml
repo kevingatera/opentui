@@ -34,7 +34,16 @@ jobs:
 
           echo ""
           echo "✅ Base dependencies installed"
-          echo "Note: bun-webgpu will be installed by the build script (src/examples/build.ts) for all platforms"
+          echo "Note: bun-webgpu platform packages will be installed in a dedicated CI step"
+
+      - name: Install bun-webgpu for all target platforms
+        run: |
+          set -e
+          BUN_WEBGPU_VERSION=$(bun -e 'import { readFileSync } from "node:fs"; const pkg = JSON.parse(readFileSync("packages/core/package.json", "utf8")); process.stdout.write(pkg.optionalDependencies["bun-webgpu"]);')
+          echo "Installing bun-webgpu@${BUN_WEBGPU_VERSION} for all target platforms..."
+          cd packages/core
+          bun install --os="*" --cpu="*" bun-webgpu@${BUN_WEBGPU_VERSION}
+          echo "✅ bun-webgpu installed for all target platforms"
 
       - name: Download npm packages artifact
         uses: actions/download-artifact@v4
@@ -62,6 +71,15 @@ jobs:
           # Copy native packages to core's node_modules (required - these OVERRIDE the npm versions)
           echo "Copying built native packages (overriding any npm versions)..."
           test -d "npm-packages/core-native-packages" || (echo "❌ core-native-packages not found in artifact!" && exit 1)
+
+          # Remove Bun-managed symlinks first so we can replace them with the prebuilt artifact directories.
+          rm -rf packages/core/node_modules/@opentui/core-darwin-x64
+          rm -rf packages/core/node_modules/@opentui/core-darwin-arm64
+          rm -rf packages/core/node_modules/@opentui/core-linux-x64
+          rm -rf packages/core/node_modules/@opentui/core-linux-arm64
+          rm -rf packages/core/node_modules/@opentui/core-win32-x64
+          rm -rf packages/core/node_modules/@opentui/core-win32-arm64
+
           cp -r npm-packages/core-native-packages/* packages/core/node_modules/@opentui/
           test -n "$(ls -A packages/core/node_modules/@opentui/)" || (echo "❌ No native packages copied!" && exit 1)
           echo "✅ Native packages copied"
@@ -99,36 +117,25 @@ jobs:
           fi
 
           # Check for platform-specific packages in .bun cache (where bun install --os="*" --cpu="*" puts them)
+          BUN_WEBGPU_VERSION=$(bun -e 'import { readFileSync } from "node:fs"; const pkg = JSON.parse(readFileSync("packages/core/package.json", "utf8")); process.stdout.write(pkg.optionalDependencies["bun-webgpu"]);')
+
           echo ""
-          echo "Checking for platform-specific bun-webgpu packages in cache..."
-          if [ -d node_modules/.bun/bun-webgpu-darwin-arm64@0.1.4 ]; then
-            echo "✅ bun-webgpu-darwin-arm64 found in cache"
-          else
-            echo "⚠️  bun-webgpu-darwin-arm64 not found (will be installed during build)"
-          fi
-
-          if [ -d node_modules/.bun/bun-webgpu-darwin-x64@0.1.4 ]; then
-            echo "✅ bun-webgpu-darwin-x64 found in cache"
-          else
-            echo "⚠️  bun-webgpu-darwin-x64 not found (will be installed during build)"
-          fi
-
-          if [ -d node_modules/.bun/bun-webgpu-linux-x64@0.1.4 ]; then
-            echo "✅ bun-webgpu-linux-x64 found in cache"
-          else
-            echo "⚠️  bun-webgpu-linux-x64 not found (will be installed during build)"
-          fi
-
-          if [ -d node_modules/.bun/bun-webgpu-win32-x64@0.1.4 ]; then
-            echo "✅ bun-webgpu-win32-x64 found in cache"
-          else
-            echo "⚠️  bun-webgpu-win32-x64 not found (will be installed during build)"
-          fi
+          echo "Checking for platform-specific bun-webgpu packages in cache (version ${BUN_WEBGPU_VERSION})..."
+          for platform in darwin-arm64 darwin-x64 linux-x64 win32-x64; do
+            if [ -d "node_modules/.bun/bun-webgpu-${platform}@${BUN_WEBGPU_VERSION}" ]; then
+              echo "✅ bun-webgpu-${platform} found in cache"
+            else
+              echo "⚠️  bun-webgpu-${platform} not found (will be installed during build)"
+            fi
+          done
 
           echo ""
           echo "✅ bun-webgpu ready for bundling"
 
       - name: Build examples
+        env:
+          OPENTUI_EXAMPLES_USE_PREBUILT_ARTIFACTS: "true"
+          OPENTUI_EXAMPLES_SKIP_BUN_WEBGPU_INSTALL: "true"
         run: |
           set -e
           cd packages/core

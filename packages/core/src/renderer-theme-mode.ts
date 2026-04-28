@@ -160,6 +160,12 @@ export class RendererThemeMode {
   }
 
   private requestThemeOscColors(): void {
+    // Ignore repeated ?997 notifications while the current OSC refresh is
+    // still in flight.
+    if (this.themeRefreshTimeoutId !== null) {
+      return
+    }
+
     this.themeQueryPending = true
     this.themeOscForeground = null
     this.themeOscBackground = null

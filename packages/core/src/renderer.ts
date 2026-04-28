@@ -44,7 +44,7 @@ import {
 } from "./lib/terminal-capability-detection.js"
 import { type Clock, type TimerHandle, SystemClock } from "./lib/clock.js"
 import { StdinParser, type StdinEvent, type StdinParserProtocolContext } from "./lib/stdin-parser.js"
-import { matchesKeyBinding } from "./lib/keymapping.js"
+import { matchesKeyBinding } from "./lib/keybinding.internal.js"
 import { RendererThemeMode } from "./renderer-theme-mode.js"
 
 registerEnvVar({
@@ -471,6 +471,7 @@ const KITTY_FLAG_ALL_KEYS_AS_ESCAPES = 0b1000 // Report all keys as escape codes
 const KITTY_FLAG_REPORT_TEXT = 0b10000 // Report text associated with key events
 
 const DEFAULT_STDIN_PARSER_MAX_BUFFER_BYTES = 64 * 1024 * 1024
+const NATIVE_PALETTE_QUERY_SIZE = 16
 
 /**
  * Kitty Keyboard Protocol configuration options
@@ -660,6 +661,7 @@ export enum CliRenderEvents {
   RESIZE = "resize",
   FOCUS = "focus",
   BLUR = "blur",
+  FOCUSED_RENDERABLE = "focused_renderable",
   FOCUSED_EDITOR = "focused_editor",
   THEME_MODE = "theme_mode",
   CAPABILITIES = "capabilities",
@@ -1276,23 +1278,37 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   }
 
   public focusRenderable(renderable: Renderable) {
-    if (this._currentFocusedRenderable === renderable) return
-
-    const prev = this.currentFocusedEditor
-
-    this._currentFocusedRenderable?.blur()
-    this._currentFocusedRenderable = renderable
-
-    const next = this.currentFocusedEditor
-    if (prev !== next) {
-      this.emit(CliRenderEvents.FOCUSED_EDITOR, next, prev)
+    if (this._currentFocusedRenderable === renderable) {
+      return
     }
+
+    const previousRenderable = this._currentFocusedRenderable
+    const previousEditor = this.currentFocusedEditor
+
+    this._currentFocusedRenderable = renderable
+    previousRenderable?.blur()
+
+    const currentEditor = this.currentFocusedEditor
+    if (previousEditor !== currentEditor) {
+      this.emit(CliRenderEvents.FOCUSED_EDITOR, currentEditor, previousEditor)
+    }
+
+    this.emit(CliRenderEvents.FOCUSED_RENDERABLE, renderable, previousRenderable)
   }
 
   public blurRenderable(renderable: Renderable): void {
-    if (this._currentFocusedRenderable === renderable) {
-      this._currentFocusedRenderable = null
+    if (this._currentFocusedRenderable !== renderable) {
+      return
     }
+
+    const previousEditor = this.currentFocusedEditor
+    this._currentFocusedRenderable = null
+
+    if (previousEditor !== null) {
+      this.emit(CliRenderEvents.FOCUSED_EDITOR, null, previousEditor)
+    }
+
+    this.emit(CliRenderEvents.FOCUSED_RENDERABLE, null, renderable)
   }
 
   private setCapturedRenderable(renderable: Renderable | undefined): void {
@@ -4345,7 +4361,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
   private syncNativePaletteState(colors: TerminalColors | null): void {
     const signature = buildTerminalPaletteSignature(colors)
-    if (this._publishedPaletteSignature !== null && this._publishedPaletteSignature !== signature) {
+    if (this._publishedPaletteSignature !== signature) {
       this._paletteEpoch = (this._paletteEpoch + 1) >>> 0
     }
 
@@ -4365,7 +4381,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     if (!this._terminalIsSetup || this._isDestroyed) return
     const publishGeneration = this._palettePublishGeneration
 
-    void this.getPalette({ size: 256 })
+    void this.getPalette({ size: NATIVE_PALETTE_QUERY_SIZE })
       .then((colors) => {
         if (this._palettePublishGeneration === publishGeneration) {
           this.syncNativePaletteState(colors)
@@ -4440,9 +4456,9 @@ export class CliRenderer extends EventEmitter implements RenderContext {
         this._paletteDetectionSize = 0
 
         if (this._palettePublishGeneration === publishGeneration) {
-          if (result.palette.length >= 256) {
+          if (result.palette.length >= NATIVE_PALETTE_QUERY_SIZE) {
             this.syncNativePaletteState(result)
-          } else if (this._terminalIsSetup && !this._paletteCache.has(256)) {
+          } else if (this._terminalIsSetup && !this._paletteCache.has(NATIVE_PALETTE_QUERY_SIZE)) {
             this.ensureNativePaletteState()
           }
         }

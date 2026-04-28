@@ -133,7 +133,7 @@ state: struct {
         visible: bool = true,
         style: CursorStyle = .default,
         blinking: bool = false,
-        color: [4]f32 = .{ 1.0, 1.0, 1.0, 1.0 }, // RGBA
+        color: ansi.RGBA = ansi.rgbColor(255, 255, 255, 255),
     } = .{},
 } = .{},
 
@@ -347,6 +347,7 @@ pub fn enableDetectedFeatures(self: *Terminal, tty: anytype, use_kitty_keyboard:
 
     const is_tmux = self.in_tmux or self.isXtversionTmux();
 
+    // queryTerminalSend already enabled mode 2031 during normal startup.
     if (!self.state.color_scheme_updates) {
         try self.setColorSchemeUpdates(tty, true);
     }
@@ -364,10 +365,13 @@ pub fn queryThemeColors(self: *Terminal, tty: anytype) !void {
     // We only use the ?997 notification as a refresh trigger. The actual theme
     // mode is derived from the returned OSC 10/11 fg/bg colors, so callers
     // should query those colors directly instead of sending CSI ?996n.
+    try tty.writeAll(ansi.ANSI.oscThemeQueries);
+
     if (is_tmux) {
+        // In tested tmux 3.5a/3.6a + Ghostty setups, plain OSC 10/11 replied
+        // and the wrapped form did not. Keep dual-send conservatively until we
+        // can prove wrapped OSC 10/11 is never needed elsewhere.
         try tty.writeAll(ansi.ANSI.oscThemeQueriesTmux);
-    } else {
-        try tty.writeAll(ansi.ANSI.oscThemeQueries);
     }
 }
 
@@ -481,6 +485,11 @@ fn checkEnvironmentOverrides(self: *Terminal) void {
             self.caps.rgb = true;
             self.caps.ansi256 = true;
         }
+    }
+
+    if (env_map.get("WT_SESSION") != null) {
+        self.caps.rgb = true;
+        self.caps.ansi256 = true;
     }
 
     if (!self.term_info.from_xtversion) {
@@ -932,7 +941,7 @@ pub fn setCursorStyle(self: *Terminal, style: CursorStyle, blinking: bool) void 
     self.state.cursor.blinking = blinking;
 }
 
-pub fn setCursorColor(self: *Terminal, color: [4]f32) void {
+pub fn setCursorColor(self: *Terminal, color: ansi.RGBA) void {
     self.state.cursor.color = color;
 }
 
@@ -951,7 +960,7 @@ pub fn getCursorStyle(self: *Terminal) struct { style: CursorStyle, blinking: bo
     };
 }
 
-pub fn getCursorColor(self: *Terminal) [4]f32 {
+pub fn getCursorColor(self: *Terminal) ansi.RGBA {
     return self.state.cursor.color;
 }
 
