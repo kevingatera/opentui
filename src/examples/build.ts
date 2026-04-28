@@ -10,6 +10,7 @@ const __dirname = dirname(__filename)
 const rootDir = join(__dirname, "..", "..")
 const examplesDir = join(rootDir, "src", "examples")
 const usePrebuiltArtifacts = process.env.OPENTUI_EXAMPLES_USE_PREBUILT_ARTIFACTS === "true"
+const skipBunWebgpuInstall = process.env.OPENTUI_EXAMPLES_SKIP_BUN_WEBGPU_INSTALL === "true"
 
 // Supported platforms and architectures based on bun-webgpu and opentui native binaries
 const targets = [
@@ -35,13 +36,18 @@ function getNativePackageDir(platform: string, arch: string): string {
 }
 
 // Install bun-webgpu for all platforms to ensure cross-compilation works
-console.log("Installing bun-webgpu for all platforms...")
 const bunWebgpuVersion = packageJson.optionalDependencies?.["bun-webgpu"]
 if (!bunWebgpuVersion) {
   throw new Error("bun-webgpu is not installed")
 }
-await Bun.$`bun install --os="*" --cpu="*" bun-webgpu@${bunWebgpuVersion}`
-console.log(`✅ bun-webgpu@${bunWebgpuVersion} installed for all platforms`)
+
+if (skipBunWebgpuInstall) {
+  console.log(`Skipping bun-webgpu install; assuming bun-webgpu@${bunWebgpuVersion} is already prepared`)
+} else {
+  console.log("Installing bun-webgpu for all platforms...")
+  await Bun.$`bun install --os="*" --cpu="*" bun-webgpu@${bunWebgpuVersion}`
+  console.log(`✅ bun-webgpu@${bunWebgpuVersion} installed for all platforms`)
+}
 
 if (usePrebuiltArtifacts) {
   console.log("Using prebuilt native opentui packages from CI artifacts...")
