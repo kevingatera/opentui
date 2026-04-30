@@ -195,7 +195,6 @@ if (buildLib) {
 
   const entryPoints: string[] = [
     packageJson.module,
-    "src/3d.ts",
     "src/testing.ts",
     "src/runtime-plugin.ts",
     "src/runtime-plugin-support.ts",
@@ -256,7 +255,6 @@ if (buildLib) {
   console.log("Post-processing bundled files to fix duplicate exports...")
   const bundledFiles = [
     "dist/index.js",
-    "dist/3d.js",
     "dist/testing.js",
     "dist/runtime-plugin.js",
     "dist/runtime-plugin-support.js",
@@ -330,11 +328,6 @@ if (buildLib) {
       import: "./index.js",
       require: "./index.js",
       types: "./index.d.ts",
-    },
-    "./3d": {
-      import: "./3d.js",
-      require: "./3d.js",
-      types: "./3d.d.ts",
     },
     "./testing": {
       import: "./testing.js",
