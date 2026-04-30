@@ -1,6 +1,6 @@
 import { plugin as registerBunPlugin } from "bun"
 import * as coreRuntime from "@opentui/core"
-import * as core3dRuntime from "@opentui/core/3d"
+import * as threeRuntime from "@opentui/three"
 import {
   createRuntimePlugin,
   isCoreRuntimeModuleSpecifier,
@@ -19,7 +19,7 @@ type ExternalPluginRuntimeSupportState = typeof globalThis & {
 }
 
 const additionalRuntimeModules: Record<string, RuntimeModuleEntry> = {
-  "@opentui/core/3d": core3dRuntime as Record<string, unknown>,
+  "@opentui/three": threeRuntime as Record<string, unknown>,
   "@opentui/solid": solidRuntime as Record<string, unknown>,
   "solid-js": solidJsRuntime as Record<string, unknown>,
   "solid-js/store": solidJsStoreRuntime as Record<string, unknown>,

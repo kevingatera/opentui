@@ -17,7 +17,19 @@ type RuntimePluginSupportState = typeof globalThis & {
   [runtimePluginSupportInstalledKey]?: boolean
 }
 
+const loadThreeRuntimeModule = async (): Promise<Record<string, unknown>> => {
+  try {
+    return (await import("@opentui/three")) as Record<string, unknown>
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(
+      `Failed to load @opentui/three runtime module. Install @opentui/three in the host app before loading 3D plugins. ${message}`,
+    )
+  }
+}
+
 const additionalRuntimeModules: Record<string, RuntimeModuleEntry> = {
+  "@opentui/three": loadThreeRuntimeModule,
   "@opentui/solid": solidRuntime as Record<string, unknown>,
   "solid-js": solidJsRuntime as Record<string, unknown>,
   "solid-js/store": solidJsStoreRuntime as Record<string, unknown>,

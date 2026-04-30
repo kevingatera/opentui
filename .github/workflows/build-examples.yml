@@ -34,16 +34,6 @@ jobs:
 
           echo ""
           echo "✅ Base dependencies installed"
-          echo "Note: bun-webgpu platform packages will be installed in a dedicated CI step"
-
-      - name: Install bun-webgpu for all target platforms
-        run: |
-          set -e
-          BUN_WEBGPU_VERSION=$(bun -e 'import { readFileSync } from "node:fs"; const pkg = JSON.parse(readFileSync("packages/core/package.json", "utf8")); process.stdout.write(pkg.optionalDependencies["bun-webgpu"]);')
-          echo "Installing bun-webgpu@${BUN_WEBGPU_VERSION} for all target platforms..."
-          cd packages/core
-          bun install --os="*" --cpu="*" bun-webgpu@${BUN_WEBGPU_VERSION}
-          echo "✅ bun-webgpu installed for all target platforms"
 
       - name: Download npm packages artifact
         uses: actions/download-artifact@v4
@@ -100,42 +90,9 @@ jobs:
           ls -lah packages/core/dist/
           ls -lah packages/core/node_modules/@opentui/
 
-      - name: Verify bun-webgpu is available for build
-        run: |
-          echo "Checking bun-webgpu installation..."
-
-          # Check root node_modules first
-          if [ -d node_modules/bun-webgpu ]; then
-            echo "✅ bun-webgpu found in root node_modules"
-          # Check packages/core/node_modules
-          elif [ -d packages/core/node_modules/bun-webgpu ]; then
-            echo "✅ bun-webgpu found in packages/core/node_modules"
-          else
-            echo "❌ bun-webgpu not found in root or packages/core/node_modules!"
-            echo "Note: The build script will install it, but it should already be present"
-            exit 1
-          fi
-
-          # Check for platform-specific packages in .bun cache (where bun install --os="*" --cpu="*" puts them)
-          BUN_WEBGPU_VERSION=$(bun -e 'import { readFileSync } from "node:fs"; const pkg = JSON.parse(readFileSync("packages/core/package.json", "utf8")); process.stdout.write(pkg.optionalDependencies["bun-webgpu"]);')
-
-          echo ""
-          echo "Checking for platform-specific bun-webgpu packages in cache (version ${BUN_WEBGPU_VERSION})..."
-          for platform in darwin-arm64 darwin-x64 linux-x64 win32-x64; do
-            if [ -d "node_modules/.bun/bun-webgpu-${platform}@${BUN_WEBGPU_VERSION}" ]; then
-              echo "✅ bun-webgpu-${platform} found in cache"
-            else
-              echo "⚠️  bun-webgpu-${platform} not found (will be installed during build)"
-            fi
-          done
-
-          echo ""
-          echo "✅ bun-webgpu ready for bundling"
-
       - name: Build examples
         env:
           OPENTUI_EXAMPLES_USE_PREBUILT_ARTIFACTS: "true"
-          OPENTUI_EXAMPLES_SKIP_BUN_WEBGPU_INSTALL: "true"
         run: |
           set -e
           cd packages/core

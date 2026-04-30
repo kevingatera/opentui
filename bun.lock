@@ -15,7 +15,6 @@
       "dependencies": {
         "bun-ffi-structs": "0.1.2",
         "diff": "9.0.0",
-        "jimp": "1.6.1",
         "marked": "17.0.1",
         "string-width": "7.2.0",
         "strip-ansi": "7.1.2",
@@ -25,22 +24,17 @@
         "@opentui/keymap": "workspace:*",
         "@types/bun": "latest",
         "@types/node": "^24.0.0",
-        "@types/three": "0.177.0",
         "commander": "^13.1.0",
         "typescript": "^5",
         "web-tree-sitter": "0.25.10",
       },
       "optionalDependencies": {
-        "@dimforge/rapier2d-simd-compat": "^0.17.3",
         "@opentui/core-darwin-arm64": "0.2.0",
         "@opentui/core-darwin-x64": "0.2.0",
         "@opentui/core-linux-arm64": "0.2.0",
         "@opentui/core-linux-x64": "0.2.0",
         "@opentui/core-win32-arm64": "0.2.0",
         "@opentui/core-win32-x64": "0.2.0",
-        "bun-webgpu": "0.1.7",
-        "planck": "^1.4.2",
-        "three": "0.177.0",
       },
       "peerDependencies": {
         "web-tree-sitter": "0.25.10",
@@ -133,7 +127,29 @@
       "dependencies": {
         "@opentui/core": "workspace:*",
         "@opentui/solid": "workspace:*",
+        "@opentui/three": "workspace:*",
         "solid-js": "1.9.12",
+      },
+    },
+    "packages/three": {
+      "name": "@opentui/three",
+      "version": "0.2.0",
+      "dependencies": {
+        "@opentui/core": "workspace:*",
+        "jimp": "1.6.1",
+        "three": "0.177.0",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+        "@types/node": "^24.0.0",
+        "@types/three": "0.177.0",
+        "commander": "^13.1.0",
+        "typescript": "^5",
+      },
+      "optionalDependencies": {
+        "@dimforge/rapier2d-simd-compat": "^0.17.3",
+        "bun-webgpu": "0.1.7",
+        "planck": "^1.4.2",
       },
     },
     "packages/web": {
@@ -421,6 +437,8 @@
     "@opentui/solid": ["@opentui/solid@workspace:packages/solid"],
 
     "@opentui/solid-examples": ["@opentui/solid-examples@workspace:packages/solid/examples"],
+
+    "@opentui/three": ["@opentui/three@workspace:packages/three"],
 
     "@opentui/web": ["@opentui/web@workspace:packages/web"],
 

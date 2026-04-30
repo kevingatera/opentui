@@ -17,25 +17,14 @@ import {
   type ThemeMode,
 } from "../index.js"
 import { measureText } from "../lib/ascii.font.js"
-import * as goldenStarDemo from "./golden-star-demo.js"
 import * as boxExample from "./fonts.js"
-import * as fractalShaderExample from "./fractal-shader-demo.js"
 import * as framebufferExample from "./framebuffer-demo.js"
-import * as lightsPhongExample from "./lights-phong-demo.js"
-import * as physxPlanckExample from "./physx-planck-2d-demo.js"
-import * as physxRapierExample from "./physx-rapier-2d-demo.js"
 import * as opentuiDemo from "./opentui-demo.js"
 import * as nestedZIndexDemo from "./nested-zindex-demo.js"
 import * as relativePositioningDemo from "./relative-positioning-demo.js"
 import * as transparencyDemo from "./transparency-demo.js"
-import * as draggableThreeDemo from "./draggable-three-demo.js"
 import * as scrollExample from "./scroll-example.js"
 import * as stickyScrollExample from "./sticky-scroll-example.js"
-import * as shaderCubeExample from "./shader-cube-demo.js"
-import * as spriteAnimationExample from "./sprite-animation-demo.js"
-import * as spriteParticleExample from "./sprite-particle-generator-demo.js"
-import * as staticSpriteExample from "./static-sprite-demo.js"
-import * as textureLoadingExample from "./texture-loading-demo.js"
 import * as timelineExample from "./timeline-example.js"
 import * as tabSelectExample from "./tab-select-demo.js"
 import * as selectExample from "./select-demo.js"
@@ -138,12 +127,6 @@ const MENU_THEMES: Record<ThemeMode, ExampleTheme> = {
 }
 
 const examples: Example[] = [
-  {
-    name: "Golden Star Demo",
-    description: "3D golden star with particle effects and animated text celebrating 5000 stars",
-    run: goldenStarDemo.run,
-    destroy: goldenStarDemo.destroy,
-  },
   {
     name: "Mouse Interaction Demo",
     description: "Interactive mouse trails and clickable cells demonstration",
@@ -296,40 +279,10 @@ const examples: Example[] = [
     destroy: transparencyDemo.destroy,
   },
   {
-    name: "Draggable ThreeRenderable",
-    description: "Draggable WebGPU cube with live animation",
-    run: draggableThreeDemo.run,
-    destroy: draggableThreeDemo.destroy,
-  },
-  {
-    name: "Static Sprite",
-    description: "Static sprite rendering demo",
-    run: staticSpriteExample.run,
-    destroy: staticSpriteExample.destroy,
-  },
-  {
-    name: "Sprite Animation",
-    description: "Animated sprite sequences",
-    run: spriteAnimationExample.run,
-    destroy: spriteAnimationExample.destroy,
-  },
-  {
-    name: "Sprite Particles",
-    description: "Particle system with sprites",
-    run: spriteParticleExample.run,
-    destroy: spriteParticleExample.destroy,
-  },
-  {
     name: "Framebuffer Demo",
     description: "Framebuffer rendering techniques",
     run: framebufferExample.run,
     destroy: framebufferExample.destroy,
-  },
-  {
-    name: "Texture Loading",
-    description: "Loading and displaying textures",
-    run: textureLoadingExample.run,
-    destroy: textureLoadingExample.destroy,
   },
   {
     name: "ScrollBox Demo",
@@ -354,36 +307,6 @@ const examples: Example[] = [
     description: "Test scrollbox hit detection with overlays and dialogs",
     run: scrollboxOverlayHitTest.run,
     destroy: scrollboxOverlayHitTest.destroy,
-  },
-  {
-    name: "Shader Cube",
-    description: "3D cube with custom shaders",
-    run: shaderCubeExample.run,
-    destroy: shaderCubeExample.destroy,
-  },
-  {
-    name: "Fractal Shader",
-    description: "Fractal rendering with shaders",
-    run: fractalShaderExample.run,
-    destroy: fractalShaderExample.destroy,
-  },
-  {
-    name: "Phong Lighting",
-    description: "Phong lighting model demo",
-    run: lightsPhongExample.run,
-    destroy: lightsPhongExample.destroy,
-  },
-  {
-    name: "Physics Planck",
-    description: "2D physics with Planck.js",
-    run: physxPlanckExample.run,
-    destroy: physxPlanckExample.destroy,
-  },
-  {
-    name: "Physics Rapier",
-    description: "2D physics with Rapier",
-    run: physxRapierExample.run,
-    destroy: physxRapierExample.destroy,
   },
   {
     name: "Timeline Example",
