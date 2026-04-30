@@ -12,6 +12,7 @@ import * as solidRuntime from "../index.js"
 import { ensureSolidTransformPlugin } from "./solid-plugin.js"
 
 const runtimePluginSupportInstalledKey = Symbol.for("opentui.solid.runtime-plugin-support")
+const THREE_RUNTIME_SPECIFIER = "@opentui/three"
 
 type RuntimePluginSupportState = typeof globalThis & {
   [runtimePluginSupportInstalledKey]?: boolean
@@ -19,7 +20,7 @@ type RuntimePluginSupportState = typeof globalThis & {
 
 const loadThreeRuntimeModule = async (): Promise<Record<string, unknown>> => {
   try {
-    return (await import("@opentui/three")) as Record<string, unknown>
+    return (await importRuntimeModule(THREE_RUNTIME_SPECIFIER)) as Record<string, unknown>
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     throw new Error(
@@ -28,8 +29,12 @@ const loadThreeRuntimeModule = async (): Promise<Record<string, unknown>> => {
   }
 }
 
+function importRuntimeModule(specifier: string): Promise<Record<string, unknown>> {
+  return import(specifier) as Promise<Record<string, unknown>>
+}
+
 const additionalRuntimeModules: Record<string, RuntimeModuleEntry> = {
-  "@opentui/three": loadThreeRuntimeModule,
+  [THREE_RUNTIME_SPECIFIER]: loadThreeRuntimeModule,
   "@opentui/solid": solidRuntime as Record<string, unknown>,
   "solid-js": solidJsRuntime as Record<string, unknown>,
   "solid-js/store": solidJsStoreRuntime as Record<string, unknown>,
