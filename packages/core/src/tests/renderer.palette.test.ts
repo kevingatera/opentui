@@ -583,6 +583,22 @@ describe("Palette detector cleanup", () => {
     renderer.finalizeDestroy()
   })
 
+  test("destroy stops pending palette detector writes", async () => {
+    const { renderer, clock } = await createPaletteRenderer()
+
+    // @ts-expect-error - spying on private method for testing
+    const writeOut = spyOn(renderer, "writeOut")
+    const palettePromise = renderer.getPalette({ size: 16, timeout: 300 })
+
+    await flushAsync()
+    clock.advance(0)
+    renderer.destroy()
+    await flushAsync()
+    void palettePromise.catch(() => {})
+
+    expect(writeOut).toHaveBeenCalledTimes(1)
+  })
+
   test("multiple destroy calls don't cause errors", async () => {
     const { renderer, clock, mockStdin, mockStdout } = await createPaletteRenderer()
 

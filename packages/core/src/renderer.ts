@@ -4031,7 +4031,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       this._paletteDetector = createTerminalPalette(
         this.stdin,
         this.stdout,
-        this.writeOut.bind(this),
+        (data) => (this._isDestroyed ? false : this.writeOut(data)),
         isLegacyTmux,
         {
           subscribeOsc: this.subscribeOsc.bind(this),
