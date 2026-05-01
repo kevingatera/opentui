@@ -614,6 +614,60 @@ describe("Palette cache invalidation", () => {
     renderer.destroy()
   })
 
+  test("setupTerminal does not refresh palette on truecolor startup", async () => {
+    const { renderer } = await createPaletteRenderer({ useMouse: false })
+    const lib = (renderer as unknown as { lib: any }).lib
+    const originalSetupTerminal = lib.setupTerminal
+    const originalGetTerminalCapabilities = lib.getTerminalCapabilities
+    const originalQueryPixelResolution = lib.queryPixelResolution
+    const refresh = spyOn(renderer, "refreshPalette")
+
+    lib.setupTerminal = () => {}
+    lib.queryPixelResolution = () => {}
+    lib.getTerminalCapabilities = () => ({
+      rgb: true,
+      ansi256: true,
+      terminal: { name: "Apple_Terminal", version: "", from_xtversion: false },
+    })
+
+    await renderer.setupTerminal()
+
+    expect(refresh).not.toHaveBeenCalled()
+
+    refresh.mockRestore()
+    lib.setupTerminal = originalSetupTerminal
+    lib.getTerminalCapabilities = originalGetTerminalCapabilities
+    lib.queryPixelResolution = originalQueryPixelResolution
+    renderer.destroy()
+  })
+
+  test("setupTerminal refreshes palette on ANSI-256 non-truecolor startup", async () => {
+    const { renderer } = await createPaletteRenderer({ useMouse: false })
+    const lib = (renderer as unknown as { lib: any }).lib
+    const originalSetupTerminal = lib.setupTerminal
+    const originalGetTerminalCapabilities = lib.getTerminalCapabilities
+    const originalQueryPixelResolution = lib.queryPixelResolution
+    const refresh = spyOn(renderer, "refreshPalette").mockImplementation(() => {})
+
+    lib.setupTerminal = () => {}
+    lib.queryPixelResolution = () => {}
+    lib.getTerminalCapabilities = () => ({
+      rgb: false,
+      ansi256: true,
+      terminal: { name: "Apple_Terminal", version: "", from_xtversion: false },
+    })
+
+    await renderer.setupTerminal()
+
+    expect(refresh).toHaveBeenCalledTimes(1)
+
+    refresh.mockRestore()
+    lib.setupTerminal = originalSetupTerminal
+    lib.getTerminalCapabilities = originalGetTerminalCapabilities
+    lib.queryPixelResolution = originalQueryPixelResolution
+    renderer.destroy()
+  })
+
   test("getPalette emits palette change events for refreshed palettes", async () => {
     const { renderer, clock } = await createPaletteRenderer()
     const palettes: TerminalColors[] = []
@@ -827,6 +881,8 @@ describe("Palette detection while capabilities are unsettled", () => {
     try {
       // @ts-expect-error - accessing private native binding for startup state setup
       renderer._capabilities = renderer.lib.getTerminalCapabilities(renderer.rendererPtr)
+      // @ts-expect-error - simulate TMUX env without TERM_PROGRAM_VERSION=tmux
+      renderer._capabilities.terminal = { name: "", version: "", from_xtversion: false }
       startCapabilityDetectionWindow(renderer, clock)
 
       expect(renderer.capabilities?.in_tmux).toBe(false)
@@ -850,6 +906,8 @@ describe("Palette detection while capabilities are unsettled", () => {
     try {
       // @ts-expect-error - accessing private native binding for startup state setup
       renderer._capabilities = renderer.lib.getTerminalCapabilities(renderer.rendererPtr)
+      // @ts-expect-error - simulate TMUX env without TERM_PROGRAM_VERSION=tmux
+      renderer._capabilities.terminal = { name: "", version: "", from_xtversion: false }
       startCapabilityDetectionWindow(renderer, clock)
 
       expect(renderer.capabilities?.in_tmux).toBe(true)
@@ -866,6 +924,28 @@ describe("Palette detection while capabilities are unsettled", () => {
     }
   })
 
+  test("getPalette does not wait when tmux version came from env", async () => {
+    const { renderer, writes, clock } = await createSilentFollowUpPaletteRenderer()
+
+    try {
+      // @ts-expect-error - simulating initial capabilities from TERM_PROGRAM=tmux and TERM_PROGRAM_VERSION
+      renderer._capabilities = {
+        in_tmux: true,
+        rgb: true,
+        ansi256: true,
+        terminal: { name: "tmux", version: "3.6a", from_xtversion: false },
+      }
+      startCapabilityDetectionWindow(renderer, clock)
+
+      void renderer.getPalette({ size: 16 })
+      await flushAsync()
+
+      expect(writes).toContain("\x1b]4;0;?\x07")
+    } finally {
+      renderer.destroy()
+    }
+  })
+
   test("getPalette uses wrapped palette queries after legacy tmux version is detected", async () => {
     const previousTmux = process.env.TMUX
     process.env.TMUX = "/tmp/tmux-1000/default,12345,0"
@@ -875,6 +955,8 @@ describe("Palette detection while capabilities are unsettled", () => {
     try {
       // @ts-expect-error - accessing private native binding for startup state setup
       renderer._capabilities = renderer.lib.getTerminalCapabilities(renderer.rendererPtr)
+      // @ts-expect-error - simulate TMUX env without TERM_PROGRAM_VERSION=tmux
+      renderer._capabilities.terminal = { name: "", version: "", from_xtversion: false }
       startCapabilityDetectionWindow(renderer, clock)
 
       void renderer.getPalette({ size: 16 })
@@ -903,6 +985,8 @@ describe("Palette detection while capabilities are unsettled", () => {
     try {
       // @ts-expect-error - accessing private native binding for startup state setup
       renderer._capabilities = renderer.lib.getTerminalCapabilities(renderer.rendererPtr)
+      // @ts-expect-error - simulate TMUX env without TERM_PROGRAM_VERSION=tmux
+      renderer._capabilities.terminal = { name: "", version: "", from_xtversion: false }
       startCapabilityDetectionWindow(renderer, clock)
 
       void renderer.getPalette({ size: 16 })

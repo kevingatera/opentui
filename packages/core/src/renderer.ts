@@ -2579,7 +2579,9 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     }
 
     this.queryPixelResolution()
-    this.refreshPalette()
+    if (this.shouldSyncNativePaletteState()) {
+      this.refreshPalette()
+    }
   }
 
   private stdinListener: (chunk: Buffer | string) => void = ((chunk: Buffer | string) => {
@@ -4147,9 +4149,11 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       return cachedPalette
     }
 
-    // Only wait when TMUX env confirmed tmux but XTVERSION has not supplied the version yet.
-    // Remote terminals often never answer XTVERSION; do not make them pay the full capability timeout.
-    if (this._capabilities?.in_tmux && !this._capabilities?.terminal?.from_xtversion) {
+    // tmux OSC 4 strategy depends on version. Env may provide it via
+    // TERM_PROGRAM=tmux/TERM_PROGRAM_VERSION; otherwise wait for XTVERSION.
+    const terminal = this._capabilities?.terminal
+    const hasTmuxVersion = terminal?.name?.toLowerCase() === "tmux" && Boolean(terminal.version)
+    if (this._capabilities?.in_tmux && !hasTmuxVersion) {
       await this.waitForXtVersion()
 
       // Another caller may have populated the cache while this call waited.

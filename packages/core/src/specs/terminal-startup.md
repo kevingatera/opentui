@@ -26,7 +26,7 @@ This spec describes the startup flow for `createCliRenderer()` with `testing !==
 
 10. Startup calls `refreshPalette()` only when native palette state is useful: terminal setup is active, the renderer is alive, `ansi256` is supported, and truecolor `rgb` is not supported. Truecolor terminals do not run startup palette detection.
 
-11. `getPalette()` waits for `XTVERSION` only when native capabilities already indicate `in_tmux` from environment detection and no `XTVERSION` response has arrived yet. This avoids choosing the wrong OSC 4 strategy for tmux while avoiding a 5000ms wait for remote or non-responding terminals.
+11. `getPalette()` waits for `XTVERSION` only when native capabilities already indicate `in_tmux` but no tmux version is known from either `TERM_PROGRAM_VERSION` or `XTVERSION`. This avoids choosing the wrong OSC 4 strategy for tmux while avoiding a 5000ms wait for remote or non-responding terminals.
 
 12. `getPalette()` creates the palette detector after any required `XTVERSION` wait. The detector uses tmux version to choose OSC 4 behavior:
     - tmux `< 3.6`: wrap OSC palette queries in tmux DCS passthrough.
@@ -56,6 +56,6 @@ This spec describes the startup flow for `createCliRenderer()` with `testing !==
 
 - Nested tmux is not modeled. OpenTUI currently treats tmux as a single layer and does not distinguish local tmux, remote tmux, or local-plus-remote nested tmux sessions.
 
-- tmux version is not available from environment variables. Version-sensitive behavior depends on `XTVERSION`; without it, OpenTUI cannot reliably choose legacy tmux passthrough versus tmux 3.6 native OSC 4 handling.
+- tmux version is only available from environment variables when `TERM_PROGRAM=tmux` and `TERM_PROGRAM_VERSION` are present. Otherwise, version-sensitive behavior depends on `XTVERSION`; without either, OpenTUI cannot reliably choose legacy tmux passthrough versus tmux 3.6 native OSC 4 handling.
 
 - The palette query strategy assumes one effective terminal path. It does not support independently reasoning about a remote server terminal, a transport, and a local outer terminal.

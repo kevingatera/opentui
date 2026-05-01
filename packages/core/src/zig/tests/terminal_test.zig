@@ -35,6 +35,7 @@ test "parseXtversion - tmux format" {
     try testing.expectEqualStrings("tmux", term.getTerminalName());
     try testing.expectEqualStrings("3.5a", term.getTerminalVersion());
     try testing.expect(term.term_info.from_xtversion);
+    try testing.expect(term.in_tmux);
     try testing.expect(term.caps.osc52);
 }
 
@@ -116,6 +117,23 @@ test "remote without forwarded env map ignores local env overrides" {
     try testing.expect(!term.in_tmux);
     try testing.expect(!term.caps.osc52);
     try testing.expect(!term.caps.explicit_cursor_positioning);
+}
+
+test "TERM_PROGRAM tmux provides initial tmux version before xtversion" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    var env = std.process.EnvMap.init(testing.allocator);
+    defer env.deinit();
+    try env.put("TERM_PROGRAM", "tmux");
+    try env.put("TERM_PROGRAM_VERSION", "3.6a");
+    try env.put("TERM", "xterm-256color");
+
+    var term = Terminal.init(.{ .env_map = &env });
+
+    try testing.expect(term.in_tmux);
+    try testing.expectEqualStrings("tmux", term.getTerminalName());
+    try testing.expectEqualStrings("3.6a", term.getTerminalVersion());
+    try testing.expect(!term.term_info.from_xtversion);
 }
 
 test "remote applies forwarded env overrides and capability responses" {

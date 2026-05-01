@@ -356,7 +356,7 @@ pub fn queryThemeColors(_: *Terminal, tty: anytype) !void {
 }
 
 fn checkEnvironmentOverrides(self: *Terminal) void {
-    self.in_tmux = false;
+    self.in_tmux = self.isXtversionTmux();
     self.skip_graphics_query = false;
     self.skip_explicit_width_query = false;
 
@@ -428,6 +428,12 @@ fn checkEnvironmentOverrides(self: *Terminal) void {
             const copy_len = @min(prog.len, self.term_info.name.len);
             @memcpy(self.term_info.name[0..copy_len], prog[0..copy_len]);
             self.term_info.name_len = copy_len;
+
+            if (std.mem.eql(u8, prog, "tmux")) {
+                self.in_tmux = true;
+                self.caps.unicode = .wcwidth;
+                self.caps.explicit_cursor_positioning = true;
+            }
 
             if (env_map.get("TERM_PROGRAM_VERSION")) |ver| {
                 const ver_len = @min(ver.len, self.term_info.version.len);
@@ -1074,6 +1080,9 @@ fn parseXtversion(self: *Terminal, term_str: []const u8) void {
     }
 
     self.term_info.from_xtversion = true;
+    if (std.mem.eql(u8, self.getTerminalName(), "tmux")) {
+        self.in_tmux = true;
+    }
 }
 
 pub fn isXtversionTmux(self: *Terminal) bool {
