@@ -9,6 +9,7 @@ const gp = @import("grapheme.zig");
 const link = @import("link.zig");
 const text_buffer = @import("text-buffer.zig");
 const text_buffer_view = @import("text-buffer-view.zig");
+const text_buffer_iterators = @import("text-buffer-iterators.zig");
 const edit_buffer_mod = @import("edit-buffer.zig");
 const editor_view = @import("editor-view.zig");
 const syntax_style = @import("syntax-style.zig");
@@ -55,10 +56,10 @@ export fn setEventCallback(callback: ?*const fn (namePtr: [*]const u8, nameLen: 
     event_bus.setEventCallback(callback);
 }
 
-var gpa = std.heap.GeneralPurposeAllocator(.{
+var gpa: std.heap.GeneralPurposeAllocator(.{
     .enable_memory_limit = build_options.gpa_safe_stats,
     .safety = build_options.gpa_safe_stats,
-}){};
+}) = .{};
 const globalAllocator = gpa.allocator();
 var arena = std.heap.ArenaAllocator.init(globalAllocator);
 const globalArena = arena.allocator();
@@ -801,7 +802,7 @@ export fn bufferDrawBox(
     bottomTitle: ?[*]const u8,
     bottomTitleLen: u32,
 ) void {
-    const borderSides = buffer.BorderSides{
+    const borderSides: buffer.BorderSides = .{
         .top = (packedOptions & 0b1000) != 0,
         .right = (packedOptions & 0b0100) != 0,
         .bottom = (packedOptions & 0b0010) != 0,
@@ -1109,7 +1110,7 @@ export fn textBufferViewSetViewportSize(view: *text_buffer_view.UnifiedTextBuffe
 }
 
 export fn textBufferViewSetViewport(view: *text_buffer_view.UnifiedTextBufferView, x: u32, y: u32, width: u32, height: u32) void {
-    view.setViewport(text_buffer_view.Viewport{
+    view.setViewport(.{
         .x = x,
         .y = y,
         .width = width,
@@ -1218,8 +1219,8 @@ export fn editBufferInsertText(edit_buffer: *edit_buffer_mod.EditBuffer, textPtr
 }
 
 export fn editBufferDeleteRange(edit_buffer: *edit_buffer_mod.EditBuffer, start_row: u32, start_col: u32, end_row: u32, end_col: u32) void {
-    const start = edit_buffer_mod.Cursor{ .row = start_row, .col = start_col };
-    const end = edit_buffer_mod.Cursor{ .row = end_row, .col = end_col };
+    const start: edit_buffer_mod.Cursor = .{ .row = start_row, .col = start_col };
+    const end: edit_buffer_mod.Cursor = .{ .row = end_row, .col = end_col };
     edit_buffer.deleteRange(start, end) catch {};
 }
 
@@ -1293,8 +1294,7 @@ export fn editBufferGetEOL(edit_buffer: *edit_buffer_mod.EditBuffer, outPtr: *Ex
 }
 
 export fn editBufferOffsetToPosition(edit_buffer: *edit_buffer_mod.EditBuffer, offset: u32, outPtr: *ExternalLogicalCursor) bool {
-    const iter_mod = @import("text-buffer-iterators.zig");
-    const coords = iter_mod.offsetToCoords(edit_buffer.tb.rope(), offset) orelse return false;
+    const coords = text_buffer_iterators.offsetToCoords(edit_buffer.tb.rope(), offset) orelse return false;
     outPtr.* = .{
         .row = coords.row,
         .col = coords.col,
@@ -1304,13 +1304,11 @@ export fn editBufferOffsetToPosition(edit_buffer: *edit_buffer_mod.EditBuffer, o
 }
 
 export fn editBufferPositionToOffset(edit_buffer: *edit_buffer_mod.EditBuffer, row: u32, col: u32) u32 {
-    const iter_mod = @import("text-buffer-iterators.zig");
-    return iter_mod.coordsToOffset(edit_buffer.tb.rope(), row, col) orelse 0;
+    return text_buffer_iterators.coordsToOffset(edit_buffer.tb.rope(), row, col) orelse 0;
 }
 
 export fn editBufferGetLineStartOffset(edit_buffer: *edit_buffer_mod.EditBuffer, row: u32) u32 {
-    const iter_mod = @import("text-buffer-iterators.zig");
-    return iter_mod.coordsToOffset(edit_buffer.tb.rope(), row, 0) orelse 0;
+    return text_buffer_iterators.coordsToOffset(edit_buffer.tb.rope(), row, 0) orelse 0;
 }
 
 export fn editBufferGetTextRange(edit_buffer: *edit_buffer_mod.EditBuffer, start_offset: u32, end_offset: u32, outPtr: [*]u8, maxLen: usize) usize {
@@ -1421,7 +1419,7 @@ export fn destroyEditorView(view: *editor_view.EditorView) void {
 }
 
 export fn editorViewSetViewport(view: *editor_view.EditorView, x: u32, y: u32, width: u32, height: u32, moveCursor: bool) void {
-    view.setViewport(text_buffer_view.Viewport{ .x = x, .y = y, .width = width, .height = height }, moveCursor);
+    view.setViewport(.{ .x = x, .y = y, .width = width, .height = height }, moveCursor);
 }
 
 export fn editorViewClearViewport(view: *editor_view.EditorView) void {
@@ -1851,7 +1849,7 @@ export fn encodeUnicode(
     defer grapheme_list.deinit(globalAllocator);
 
     const tab_width: u8 = 2;
-    utf8.findGraphemeInfo(text, tab_width, is_ascii_only, wMethod, globalAllocator, &grapheme_list) catch return false;
+    utf8.findGraphemeInfo(globalAllocator, text, tab_width, is_ascii_only, wMethod, &grapheme_list) catch return false;
     const specials = grapheme_list.items;
 
     // Allocate output array

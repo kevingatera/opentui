@@ -2,6 +2,7 @@ const std = @import("std");
 const buffer_mod = @import("../buffer.zig");
 const text_buffer = @import("../text-buffer.zig");
 const text_buffer_view = @import("../text-buffer-view.zig");
+const renderer_mod = @import("../renderer.zig");
 const gp = @import("../grapheme.zig");
 const link = @import("../link.zig");
 const ansi = @import("../ansi.zig");
@@ -2730,14 +2731,14 @@ test "buffer - set same grapheme ID with different extents keeps slot alive" {
 
     const gid = local_pool.alloc(emoji) catch @panic("alloc failed");
     const packed_w2 = gp.packGraphemeStart(gid & gp.GRAPHEME_ID_MASK, 2);
-    buf.set(0, 0, buffer_mod.Cell{ .char = packed_w2, .fg = fg, .bg = bg, .attributes = 0 });
+    buf.set(0, 0, .{ .char = packed_w2, .fg = fg, .bg = bg, .attributes = 0 });
 
     const id_from_char = gp.graphemeIdFromChar(packed_w2);
     try std.testing.expect(buf.grapheme_tracker.contains(id_from_char));
 
     // Same grapheme ID, different width → different packed char
     const packed_w1 = gp.packGraphemeStart(gid & gp.GRAPHEME_ID_MASK, 1);
-    buf.set(0, 0, buffer_mod.Cell{ .char = packed_w1, .fg = fg, .bg = bg, .attributes = 0 });
+    buf.set(0, 0, .{ .char = packed_w1, .fg = fg, .bg = bg, .attributes = 0 });
 
     try std.testing.expect(buf.grapheme_tracker.contains(id_from_char));
 
@@ -2753,7 +2754,6 @@ test "renderer - grapheme WrongGeneration repro with pool slot reuse" {
     var local_link_pool = link.LinkPool.init(std.testing.allocator);
     defer local_link_pool.deinit();
 
-    const renderer_mod = @import("../renderer.zig");
     var cli_renderer = try renderer_mod.CliRenderer.create(
         std.testing.allocator,
         40,
@@ -2828,7 +2828,6 @@ test "renderer - CJK graphemes shifting left must preserve continuation cells (#
     var local_link_pool = link.LinkPool.init(std.testing.allocator);
     defer local_link_pool.deinit();
 
-    const renderer_mod = @import("../renderer.zig");
     var cli_renderer = try renderer_mod.CliRenderer.create(
         std.testing.allocator,
         20,
