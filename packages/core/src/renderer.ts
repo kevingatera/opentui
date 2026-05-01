@@ -822,6 +822,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private _paletteEpoch = 0
   private _publishedPaletteSignature: string | null = null
   private _palettePublishGeneration = 0
+  private _nativePaletteDeferredForTmuxVersion = false
   private _onDestroy?: () => void
   private themeModeState: RendererThemeMode
   private _terminalFocusState: boolean | null = null
@@ -2623,6 +2624,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
     this.lib.processCapabilityResponse(this.rendererPtr, sequence)
     this._capabilities = this.lib.getTerminalCapabilities(this.rendererPtr)
+    this.resumeDeferredNativePaletteState()
     if (hasStandardCapabilitySignature) {
       this.forceFullRepaintRequested = true
       this.requestRender()
@@ -3588,6 +3590,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this._cachedPalette = null
     this._publishedPaletteSignature = null
     this._paletteEpoch = 0
+    this._nativePaletteDeferredForTmuxVersion = false
 
     this.themeModeState.dispose()
 
@@ -4061,8 +4064,31 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     )
   }
 
+  private resumeDeferredNativePaletteState(): void {
+    if (!this._nativePaletteDeferredForTmuxVersion) {
+      return
+    }
+
+    if (this._capabilities?.in_tmux && !this._capabilities?.terminal?.from_xtversion) {
+      return
+    }
+
+    this._nativePaletteDeferredForTmuxVersion = false
+    this.ensureNativePaletteState()
+  }
+
   private ensureNativePaletteState(): void {
     if (!this._terminalIsSetup || this._isDestroyed) return
+
+    if (this._capabilities?.in_tmux && !this._capabilities?.terminal?.from_xtversion) {
+      if (!this._nativePaletteDeferredForTmuxVersion) {
+        this._nativePaletteDeferredForTmuxVersion = true
+        this.syncNativePaletteState(null)
+        this.requestRender()
+      }
+      return
+    }
+
     const publishGeneration = this._palettePublishGeneration
 
     void this.getPalette({ size: NATIVE_PALETTE_QUERY_SIZE })

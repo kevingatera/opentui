@@ -153,6 +153,15 @@ async function createSilentFollowUpPaletteRenderer(clock = new ManualClock()) {
   return { renderer, writes, clock }
 }
 
+function restoreEnvValue(key: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[key]
+    return
+  }
+
+  process.env[key] = value
+}
+
 describe("Palette caching behavior", () => {
   test("getPalette returns cached palette on subsequent calls", async () => {
     const { renderer, clock, mockStdin, mockStdout } = await createPaletteRenderer()
@@ -678,6 +687,122 @@ describe("Palette detector cleanup", () => {
     expect(afterDetectionCount).toBe(baselineListenerCount)
 
     renderer.destroy()
+  })
+})
+
+describe("Startup palette detection in tmux", () => {
+  test("runs native palette detection immediately outside tmux", async () => {
+    const previousTmux = process.env.TMUX
+    delete process.env.TMUX
+
+    const { renderer, writes } = await createSilentFollowUpPaletteRenderer()
+
+    try {
+      // @ts-expect-error - accessing private native binding for startup state setup
+      renderer._capabilities = renderer.lib.getTerminalCapabilities(renderer.rendererPtr)
+      // @ts-expect-error - simulating setupTerminal after initial capabilities read
+      renderer._terminalIsSetup = true
+
+      expect(renderer.capabilities?.in_tmux).toBe(false)
+
+      // @ts-expect-error - exercising private startup palette path
+      renderer.ensureNativePaletteState()
+
+      expect(writes).toContain("\x1b]4;0;?\x07")
+      // @ts-expect-error - verifying the deferred startup latch was not set
+      expect(renderer._nativePaletteDeferredForTmuxVersion).toBe(false)
+    } finally {
+      renderer.destroy()
+      restoreEnvValue("TMUX", previousTmux)
+    }
+  })
+
+  test("defers native palette detection while tmux version is unknown", async () => {
+    const previousTmux = process.env.TMUX
+    process.env.TMUX = "/tmp/tmux-1000/default,12345,0"
+
+    const { renderer, writes } = await createSilentFollowUpPaletteRenderer()
+
+    try {
+      // @ts-expect-error - accessing private native binding for startup state setup
+      renderer._capabilities = renderer.lib.getTerminalCapabilities(renderer.rendererPtr)
+      // @ts-expect-error - simulating setupTerminal after initial capabilities read
+      renderer._terminalIsSetup = true
+
+      expect(renderer.capabilities?.in_tmux).toBe(true)
+      expect(renderer.capabilities?.terminal?.from_xtversion).toBe(false)
+
+      // @ts-expect-error - exercising private startup palette path
+      renderer.ensureNativePaletteState()
+
+      expect(writes).toEqual([])
+      expect(renderer.paletteDetectionStatus).toBe("idle")
+      // @ts-expect-error - verifying the deferred startup latch
+      expect(renderer._nativePaletteDeferredForTmuxVersion).toBe(true)
+      // @ts-expect-error - verifying fallback palette state was published immediately
+      expect(renderer._publishedPaletteSignature).not.toBeNull()
+    } finally {
+      renderer.destroy()
+      restoreEnvValue("TMUX", previousTmux)
+    }
+  })
+
+  test("uses wrapped palette queries after legacy tmux version is detected", async () => {
+    const previousTmux = process.env.TMUX
+    process.env.TMUX = "/tmp/tmux-1000/default,12345,0"
+
+    const { renderer, writes } = await createSilentFollowUpPaletteRenderer()
+
+    try {
+      // @ts-expect-error - accessing private native binding for startup state setup
+      renderer._capabilities = renderer.lib.getTerminalCapabilities(renderer.rendererPtr)
+      // @ts-expect-error - simulating setupTerminal after initial capabilities read
+      renderer._terminalIsSetup = true
+      // @ts-expect-error - exercising private startup palette path
+      renderer.ensureNativePaletteState()
+
+      expect(writes).toEqual([])
+
+      // @ts-expect-error - simulating the asynchronous XTVERSION response path
+      renderer.processCapabilitySequence("\x1bP>|tmux 3.5a\x1b\\", false)
+
+      expect(writes.some((write) => write.startsWith("\x1bPtmux;"))).toBe(true)
+      expect(writes.some((write) => write.includes("\x1b\x1b]4;0;?\x07"))).toBe(true)
+      // @ts-expect-error - verifying the deferred startup latch was consumed
+      expect(renderer._nativePaletteDeferredForTmuxVersion).toBe(false)
+    } finally {
+      renderer.destroy()
+      restoreEnvValue("TMUX", previousTmux)
+    }
+  })
+
+  test("uses plain palette queries after tmux 3.6 version is detected", async () => {
+    const previousTmux = process.env.TMUX
+    process.env.TMUX = "/tmp/tmux-1000/default,12345,0"
+
+    const { renderer, writes } = await createSilentFollowUpPaletteRenderer()
+
+    try {
+      // @ts-expect-error - accessing private native binding for startup state setup
+      renderer._capabilities = renderer.lib.getTerminalCapabilities(renderer.rendererPtr)
+      // @ts-expect-error - simulating setupTerminal after initial capabilities read
+      renderer._terminalIsSetup = true
+      // @ts-expect-error - exercising private startup palette path
+      renderer.ensureNativePaletteState()
+
+      expect(writes).toEqual([])
+
+      // @ts-expect-error - simulating the asynchronous XTVERSION response path
+      renderer.processCapabilitySequence("\x1bP>|tmux 3.6a\x1b\\", false)
+
+      expect(writes).toContain("\x1b]4;0;?\x07")
+      expect(writes.some((write) => write.startsWith("\x1bPtmux;"))).toBe(false)
+      // @ts-expect-error - verifying the deferred startup latch was consumed
+      expect(renderer._nativePaletteDeferredForTmuxVersion).toBe(false)
+    } finally {
+      renderer.destroy()
+      restoreEnvValue("TMUX", previousTmux)
+    }
   })
 })
 
