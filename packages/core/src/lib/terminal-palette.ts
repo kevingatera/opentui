@@ -86,6 +86,7 @@ export class TerminalPalette implements TerminalPaletteDetector {
   private writeFn: WriteFunction
   private activeQuerySessions: Array<() => void> = []
   private inLegacyTmux: boolean
+  private inTmux: boolean
   private oscSource?: OscSubscriptionSource
   private readonly clock: Clock
 
@@ -94,6 +95,7 @@ export class TerminalPalette implements TerminalPaletteDetector {
     stdout: NodeJS.WriteStream,
     writeFn?: WriteFunction,
     isLegacyTmux?: boolean,
+    isTmux?: boolean,
     oscSource?: OscSubscriptionSource,
     clock?: Clock,
   ) {
@@ -101,15 +103,13 @@ export class TerminalPalette implements TerminalPaletteDetector {
     this.stdout = stdout
     this.writeFn = writeFn || ((data: string | Buffer) => stdout.write(data))
     this.inLegacyTmux = isLegacyTmux ?? false
+    this.inTmux = isTmux ?? this.inLegacyTmux
     this.oscSource = oscSource
     this.clock = clock ?? SYSTEM_CLOCK
   }
 
-  /**
-   * Write an OSC sequence, wrapping for tmux if needed
-   */
-  private writeOsc(osc: string): boolean {
-    const data = this.inLegacyTmux ? wrapForTmux(osc) : osc
+  private writeOsc(osc: string, wrapForLegacyTmux = false): boolean {
+    const data = wrapForLegacyTmux && this.inLegacyTmux ? wrapForTmux(osc) : osc
     return this.writeFn(data)
   }
 
@@ -217,7 +217,8 @@ export class TerminalPalette implements TerminalPaletteDetector {
         finish(false)
       }, timeoutMs)
       session.subscribeInput(onData)
-      this.writeOsc("\x1b]4;0;?\x07")
+      // Only OSC 4 needs legacy tmux passthrough; tmux routes OSC 4 replies back to the pane.
+      this.writeOsc("\x1b]4;0;?\x07", true)
     })
   }
 
@@ -270,7 +271,8 @@ export class TerminalPalette implements TerminalPaletteDetector {
 
       session.setTimer(finish, timeoutMs)
       session.subscribeInput(onData)
-      this.writeOsc(indices.map((i) => `\x1b]4;${i};?\x07`).join(""))
+      // Only OSC 4 needs legacy tmux passthrough; tmux routes OSC 4 replies back to the pane.
+      this.writeOsc(indices.map((i) => `\x1b]4;${i};?\x07`).join(""), true)
       idleTimer = session.resetTimer(idleTimer, finish, idleTimeoutMs)
     })
   }
@@ -291,6 +293,8 @@ export class TerminalPalette implements TerminalPaletteDetector {
       17: null,
       19: null,
     }
+    // tmux handles plain OSC 10/11/12 only; it has no OSC 13-17/19 handlers or reply routing.
+    const queries = this.inTmux ? [10, 11, 12] : [10, 11, 12, 13, 14, 15, 16, 17, 19]
 
     if (!out.isTTY || !this.stdin.isTTY) {
       return results
@@ -325,8 +329,7 @@ export class TerminalPalette implements TerminalPaletteDetector {
 
         if (buffer.length > 8192) buffer = buffer.slice(-4096)
 
-        const done = Object.values(results).filter((v) => v !== null).length
-        if (done === Object.keys(results).length) {
+        if (queries.every((idx) => results[idx] !== null)) {
           finish()
           return
         }
@@ -338,19 +341,8 @@ export class TerminalPalette implements TerminalPaletteDetector {
 
       session.setTimer(finish, timeoutMs)
       session.subscribeInput(onData)
-      this.writeOsc(
-        [
-          "\x1b]10;?\x07",
-          "\x1b]11;?\x07",
-          "\x1b]12;?\x07",
-          "\x1b]13;?\x07",
-          "\x1b]14;?\x07",
-          "\x1b]15;?\x07",
-          "\x1b]16;?\x07",
-          "\x1b]17;?\x07",
-          "\x1b]19;?\x07",
-        ].join(""),
-      )
+      // OSC 10/11/12 are plain tmux handlers. DCS passthrough does not help other special colors.
+      this.writeOsc(queries.map((idx) => `\x1b]${idx};?\x07`).join(""))
       idleTimer = session.resetTimer(idleTimer, finish, idleTimeoutMs)
     })
   }
@@ -401,10 +393,11 @@ export function createTerminalPalette(
   stdout: NodeJS.WriteStream,
   writeFn?: WriteFunction,
   isLegacyTmux?: boolean,
+  isTmux?: boolean,
   oscSource?: OscSubscriptionSource,
   clock?: Clock,
 ): TerminalPaletteDetector {
-  return new TerminalPalette(stdin, stdout, writeFn, isLegacyTmux, oscSource, clock)
+  return new TerminalPalette(stdin, stdout, writeFn, isLegacyTmux, isTmux, oscSource, clock)
 }
 
 const DEFAULT_FOREGROUND_FALLBACK = RGBA.fromInts(...DEFAULT_FOREGROUND_RGB)

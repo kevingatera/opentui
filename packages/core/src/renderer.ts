@@ -4036,6 +4036,9 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
   private ensurePaletteDetector(): TerminalPaletteDetector {
     if (!this._paletteDetector) {
+      const isTmux = Boolean(
+        this.capabilities?.in_tmux || this.capabilities?.terminal?.name?.toLowerCase()?.includes("tmux"),
+      )
       const isLegacyTmux =
         this.capabilities?.terminal?.name?.toLowerCase()?.includes("tmux") &&
         this.capabilities?.terminal?.version?.localeCompare("3.6") < 0
@@ -4044,6 +4047,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
         this.stdout,
         (data) => (this._isDestroyed ? false : this.writeOut(data)),
         isLegacyTmux,
+        isTmux,
         {
           subscribeOsc: this.subscribeOsc.bind(this),
         },

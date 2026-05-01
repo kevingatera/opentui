@@ -32,6 +32,8 @@ This spec describes the startup flow for `createCliRenderer()` with `testing !==
     - tmux `< 3.6`: wrap OSC palette queries in tmux DCS passthrough.
     - tmux `>= 3.6` or non-tmux: send plain OSC palette queries.
 
+    In tmux, special color queries use only plain OSC 10/11/12. tmux has handlers for these and no OSC 13-17/19 handlers or reply routing, so DCS passthrough does not help those queries.
+
 13. Palette detection uses a hard timeout plus an idle timeout. The idle timeout finishes detection after a short period of silence after palette queries, including when follow-up palette queries produce no responses.
 
 14. When a palette result is detected, `PALETTE` is emitted if listeners exist and the detected palette signature changed since the last palette event.
