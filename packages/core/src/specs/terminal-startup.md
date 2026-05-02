@@ -26,7 +26,7 @@ This spec describes the startup flow for `createCliRenderer()` with `testing !==
 
 10. Startup calls `refreshPalette()` only when native palette state is useful: terminal setup is active, the renderer is alive, `ansi256` is supported, and truecolor `rgb` is not supported. Truecolor terminals do not run startup palette detection.
 
-11. `getPalette()` waits for `XTVERSION` only when native capabilities already indicate `in_tmux` but no tmux version is known from either `TERM_PROGRAM_VERSION` or `XTVERSION`. This avoids choosing the wrong OSC 4 strategy for tmux while avoiding a 5000ms wait for remote or non-responding terminals.
+11. `getPalette()` waits for `XTVERSION` only when native capabilities already indicate `in_tmux` but no tmux version is known from either `TERM_PROGRAM=tmux` with `TERM_PROGRAM_VERSION` or `XTVERSION`. This avoids choosing the wrong OSC 4 strategy for tmux while avoiding a 5000ms wait for remote or non-responding terminals.
 
 12. `getPalette()` creates the palette detector after any required `XTVERSION` wait. The detector uses tmux version to choose OSC 4 behavior:
     - tmux `< 3.6`: wrap OSC palette queries in tmux DCS passthrough.
@@ -50,12 +50,12 @@ This spec describes the startup flow for `createCliRenderer()` with `testing !==
 
 - Remote terminal environment detection is incomplete. `config.remote === true` only stops automatic forwarding of the process environment; it does not detect or model the actual local terminal environment.
 
-- Remote callers must explicitly provide any terminal environment they want native detection to use via `forwardEnvKeys` or equivalent forwarding. Without forwarded `TMUX`, OpenTUI cannot know a remote TUI is displayed inside a local tmux session until an `XTVERSION` response arrives.
+- Remote callers must explicitly provide any terminal environment they want native detection to use via `forwardEnvKeys` or equivalent forwarding. Without forwarded `TMUX`, `TERM`, or `TERM_PROGRAM`, OpenTUI cannot know a remote TUI is displayed inside a local tmux session until an `XTVERSION` response arrives.
 
 - Terminals are not required to answer `XTVERSION`. If no `TMUX` env was forwarded and `XTVERSION` never arrives, OpenTUI cannot infer tmux and will use non-tmux palette query behavior.
 
 - Nested tmux is not modeled. OpenTUI currently treats tmux as a single layer and does not distinguish local tmux, remote tmux, or local-plus-remote nested tmux sessions.
 
-- tmux version is only available from environment variables when `TERM_PROGRAM=tmux` and `TERM_PROGRAM_VERSION` are present. Otherwise, version-sensitive behavior depends on `XTVERSION`; without either, OpenTUI cannot reliably choose legacy tmux passthrough versus tmux 3.6 native OSC 4 handling.
+- tmux can be detected from `TMUX`, `TERM` beginning with `tmux`, or `TERM_PROGRAM=tmux`. tmux version is only available from environment variables when `TERM_PROGRAM=tmux` and `TERM_PROGRAM_VERSION` are present. Otherwise, version-sensitive behavior depends on `XTVERSION`; without either, OpenTUI cannot reliably choose legacy tmux passthrough versus tmux 3.6 native OSC 4 handling.
 
 - The palette query strategy assumes one effective terminal path. It does not support independently reasoning about a remote server terminal, a transport, and a local outer terminal.
