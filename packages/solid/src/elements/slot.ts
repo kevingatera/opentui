@@ -4,10 +4,14 @@ type LayoutNodeProvider = {
   getLayoutNode?: () => Yoga.Node
 }
 
-function createLayoutSlotYogaNode(parent?: BaseRenderable): Yoga.Node {
-  const parentLayoutNode = (parent as LayoutNodeProvider | undefined)?.getLayoutNode?.()
-  const parentNodeConstructor = parentLayoutNode?.constructor as { create?: () => Yoga.Node } | undefined
+type LayoutNodeConstructor = { create?: () => Yoga.Node } | undefined
 
+function getLayoutNodeConstructor(parent?: BaseRenderable): LayoutNodeConstructor {
+  const parentLayoutNode = (parent as LayoutNodeProvider | undefined)?.getLayoutNode?.()
+  return parentLayoutNode?.constructor as LayoutNodeConstructor
+}
+
+function createLayoutSlotYogaNode(parentNodeConstructor?: LayoutNodeConstructor): Yoga.Node {
   return parentNodeConstructor?.create?.() ?? Yoga.default.Node.create()
 }
 
@@ -72,13 +76,15 @@ export class LayoutSlotRenderable extends SlotBaseRenderable {
   protected yogaNode: Yoga.Node
   protected slotParent?: SlotRenderable
   protected destroyed: boolean = false
+  private yogaNodeConstructor: LayoutNodeConstructor
 
   constructor(id: string, parent?: SlotRenderable, layoutParent?: BaseRenderable) {
     super(id)
 
     this._visible = false
     this.slotParent = parent
-    this.yogaNode = createLayoutSlotYogaNode(layoutParent)
+    this.yogaNodeConstructor = getLayoutNodeConstructor(layoutParent)
+    this.yogaNode = createLayoutSlotYogaNode(this.yogaNodeConstructor)
     this.yogaNode.setDisplay(Yoga.Display.None)
   }
 
@@ -91,6 +97,16 @@ export class LayoutSlotRenderable extends SlotBaseRenderable {
   public updateLayout() {}
 
   public onRemove() {}
+
+  public isCompatibleWith(layoutParent?: BaseRenderable): boolean {
+    return this.yogaNodeConstructor === getLayoutNodeConstructor(layoutParent)
+  }
+
+  public disposeDetachedLayoutNode(): void {
+    try {
+      this.yogaNode.free()
+    } catch {}
+  }
 
   public override destroy(): void {
     if (this.destroyed) {
@@ -122,6 +138,11 @@ export class SlotRenderable extends SlotBaseRenderable {
       return this.textNode
     }
 
+    if (this.layoutNode && !this.layoutNode.parent && !this.layoutNode.isCompatibleWith(parent)) {
+      this.layoutNode.disposeDetachedLayoutNode()
+      this.layoutNode = undefined
+    }
+
     if (!this.layoutNode) {
       this.layoutNode = new LayoutSlotRenderable(`slot-layout-${this.id}`, this, parent)
     }
@@ -135,10 +156,14 @@ export class SlotRenderable extends SlotBaseRenderable {
     this.destroyed = true
 
     if (this.layoutNode) {
-      this.layoutNode.destroy()
+      const layoutNode = this.layoutNode
+      this.layoutNode = undefined
+      layoutNode.destroy()
     }
     if (this.textNode) {
-      this.textNode.destroy()
+      const textNode = this.textNode
+      this.textNode = undefined
+      textNode.destroy()
     }
   }
 }

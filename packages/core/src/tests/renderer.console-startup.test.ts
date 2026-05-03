@@ -1453,7 +1453,7 @@ test("CliRenderer split-footer footerHeight changes coalesce while settling befo
   repaintSpy.mockRestore()
 })
 
-test("CliRenderer split-footer footerHeight changes defer pinned viewport transitions to the next native frame", async () => {
+test("CliRenderer split-footer pinned footerHeight shrink defers clear-stale-row cleanup to the next native frame", async () => {
   const result = await createTestRenderer({
     width: 40,
     height: 10,
@@ -1478,16 +1478,109 @@ test("CliRenderer split-footer footerHeight changes defer pinned viewport transi
 
   renderer.footerHeight = 3
 
+  expect((renderer as any).renderOffset).toBe(6)
+  expect((renderer as any).pendingSplitFooterTransition).toEqual({
+    mode: "clear-stale-rows",
+    sourceTopLine: 7,
+    sourceHeight: 4,
+    targetTopLine: 7,
+    targetHeight: 3,
+    scrollLines: 0,
+  })
   expect(writeOutSpy).toHaveBeenCalledTimes(0)
 
   await result.renderOnce()
 
+  expect((renderer as any).renderOffset).toBe(6)
   expect(repaintSpy).toHaveBeenCalledTimes(1)
   expect(repaintSpy.mock.calls[0]?.[1]).toBe(7)
   expect(repaintSpy.mock.calls[0]?.[2]).toBe(true)
 
   writeOutSpy.mockRestore()
   repaintSpy.mockRestore()
+})
+
+test("CliRenderer split-footer reuses the reserved gap when reopening the footer before new output arrives", async () => {
+  const result = await createTestRenderer({
+    width: 40,
+    height: 10,
+    screenMode: "split-footer",
+    footerHeight: 4,
+    externalOutputMode: "capture-stdout",
+    consoleMode: "disabled",
+  })
+
+  renderer = result.renderer
+  ;(renderer as any)._terminalIsSetup = true
+
+  for (let i = 0; i < 12; i += 1) {
+    ;(renderer as any).stdout.write(`line-${i}\n`)
+    await result.renderOnce()
+  }
+
+  expect((renderer as any).renderOffset).toBe(6)
+
+  renderer.footerHeight = 8
+
+  expect((renderer as any).pendingSplitFooterTransition).toEqual({
+    mode: "viewport-scroll",
+    sourceTopLine: 7,
+    sourceHeight: 4,
+    targetTopLine: 3,
+    targetHeight: 8,
+    scrollLines: 4,
+  })
+
+  await result.renderOnce()
+
+  renderer.footerHeight = 4
+
+  expect((renderer as any).pendingSplitFooterTransition).toEqual({
+    mode: "clear-stale-rows",
+    sourceTopLine: 3,
+    sourceHeight: 8,
+    targetTopLine: 3,
+    targetHeight: 4,
+    scrollLines: 0,
+  })
+
+  await result.renderOnce()
+
+  expect((renderer as any).renderOffset).toBe(2)
+
+  renderer.footerHeight = 7
+
+  expect((renderer as any).pendingSplitFooterTransition).toEqual({
+    mode: "clear-stale-rows",
+    sourceTopLine: 3,
+    sourceHeight: 4,
+    targetTopLine: 3,
+    targetHeight: 7,
+    scrollLines: 0,
+  })
+})
+
+test("CliRenderer split-footer passthrough footerHeight shrink clears stale rows without reverse scrolling", async () => {
+  const result = await createTestRenderer({
+    width: 40,
+    height: 10,
+    screenMode: "split-footer",
+    footerHeight: 4,
+    externalOutputMode: "passthrough",
+    consoleMode: "disabled",
+  })
+
+  renderer = result.renderer
+  ;(renderer as any)._terminalIsSetup = true
+
+  const writeOutSpy = spyOn(renderer as any, "writeOut")
+
+  renderer.footerHeight = 3
+
+  expect(writeOutSpy).toHaveBeenCalledTimes(1)
+  expect(writeOutSpy.mock.calls[0]?.[0]).toBe(`${ANSI.moveCursor(7, 1)}\x1b[2K`)
+
+  writeOutSpy.mockRestore()
 })
 
 test("CliRenderer split-footer resize cleanup uses the visible footer surface while a deferred footer transition is pending", async () => {
@@ -1513,6 +1606,7 @@ test("CliRenderer split-footer resize cleanup uses the visible footer surface wh
     sourceHeight: 4,
     targetTopLine: 2,
     targetHeight: 3,
+    scrollLines: 0,
   })
 
   result.resize(20, 10)
@@ -1547,6 +1641,7 @@ test("CliRenderer split-footer resize cleanup uses the visible source top line a
     sourceHeight: 4,
     targetTopLine: 2,
     targetHeight: 3,
+    scrollLines: 0,
   })
 
   result.resize(20, 12)

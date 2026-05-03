@@ -97,6 +97,61 @@ describe("Solid Slot System", () => {
     slot.destroy()
   })
 
+  it("recreates a detached layout placeholder when the parent Yoga factory changes", () => {
+    let displayA: number | undefined
+    let displayB: number | undefined
+    const layoutNodeA = {
+      setDisplay(value: number) {
+        displayA = value
+      },
+      free() {},
+    }
+    const layoutNodeB = {
+      setDisplay(value: number) {
+        displayB = value
+      },
+      free() {},
+    }
+    const parentA = {
+      getLayoutNode() {
+        return {
+          constructor: {
+            create() {
+              return layoutNodeA
+            },
+          },
+        }
+      },
+    } as unknown as BaseRenderable
+    const parentB = {
+      getLayoutNode() {
+        return {
+          constructor: {
+            create() {
+              return layoutNodeB
+            },
+          },
+        }
+      },
+    } as unknown as BaseRenderable
+
+    const slot = new SlotRenderable("moving-slot")
+    const firstChild = slot.getSlotChild(parentA)
+
+    expect(firstChild.getLayoutNode()).toBe(layoutNodeA)
+    expect(displayA).toBe(Yoga.Display.None)
+
+    firstChild.parent = null
+
+    const secondChild = slot.getSlotChild(parentB)
+
+    expect(secondChild).not.toBe(firstChild)
+    expect(secondChild.getLayoutNode()).toBe(layoutNodeB)
+    expect(displayB).toBe(Yoga.Display.None)
+
+    slot.destroy()
+  })
+
   it("reuses one registry per renderer and rejects different context", async () => {
     const setup = await createTestRenderer({ width: 20, height: 4 })
     testSetup = setup
