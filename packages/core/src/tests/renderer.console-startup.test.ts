@@ -1724,6 +1724,39 @@ test("CliRenderer entering split capture seeds from current terminal cursor row"
   expect((renderer as any).renderOffset).toBe(4)
 })
 
+test("CliRenderer entering split capture after a committed main-screen frame clears the old pinned footer surface", async () => {
+  const result = await createTestRenderer({
+    width: 40,
+    height: 10,
+    screenMode: "split-footer",
+    footerHeight: 4,
+    externalOutputMode: "capture-stdout",
+    consoleMode: "disabled",
+  })
+
+  renderer = result.renderer
+  ;(renderer as any)._terminalIsSetup = true
+
+  await result.renderOnce()
+
+  renderer.externalOutputMode = "passthrough"
+  renderer.screenMode = "main-screen"
+  await result.renderOnce()
+
+  renderer.screenMode = "split-footer"
+  renderer.externalOutputMode = "capture-stdout"
+
+  expect((renderer as any).pendingSplitFooterTransition).toEqual({
+    mode: "clear-stale-rows",
+    sourceTopLine: 7,
+    sourceHeight: 4,
+    targetTopLine: 2,
+    targetHeight: 4,
+    scrollLines: 0,
+  })
+  expect((renderer as any).forceFullRepaintRequested).toBe(true)
+})
+
 test("CliRenderer reseeds split startup offset from non-home CPR capability response", async () => {
   const result = await createTestRenderer({
     width: 40,

@@ -1458,8 +1458,28 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
   private afterExternalOutputModeChanged(previousMode: ExternalOutputMode, mode: ExternalOutputMode): void {
     if (this._screenMode === "split-footer" && this._splitHeight > 0 && mode === "capture-stdout") {
+      const previousSurfaceTopLine = this.renderOffset + 1
+      const previousSurfaceHeight = this._splitHeight
+
       this.clearPendingSplitFooterTransition()
       this.resetSplitScrollback(this.getSplitCursorSeedRows())
+
+      if (previousMode === "passthrough" && this._terminalIsSetup) {
+        const nextSurfaceTopLine = this.renderOffset + 1
+        if (previousSurfaceTopLine !== nextSurfaceTopLine) {
+          this.setPendingSplitFooterTransition({
+            mode: "clear-stale-rows",
+            sourceTopLine: previousSurfaceTopLine,
+            sourceHeight: previousSurfaceHeight,
+            targetTopLine: nextSurfaceTopLine,
+            targetHeight: this._splitHeight,
+            scrollLines: 0,
+          })
+          this.forceFullRepaintRequested = true
+        }
+      }
+
+      this.requestRender()
       return
     }
 
@@ -3993,6 +4013,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       this.pendingSplitFooterTransition = null
       this.lib.render(this.rendererPtr, force)
     }
+
     // this.dumpStdoutBuffer(Date.now())
     this.renderingNative = false
   }
