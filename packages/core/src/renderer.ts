@@ -1519,7 +1519,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     }
 
     if (this.isSplitCursorSeedFrameBlocked() && this._controlState !== RendererControlState.EXPLICIT_SUSPENDED) {
-      this.clearSplitStartupCursorSeed()
+      this.abortSplitStartupCursorSeed()
     }
 
     this.flushPendingSplitOutputBeforeTransition()
@@ -2344,6 +2344,11 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       this.clock.clearTimeout(this.splitStartupSeedTimeoutId)
       this.splitStartupSeedTimeoutId = null
     }
+  }
+
+  private abortSplitStartupCursorSeed(): void {
+    this.clearSplitStartupCursorSeed()
+    this.updateStdinParserProtocolContext({ startupCursorCprActive: false })
   }
 
   private flushPendingSplitOutputBeforeTransition(

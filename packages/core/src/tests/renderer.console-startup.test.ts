@@ -584,6 +584,59 @@ test("CliRenderer drains deferred passthrough output before leaving split-footer
   }
 })
 
+test("CliRenderer leaving split-footer clears startup CPR parser mode for deferred passthrough", async () => {
+  const clock = new ManualClock()
+  const result = await createTestRenderer({
+    screenMode: "split-footer",
+    footerHeight: 6,
+    externalOutputMode: "capture-stdout",
+    consoleMode: "disabled",
+    clock,
+  })
+
+  renderer = result.renderer
+  ;(renderer as any)._terminalIsSetup = true
+  ;(renderer as any).pendingSplitStartupCursorSeed = true
+  ;(renderer as any).splitStartupSeedTimeoutId = clock.setTimeout(() => {}, 120)
+  ;(renderer as any).capabilityTimeoutId = clock.setTimeout(() => {}, 5000)
+  ;(renderer as any).updateStdinParserProtocolContext({ startupCursorCprActive: true })
+
+  const keypresses: string[] = []
+  renderer.keyInput.on("keypress", (event) => {
+    keypresses.push(event.name)
+  })
+
+  try {
+    ;(renderer as any).stdout.write("before-leave\n")
+    renderer.externalOutputMode = "passthrough"
+
+    expect(renderer.externalOutputMode).toBe("capture-stdout")
+
+    renderer.screenMode = "main-screen"
+
+    expect((renderer as any).pendingSplitStartupCursorSeed).toBe(false)
+    expect((renderer as any).splitStartupSeedTimeoutId).toBeNull()
+    expect((renderer as any).stdinParser.protocolContext.startupCursorCprActive).toBe(false)
+
+    renderer.stdin.emit("data", Buffer.from("\x1b[24;80"))
+    clock.advance(20)
+    renderer.stdin.emit("data", Buffer.from("R"))
+    clock.advance(20)
+
+    expect(keypresses).toEqual(["r"])
+  } finally {
+    if ((renderer as any).capabilityTimeoutId !== null) {
+      clock.clearTimeout((renderer as any).capabilityTimeoutId)
+      ;(renderer as any).capabilityTimeoutId = null
+    }
+
+    if ((renderer as any).splitStartupSeedTimeoutId !== null) {
+      clock.clearTimeout((renderer as any).splitStartupSeedTimeoutId)
+      ;(renderer as any).splitStartupSeedTimeoutId = null
+    }
+  }
+})
+
 test("CliRenderer preserves split render offset when switching to passthrough", async () => {
   const result = await createTestRenderer({
     width: 40,
