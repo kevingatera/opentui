@@ -32,6 +32,7 @@ export interface ResolvedBindingSections<
   sections: Record<TSection, Binding<TTarget, TEvent>[]>
   get(section: string, cmd: string): readonly Binding<TTarget, TEvent>[] | undefined
   pick(section: string, commands: readonly string[]): Binding<TTarget, TEvent>[]
+  omit(section: string, commands: readonly string[]): Binding<TTarget, TEvent>[]
 }
 
 export interface ResolveBindingSectionsOptions<TSection extends string = string> {
@@ -205,6 +206,21 @@ export function resolveBindingSections<TTarget extends object = object, TEvent e
         for (let index = 0; index < bindings.length; index += 1) {
           result.push(bindings[index]!)
         }
+      }
+
+      return result
+    },
+    omit(section, commands) {
+      const sectionBindings = sections[section]
+      if (!sectionBindings) return []
+      if (commands.length === 0) return sectionBindings.slice()
+
+      const omitted = new Set(commands)
+      const result: Binding<TTarget, TEvent>[] = []
+      for (let index = 0; index < sectionBindings.length; index += 1) {
+        const binding = sectionBindings[index]!
+        if (typeof binding.cmd === "string" && omitted.has(binding.cmd)) continue
+        result.push(binding)
       }
 
       return result

@@ -22,6 +22,7 @@ const resolvedFromLiteral = resolveBindingSections(
 const sectionsFromLiteral: KeymapSections = resolvedFromLiteral.sections
 const customFromLiteral: Binding[] = resolvedFromLiteral.sections.custom
 const pickedFromLiteral: Binding[] = resolvedFromLiteral.pick("app", ["save"])
+const omittedFromLiteral: Binding[] = resolvedFromLiteral.omit("app", ["save"])
 
 if (sectionsFromLiteral.prompt.length !== 0) {
   throw new Error("Expected prompt section to be empty")
@@ -32,6 +33,9 @@ if (customFromLiteral.length !== 1) {
 if (pickedFromLiteral.length !== 1) {
   throw new Error("Expected picked bindings from literal config")
 }
+if (omittedFromLiteral.length !== 0) {
+  throw new Error("Expected omitted bindings from literal config")
+}
 
 const config: BindingSectionsConfig = {}
 const resolvedFromSparseConfig = resolveBindingSections(config, {
@@ -40,6 +44,7 @@ const resolvedFromSparseConfig = resolveBindingSections(config, {
 
 const sectionsFromSparseConfig: KeymapSections = resolvedFromSparseConfig.sections
 const pickedFromSparseConfig: Binding[] = resolvedFromSparseConfig.pick("app", ["save"])
+const omittedFromSparseConfig: Binding[] = resolvedFromSparseConfig.omit("app", ["save"])
 // @ts-expect-error Unknown sections are not guaranteed by the literal sections option.
 const missingFromSparseConfig: Binding[] = resolvedFromSparseConfig.sections.missing
 
@@ -48,6 +53,9 @@ if (sectionsFromSparseConfig.app.length !== 0) {
 }
 if (pickedFromSparseConfig.length !== 0) {
   throw new Error("Expected picked bindings from sparse config to be empty")
+}
+if (omittedFromSparseConfig.length !== 0) {
+  throw new Error("Expected omitted bindings from sparse config to be empty")
 }
 if (missingFromSparseConfig !== undefined) {
   throw new Error("Expected missing section to be undefined")

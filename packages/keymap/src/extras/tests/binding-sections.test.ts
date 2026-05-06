@@ -128,6 +128,43 @@ describe("resolveBindingSections helper", () => {
     expect(resolved.pick("app", [])).toEqual([])
   })
 
+  test("omits command bindings from a section while preserving section order", () => {
+    const fn = () => {}
+    const resolved = resolveBindingSections({
+      app: {
+        first: "1",
+        second: ["2a", { key: "2b", preventDefault: false }],
+        third: "3",
+        exact: "4",
+      },
+    })
+    const section = [
+      ...resolved.sections.app,
+      { key: "f", cmd: fn },
+      { key: "x" },
+    ] satisfies Binding[]
+    resolved.sections.app = section
+
+    expect(resolved.omit("app", ["second", "missing", " exact "])).toEqual([
+      { key: "1", cmd: "first" },
+      { key: "3", cmd: "third" },
+      { key: "4", cmd: "exact" },
+      { key: "f", cmd: fn },
+      { key: "x" },
+    ])
+    expect(resolved.omit("app", ["exact"])).toEqual([
+      { key: "1", cmd: "first" },
+      { key: "2a", cmd: "second" },
+      { key: "2b", cmd: "second", preventDefault: false },
+      { key: "3", cmd: "third" },
+      { key: "f", cmd: fn },
+      { key: "x" },
+    ])
+    expect(resolved.omit("app", [])).toEqual(section)
+    expect(resolved.omit("app", [])).not.toBe(section)
+    expect(resolved.omit("missing", ["first"])).toEqual([])
+  })
+
   test("can return a complete empty section shape for empty config", () => {
     const resolved = resolveBindingSections(
       {},
