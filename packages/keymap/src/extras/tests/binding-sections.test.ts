@@ -101,6 +101,32 @@ describe("resolveBindingSections helper", () => {
     expect(resolved.get("custom", "run")).toEqual([{ key: "r", cmd: "run" }])
   })
 
+  test("picks command bindings from a section in caller order", () => {
+    const resolved = resolveBindingSections({
+      app: {
+        first: "1",
+        second: ["2a", { key: "2b", preventDefault: false }],
+        disabled: false,
+        third: "3",
+      },
+    })
+
+    expect(resolved.sections.app).toEqual([
+      { key: "1", cmd: "first" },
+      { key: "2a", cmd: "second" },
+      { key: "2b", cmd: "second", preventDefault: false },
+      { key: "3", cmd: "third" },
+    ])
+    expect(resolved.pick("app", [" third ", "missing", "second", "disabled", "first"])).toEqual([
+      { key: "3", cmd: "third" },
+      { key: "2a", cmd: "second" },
+      { key: "2b", cmd: "second", preventDefault: false },
+      { key: "1", cmd: "first" },
+    ])
+    expect(resolved.pick("missing", ["first"])).toEqual([])
+    expect(resolved.pick("app", [])).toEqual([])
+  })
+
   test("can return a complete empty section shape for empty config", () => {
     const resolved = resolveBindingSections(
       {},
