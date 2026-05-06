@@ -123,4 +123,44 @@ describe("slot placeholder moves", () => {
       setup.renderer.destroy()
     }
   })
+
+  it("promotes slot.parent back to another attached host when the newest placeholder is removed", async () => {
+    const setup = await createTestRenderer({ width: 40, height: 10 })
+    const parentA = new BoxRenderable(setup.renderer, {
+      id: "slot-parent-host-a",
+      width: 10,
+      height: 1,
+    })
+    const parentB = new BoxRenderable(setup.renderer, {
+      id: "slot-parent-host-b",
+      width: 10,
+      height: 1,
+    })
+
+    setup.renderer.root.add(parentA)
+    setup.renderer.root.add(parentB)
+
+    const slot = createSlotNode()
+
+    try {
+      slot.parent = parentA
+      const childA = slot.getSlotChild(parentA)
+      parentA.add(childA)
+
+      slot.parent = parentB
+      const childB = slot.getSlotChild(parentB)
+      parentB.add(childB)
+
+      expect(slot.parent).toBe(parentB)
+
+      parentB.remove(childB.id)
+      slot.didRemoveSlotChild(parentB, childB)
+
+      expect(slot.parent).toBe(parentA)
+      expect(parentA.getChildren()[0]).toBe(childA)
+      expect(parentB.getChildren()).toHaveLength(0)
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
 })

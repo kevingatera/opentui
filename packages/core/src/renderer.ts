@@ -2348,6 +2348,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
   private abortSplitStartupCursorSeed(): void {
     this.clearSplitStartupCursorSeed()
+    this.stdinParser?.abortPendingStartupCursorCpr()
     this.updateStdinParserProtocolContext({ startupCursorCprActive: false })
   }
 

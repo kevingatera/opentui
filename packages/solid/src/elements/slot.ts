@@ -278,20 +278,27 @@ export class SlotRenderable extends SlotBaseRenderable {
     }
   }
 
-  private hasOtherAttachedSlotChildren(excludedNode: BaseRenderable): boolean {
+  // A slot can have multiple placeholder children attached transiently while a
+  // move is in flight. Portal host tracking relies on `slot.parent` pointing at
+  // one of the still-live hosts, not necessarily the most recently inserted one.
+  private getAttachedSlotParent(excludedNode?: BaseRenderable): BaseRenderable | null {
     for (const textNode of this.textNodesByParent.values()) {
       if (textNode !== excludedNode && textNode.parent) {
-        return true
+        return textNode.parent
       }
     }
 
     for (const layoutNode of this.layoutNodesByParent.values()) {
       if (layoutNode !== excludedNode && layoutNode.parent) {
-        return true
+        return layoutNode.parent
       }
     }
 
-    return false
+    return null
+  }
+
+  private hasOtherAttachedSlotChildren(excludedNode: BaseRenderable): boolean {
+    return this.getAttachedSlotParent(excludedNode) !== null
   }
 
   getSlotChild(parent: BaseRenderable) {
@@ -340,23 +347,20 @@ export class SlotRenderable extends SlotBaseRenderable {
   }
 
   didRemoveSlotChild(parent: BaseRenderable, child: BaseRenderable): void {
-    if (this.parent === parent) {
-      this.parent = null
-    }
+    const hasOtherAttachedSlotChildren = this.hasOtherAttachedSlotChildren(child)
 
-    if (!this.hasOtherAttachedSlotChildren(child)) {
-      return
-    }
-
-    if (child instanceof TextSlotRenderable && this.getTextNodeForParent(parent) === child) {
+    if (hasOtherAttachedSlotChildren && child instanceof TextSlotRenderable && this.getTextNodeForParent(parent) === child) {
       this.textNodesByParent.delete(parent)
       child.disposeWithoutSlotCascade()
-      return
     }
 
-    if (child instanceof LayoutSlotRenderable && this.getLayoutNodeForParent(parent) === child) {
+    if (hasOtherAttachedSlotChildren && child instanceof LayoutSlotRenderable && this.getLayoutNodeForParent(parent) === child) {
       this.layoutNodesByParent.delete(parent)
       child.disposeWithoutSlotCascade()
+    }
+
+    if (this.parent === parent) {
+      this.parent = this.getAttachedSlotParent(child)
     }
   }
 

@@ -584,7 +584,7 @@ test("CliRenderer drains deferred passthrough output before leaving split-footer
   }
 })
 
-test("CliRenderer leaving split-footer clears startup CPR parser mode for deferred passthrough", async () => {
+test("CliRenderer leaving split-footer aborts an in-flight startup CPR reply", async () => {
   const clock = new ManualClock()
   const result = await createTestRenderer({
     screenMode: "split-footer",
@@ -607,6 +607,8 @@ test("CliRenderer leaving split-footer clears startup CPR parser mode for deferr
   })
 
   try {
+    renderer.stdin.emit("data", Buffer.from("\x1b["))
+
     ;(renderer as any).stdout.write("before-leave\n")
     renderer.externalOutputMode = "passthrough"
 
@@ -618,12 +620,10 @@ test("CliRenderer leaving split-footer clears startup CPR parser mode for deferr
     expect((renderer as any).splitStartupSeedTimeoutId).toBeNull()
     expect((renderer as any).stdinParser.protocolContext.startupCursorCprActive).toBe(false)
 
-    renderer.stdin.emit("data", Buffer.from("\x1b[24;80"))
-    clock.advance(20)
-    renderer.stdin.emit("data", Buffer.from("R"))
+    renderer.stdin.emit("data", Buffer.from("24;80R"))
     clock.advance(20)
 
-    expect(keypresses).toEqual(["r"])
+    expect(keypresses).toEqual([])
   } finally {
     if ((renderer as any).capabilityTimeoutId !== null) {
       clock.clearTimeout((renderer as any).capabilityTimeoutId)
