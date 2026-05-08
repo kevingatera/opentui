@@ -14,12 +14,13 @@ describe("createBindingLookup helper", () => {
     })
 
     expect(lookup.bindings).toEqual([
-      { key: "ctrl+d", cmd: "show_dialog" },
+      { key: "ctrl+d", cmd: " show_dialog " },
       { key: "escape", cmd: "close_dialog" },
       { key: "ctrl+c", cmd: "close_dialog", preventDefault: false },
       { key: { name: "o", ctrl: true }, cmd: "open_file" },
     ])
-    expect(lookup.get(" show_dialog ")).toEqual([{ key: "ctrl+d", cmd: "show_dialog" }])
+    expect(lookup.get(" show_dialog ")).toEqual([{ key: "ctrl+d", cmd: " show_dialog " }])
+    expect(lookup.get("show_dialog")).toBeUndefined()
     expect(lookup.get("missing_command")).toBeUndefined()
     expect(lookup.get("open_file")?.[0]?.key).not.toBe(openKey)
   })
@@ -142,7 +143,7 @@ describe("createBindingLookup helper", () => {
     ])
   })
 
-  test("lets false, none, and empty arrays disable a command and lets later normalized entries replace earlier ones", () => {
+  test("uses exact command names and lets false, none, and empty arrays disable exact commands", () => {
     const config: Record<string, BindingValue> = {}
     config[" action "] = "a"
     config.action = false
@@ -155,11 +156,14 @@ describe("createBindingLookup helper", () => {
     const lookup = createBindingLookup(config)
 
     expect(lookup.bindings).toEqual([
+      { key: "a", cmd: " action " },
       { key: "b", cmd: "before_action" },
-      { key: "c", cmd: "action" },
+      { key: "c", cmd: "action " },
       { key: "none", cmd: "literal_none_key" },
     ])
-    expect(lookup.get(" action ")).toEqual([{ key: "c", cmd: "action" }])
+    expect(lookup.get(" action ")).toEqual([{ key: "a", cmd: " action " }])
+    expect(lookup.get("action ")).toEqual([{ key: "c", cmd: "action " }])
+    expect(lookup.get("action")).toBeUndefined()
     expect(lookup.get("disabled_action")).toBeUndefined()
     expect(lookup.get("empty_action")).toBeUndefined()
   })
@@ -228,7 +232,22 @@ describe("createBindingLookup helper", () => {
 
     const wholeGroup = lookup.omit("group", [])
     expect(wholeGroup).toEqual(lookup.gather("group", []))
-    expect(wholeGroup).not.toBe(lookup.gather("group", []))
+    expect(wholeGroup).toBe(lookup.gather("group", []))
+  })
+
+  test("returns existing lookup arrays without slicing or duplicating", () => {
+    const lookup = createBindingLookup({
+      first: "1",
+      second: ["2a", "2b"],
+    })
+
+    const first = lookup.get("first")
+    const firstAgain = lookup.get("first")
+    const group = lookup.gather("group", ["first", "second"])
+
+    expect(firstAgain).toBe(first)
+    expect(lookup.gather("group", ["first"])).toBe(group)
+    expect(lookup.omit("group", [])).toBe(group)
   })
 
   test("invalidates one gathered group or all gathered groups", () => {
@@ -285,9 +304,8 @@ describe("createBindingLookup helper", () => {
   })
 
   test("throws for invalid commands and binding values", () => {
-    expect(() => createBindingLookup({ "   ": "s" } as never)).toThrow(
-      "Invalid binding command: command cannot be empty",
-    )
+    expect(() => createBindingLookup({ "": "s" } as never)).toThrow("Invalid binding command: command cannot be empty")
+    expect(createBindingLookup({ "   ": "s" } as never).get("   ")).toEqual([{ key: "s", cmd: "   " }])
     expect(() => createBindingLookup({ save_file: true } as never)).toThrow(
       'Invalid binding value for "save_file": expected false, a key, a binding object, or an array of keys/binding objects',
     )

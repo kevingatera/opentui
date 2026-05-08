@@ -1569,7 +1569,7 @@ const scenarios: BenchmarkScenario[] = [
     async setup() {
       const resources = await createScenarioResources()
       const config: Record<string, BindingValue> = {
-        " show_palette ": "ctrl+p",
+        show_palette: "ctrl+p",
         exit_app: ["ctrl+c", "ctrl+d", "<leader>q"],
         save_file: { name: "s", ctrl: true },
         close_file: false,
@@ -1588,7 +1588,7 @@ const scenarios: BenchmarkScenario[] = [
         runIteration() {
           const lookup = createBindingLookup(config)
           sink += lookup.gather("app", appCommands).length
-          sink += lookup.get(" exit_app ")?.length ?? 0
+          sink += lookup.get("exit_app")?.length ?? 0
         },
         cleanup() {
           consume(sink)
@@ -1603,7 +1603,7 @@ const scenarios: BenchmarkScenario[] = [
     async setup() {
       const resources = await createScenarioResources()
       const config: Record<string, BindingValue> = {
-        " show_palette ": "ctrl+p",
+        show_palette: "ctrl+p",
         exit_app: ["ctrl+c", "ctrl+d", "<leader>q"],
         save_file: { name: "s", ctrl: true },
         close_file: false,
@@ -1627,7 +1627,7 @@ const scenarios: BenchmarkScenario[] = [
             },
           })
           sink += lookup.gather("app", appCommands).length
-          sink += lookup.get(" exit_app ")?.length ?? 0
+          sink += lookup.get("exit_app")?.length ?? 0
         },
         cleanup() {
           consume(sink)
@@ -2111,8 +2111,8 @@ const scenarios: BenchmarkScenario[] = [
     },
   },
   {
-    name: "binding_lookup_duplicate_normalized_commands",
-    description: "Repeated binding lookup creation with many trimmed command overrides and disables",
+    name: "binding_lookup_exact_spaced_commands",
+    description: "Repeated binding lookup creation with exact spaced command names and disables",
     async setup() {
       const resources = await createScenarioResources()
       const config: Record<string, BindingValue> = Object.create(null)

@@ -323,14 +323,14 @@ The lookup exposes these views:
 | API                      | Description                                                                                              |
 | ------------------------ | -------------------------------------------------------------------------------------------------------- |
 | `bindings`               | All enabled bindings, preserving config order                                                            |
-| `get(command)`           | Bindings for one command, or `undefined` when the command is missing/disabled                            |
+| `get(command)`           | Bindings for one exact command name, or `undefined` when the command is missing/disabled                 |
 | `gather(name, commands)` | Builds and caches a named binding group on first use; later calls with the same name return the cache    |
 | `pick(name, commands)`   | Bindings from an existing gathered group in caller command order; missing groups or commands are skipped |
 | `omit(name, commands)`   | All gathered bindings except matching string-command bindings, preserving group order                    |
 | `invalidate(name?)`      | Clears one gathered group, or all gathered groups when `name` is omitted                                 |
 | `update(config?)`        | Rebuilds command lookups from new or current config and clears gathered groups                           |
 
-Use `bindingDefaults` to add app-level fields to every emitted binding without mutating the original config. Defaults are spread before the resolved binding, so explicit binding fields win. `gather()`, `pick()` and `omit()` use exact command names and do not trim. They are meant for hard-coded application command lists.
+Use `bindingDefaults` to add app-level fields to every emitted binding without mutating the original config. Defaults are spread before the resolved binding, so explicit binding fields win. Command names are exact and are not trimmed. `get()`, `gather()`, `pick()` and `omit()` return cached binding arrays directly when possible instead of defensive copies.
 
 Tokens such as `leader` are still registered through the normal keymap token APIs and referenced by parser syntax such as `<leader>`.
 

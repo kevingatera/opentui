@@ -68,12 +68,11 @@ function cloneKeyLike(key: KeyLike): KeyLike {
 }
 
 function normalizeCommand(command: string): string {
-  const trimmed = command.trim()
-  if (!trimmed) {
+  if (command.length === 0) {
     throw new Error("Invalid binding command: command cannot be empty")
   }
 
-  return trimmed
+  return command
 }
 
 function invalidBindingValue(command: string, index?: number): Error {
@@ -229,7 +228,7 @@ export function createBindingLookup<TTarget extends object = object, TEvent exte
       return normalized.bindings
     },
     get(command) {
-      return normalized.byCommand.get(command.trim())
+      return normalized.byCommand.get(command)
     },
     gather(name, commands) {
       const existing = gathered.get(name)
@@ -257,7 +256,7 @@ export function createBindingLookup<TTarget extends object = object, TEvent exte
     omit(name, commands) {
       const group = gathered.get(name)
       if (!group) return []
-      if (commands.length === 0) return group.bindings.slice()
+      if (commands.length === 0) return group.bindings
 
       if (commands.length === 1) {
         const omitted = commands[0]
