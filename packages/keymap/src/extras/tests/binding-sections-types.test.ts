@@ -7,12 +7,8 @@ type KeymapSections = Record<SectionName, Binding[]>
 
 const resolvedFromLiteral = resolveBindingSections(
   {
-    app: {
-      save: "s",
-    },
-    custom: {
-      run: "r",
-    },
+    "app.save": "s",
+    "custom.run": "r",
   },
   {
     sections: sectionNames,
@@ -25,8 +21,8 @@ const resolvedFromLiteral = resolveBindingSections(
 
 const sectionsFromLiteral: KeymapSections = resolvedFromLiteral.sections
 const customFromLiteral: Binding[] = resolvedFromLiteral.sections.custom
-const pickedFromLiteral: Binding[] = resolvedFromLiteral.pick("app", ["save"])
-const omittedFromLiteral: Binding[] = resolvedFromLiteral.omit("app", ["save"])
+const pickedFromLiteral: Binding[] = resolvedFromLiteral.pick("app", ["app.save"])
+const omittedFromLiteral: Binding[] = resolvedFromLiteral.omit("app", ["app.save"])
 
 if (sectionsFromLiteral.prompt.length !== 0) {
   throw new Error("Expected prompt section to be empty")

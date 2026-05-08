@@ -16,11 +16,14 @@ export type BindingSectionConfig<TTarget extends object = object, TEvent extends
   Record<string, BindingValue<TTarget, TEvent>>
 >
 
-export type BindingSectionsConfig<TTarget extends object = object, TEvent extends KeymapEvent = KeymapEvent> = Readonly<
-  Record<string, BindingSectionConfig<TTarget, TEvent>>
->
+export type BindingSectionsConfig<
+  TTarget extends object = object,
+  TEvent extends KeymapEvent = KeymapEvent,
+> = BindingSectionConfig<TTarget, TEvent>
 
 type LiteralStringKeys<T> = string extends Extract<keyof T, string> ? never : Extract<keyof T, string>
+type CommandSection<TCommand extends string> = TCommand extends `${infer TSection}.${string}` ? TSection : never
+type LiteralConfigSections<TConfig> = CommandSection<LiteralStringKeys<TConfig>>
 
 const hasOwn = Object.prototype.hasOwnProperty
 
@@ -70,21 +73,29 @@ function cloneKeyLike(key: KeyLike): KeyLike {
   return { ...key }
 }
 
-function invalidBindingValue(section: string, command: string, index?: number): Error {
-  const location = index === undefined ? `"${section}.${command}"` : `"${section}.${command}" at index ${index}`
+function invalidBindingValue(command: string, index?: number): Error {
+  const location = index === undefined ? `"${command}"` : `"${command}" at index ${index}`
   return new Error(
     `Invalid binding value for ${location}: expected false, a key, a binding object, or an array of keys/binding objects`,
   )
 }
 
+function getCommandSection(command: string): string {
+  const separatorIndex = command.indexOf(".")
+  if (separatorIndex <= 0 || separatorIndex === command.length - 1) {
+    throw new Error(`Invalid binding command "${command}": expected a dot-delimited command name with a section prefix`)
+  }
+
+  return command.slice(0, separatorIndex)
+}
+
 function resolveBindingItem<TTarget extends object, TEvent extends KeymapEvent>(
-  section: string,
   command: string,
   item: BindingSectionItem<TTarget, TEvent>,
   index?: number,
 ): Binding<TTarget, TEvent> {
   if (!isKeyLike(item)) {
-    throw invalidBindingValue(section, command, index)
+    throw invalidBindingValue(command, index)
   }
 
   if (typeof item === "string" || !("key" in item)) {
@@ -96,7 +107,7 @@ function resolveBindingItem<TTarget extends object, TEvent extends KeymapEvent>(
 
   const key = item.key
   if (!isKeyLike(key)) {
-    throw invalidBindingValue(section, command, index)
+    throw invalidBindingValue(command, index)
   }
 
   return {
@@ -124,14 +135,14 @@ function resolveBindingValue<TTarget extends object, TEvent extends KeymapEvent>
     const items = value as readonly BindingSectionItem<TTarget, TEvent>[]
     const bindings = new Array<Binding<TTarget, TEvent>>(items.length)
     for (let index = 0; index < items.length; index += 1) {
-      const binding = resolveBindingItem(section, command, items[index]!, index)
+      const binding = resolveBindingItem(command, items[index]!, index)
       bindings[index] = bindingDefaults ? withBindingDefaults(section, command, binding, bindingDefaults) : binding
     }
 
     return bindings
   }
 
-  const binding = resolveBindingItem(section, command, value as BindingSectionItem<TTarget, TEvent>)
+  const binding = resolveBindingItem(command, value as BindingSectionItem<TTarget, TEvent>)
   return [bindingDefaults ? withBindingDefaults(section, command, binding, bindingDefaults) : binding]
 }
 
@@ -154,7 +165,7 @@ export function resolveBindingSections<
 >(
   config: TConfig,
   options: ResolveBindingSectionsOptions<TSection, TTarget, TEvent> & { sections: readonly TSection[] },
-): ResolvedBindingSections<TTarget, TEvent, TSection | LiteralStringKeys<TConfig>>
+): ResolvedBindingSections<TTarget, TEvent, TSection | LiteralConfigSections<TConfig>>
 export function resolveBindingSections<TTarget extends object = object, TEvent extends KeymapEvent = KeymapEvent>(
   config: BindingSectionsConfig<TTarget, TEvent>,
   options?: ResolveBindingSectionsOptions<string, TTarget, TEvent>,
@@ -172,35 +183,31 @@ export function resolveBindingSections<TTarget extends object = object, TEvent e
     lookups.set(section, new Map())
   }
 
+  const dirtySections = new Set<string>()
+
   // Own-property loops avoid Object.entries allocations while still ignoring inherited config.
-  for (const section in config) {
-    if (!hasOwn.call(config, section)) {
+  for (const rawCommand in config) {
+    if (!hasOwn.call(config, rawCommand)) {
       continue
     }
 
-    const sectionConfig = config[section]
-    if (!isObject(sectionConfig)) {
-      throw new Error(`Invalid binding section "${section}": expected an object`)
-    }
+    const command = rawCommand.trim()
+    const section = getCommandSection(command)
+    const sectionLookup = lookups.get(section) ?? new Map<string, Binding<TTarget, TEvent>[]>()
+    const bindings = resolveBindingValue(section, command, config[rawCommand]!, bindingDefaults)
 
-    const sectionLookup = new Map<string, Binding<TTarget, TEvent>[]>()
-
-    for (const rawCommand in sectionConfig) {
-      if (!hasOwn.call(sectionConfig, rawCommand)) {
-        continue
-      }
-
-      const command = rawCommand.trim()
-      const bindings = resolveBindingValue(section, command, sectionConfig[rawCommand]!, bindingDefaults)
-
-      if (!bindings) {
-        sectionLookup.delete(command)
-        continue
-      }
-
+    if (!bindings) {
+      sectionLookup.delete(command)
+    } else {
       sectionLookup.set(command, bindings)
     }
 
+    lookups.set(section, sectionLookup)
+    dirtySections.add(section)
+  }
+
+  for (const section of dirtySections) {
+    const sectionLookup = lookups.get(section)!
     // Manual flattening avoids Array.flat allocations on large generated configs.
     let sectionBindingCount = 0
     for (const bindings of sectionLookup.values()) {

@@ -1568,24 +1568,18 @@ const scenarios: BenchmarkScenario[] = [
     description: "Repeated binding-section resolution for a small mixed app config",
     async setup() {
       const resources = await createScenarioResources()
-      const sections = ["app", "prompt_input", "dialog_select", "missing"] as const
-      const config: Record<string, Record<string, BindingValue>> = {
-        app: {
-          " command.palette.show ": "ctrl+p",
-          "app.exit": ["ctrl+c", "ctrl+d", "<leader>q"],
-          "file.save": { name: "s", ctrl: true },
-          "file.close": false,
-        },
-        prompt_input: {
-          "prompt.paste": { key: "ctrl+v", preventDefault: false, fallthrough: true },
-          "prompt.history.previous": "up",
-          "prompt.history.next": "down",
-        },
-        dialog_select: {
-          "dialog.confirm": "enter",
-          "dialog.cancel": ["escape", "ctrl+c"],
-          "dialog.ignore": [],
-        },
+      const sections = ["app", "prompt", "dialog", "missing"] as const
+      const config: Record<string, BindingValue> = {
+        " app.palette.show ": "ctrl+p",
+        "app.exit": ["ctrl+c", "ctrl+d", "<leader>q"],
+        "app.file.save": { name: "s", ctrl: true },
+        "app.file.close": false,
+        "prompt.paste": { key: "ctrl+v", preventDefault: false, fallthrough: true },
+        "prompt.history.previous": "up",
+        "prompt.history.next": "down",
+        "dialog.confirm": "enter",
+        "dialog.cancel": ["escape", "ctrl+c"],
+        "dialog.ignore": [],
       }
       let sink = 0
 
@@ -1608,24 +1602,18 @@ const scenarios: BenchmarkScenario[] = [
     description: "Repeated binding-section resolution with binding defaults for a small mixed app config",
     async setup() {
       const resources = await createScenarioResources()
-      const sections = ["app", "prompt_input", "dialog_select", "missing"] as const
-      const config: Record<string, Record<string, BindingValue>> = {
-        app: {
-          " command.palette.show ": "ctrl+p",
-          "app.exit": ["ctrl+c", "ctrl+d", "<leader>q"],
-          "file.save": { name: "s", ctrl: true },
-          "file.close": false,
-        },
-        prompt_input: {
-          "prompt.paste": { key: "ctrl+v", preventDefault: false, fallthrough: true },
-          "prompt.history.previous": "up",
-          "prompt.history.next": "down",
-        },
-        dialog_select: {
-          "dialog.confirm": "enter",
-          "dialog.cancel": ["escape", "ctrl+c"],
-          "dialog.ignore": [],
-        },
+      const sections = ["app", "prompt", "dialog", "missing"] as const
+      const config: Record<string, BindingValue> = {
+        " app.palette.show ": "ctrl+p",
+        "app.exit": ["ctrl+c", "ctrl+d", "<leader>q"],
+        "app.file.save": { name: "s", ctrl: true },
+        "app.file.close": false,
+        "prompt.paste": { key: "ctrl+v", preventDefault: false, fallthrough: true },
+        "prompt.history.previous": "up",
+        "prompt.history.next": "down",
+        "dialog.confirm": "enter",
+        "dialog.cancel": ["escape", "ctrl+c"],
+        "dialog.ignore": [],
       }
       let sink = 0
 
@@ -1655,19 +1643,15 @@ const scenarios: BenchmarkScenario[] = [
     async setup() {
       const resources = await createScenarioResources()
       const resolved = resolveBindingSections({
-        app: {
-          "command.palette.show": "ctrl+p",
-          "app.exit": ["ctrl+c", "ctrl+d", "<leader>q"],
-          "file.save": { name: "s", ctrl: true },
-          "file.close": false,
-        },
-        prompt_input: {
-          "prompt.paste": { key: "ctrl+v", preventDefault: false, fallthrough: true },
-          "prompt.history.previous": "up",
-          "prompt.history.next": "down",
-        },
+        "app.palette.show": "ctrl+p",
+        "app.exit": ["ctrl+c", "ctrl+d", "<leader>q"],
+        "app.file.save": { name: "s", ctrl: true },
+        "app.file.close": false,
+        "prompt.paste": { key: "ctrl+v", preventDefault: false, fallthrough: true },
+        "prompt.history.previous": "up",
+        "prompt.history.next": "down",
       })
-      const appCommands = ["app.exit", "missing", "command.palette.show"]
+      const appCommands = ["app.exit", "missing", "app.palette.show"]
       const promptCommands = ["prompt.history.next", "prompt.paste"]
       let sink = 0
 
@@ -1675,7 +1659,7 @@ const scenarios: BenchmarkScenario[] = [
         resources,
         runIteration() {
           sink += resolved.pick("app", appCommands).length
-          sink += resolved.pick("prompt_input", promptCommands).length
+          sink += resolved.pick("prompt", promptCommands).length
           sink += resolved.pick("missing", appCommands).length
         },
         cleanup() {
@@ -1691,17 +1675,13 @@ const scenarios: BenchmarkScenario[] = [
     async setup() {
       const resources = await createScenarioResources()
       const resolved = resolveBindingSections({
-        app: {
-          "command.palette.show": "ctrl+p",
-          "app.exit": ["ctrl+c", "ctrl+d", "<leader>q"],
-          "file.save": { name: "s", ctrl: true },
-          "file.close": false,
-        },
-        prompt_input: {
-          "prompt.paste": { key: "ctrl+v", preventDefault: false, fallthrough: true },
-          "prompt.history.previous": "up",
-          "prompt.history.next": "down",
-        },
+        "app.palette.show": "ctrl+p",
+        "app.exit": ["ctrl+c", "ctrl+d", "<leader>q"],
+        "app.file.save": { name: "s", ctrl: true },
+        "app.file.close": false,
+        "prompt.paste": { key: "ctrl+v", preventDefault: false, fallthrough: true },
+        "prompt.history.previous": "up",
+        "prompt.history.next": "down",
       })
       const appCommands = ["app.exit", "missing"]
       const promptCommands = ["prompt.history.next"]
@@ -1711,7 +1691,7 @@ const scenarios: BenchmarkScenario[] = [
         resources,
         runIteration() {
           sink += resolved.omit("app", appCommands).length
-          sink += resolved.omit("prompt_input", promptCommands).length
+          sink += resolved.omit("prompt", promptCommands).length
           sink += resolved.omit("missing", appCommands).length
         },
         cleanup() {
@@ -1726,33 +1706,32 @@ const scenarios: BenchmarkScenario[] = [
     description: "Repeated binding-section resolution for many sections and mixed binding value shapes",
     async setup() {
       const resources = await createScenarioResources()
-      const config: Record<string, Record<string, BindingValue>> = Object.create(null)
+      const config: Record<string, BindingValue> = Object.create(null)
       const sections = Array.from({ length: 40 }, (_, index) => `section-${index}`)
 
       for (let sectionIndex = 0; sectionIndex < 32; sectionIndex += 1) {
-        const section: Record<string, BindingValue> = Object.create(null)
-        config[`section-${sectionIndex}`] = section
+        const section = `section-${sectionIndex}`
 
         for (let commandIndex = 0; commandIndex < 64; commandIndex += 1) {
-          const command = `command-${commandIndex}`
+          const command = `${section}.command-${commandIndex}`
           switch (commandIndex % 6) {
             case 0:
-              section[command] = false
+              config[command] = false
               break
             case 1:
-              section[command] = []
+              config[command] = []
               break
             case 2:
-              section[command] = createKey(commandIndex)
+              config[command] = createKey(commandIndex)
               break
             case 3:
-              section[command] = [createKey(commandIndex), `ctrl+${createKey(commandIndex + 1)}`, "none"]
+              config[command] = [createKey(commandIndex), `ctrl+${createKey(commandIndex + 1)}`, "none"]
               break
             case 4:
-              section[command] = { key: { name: createKey(commandIndex), ctrl: true }, preventDefault: false }
+              config[command] = { key: { name: createKey(commandIndex), ctrl: true }, preventDefault: false }
               break
             default:
-              section[command] = "none"
+              config[command] = "none"
               break
           }
         }
@@ -1765,7 +1744,7 @@ const scenarios: BenchmarkScenario[] = [
         runIteration() {
           const resolved = resolveBindingSections(config, { sections })
           sink += resolved.sections["section-0"]?.length ?? 0
-          sink += resolved.get("section-3", "command-4")?.length ?? 0
+          sink += resolved.get("section-3", "section-3.command-4")?.length ?? 0
         },
         cleanup() {
           consume(sink)
@@ -1780,33 +1759,32 @@ const scenarios: BenchmarkScenario[] = [
       "Repeated binding-section resolution with binding defaults for many sections and mixed binding value shapes",
     async setup() {
       const resources = await createScenarioResources()
-      const config: Record<string, Record<string, BindingValue>> = Object.create(null)
+      const config: Record<string, BindingValue> = Object.create(null)
       const sections = Array.from({ length: 40 }, (_, index) => `section-${index}`)
 
       for (let sectionIndex = 0; sectionIndex < 32; sectionIndex += 1) {
-        const section: Record<string, BindingValue> = Object.create(null)
-        config[`section-${sectionIndex}`] = section
+        const section = `section-${sectionIndex}`
 
         for (let commandIndex = 0; commandIndex < 64; commandIndex += 1) {
-          const command = `command-${commandIndex}`
+          const command = `${section}.command-${commandIndex}`
           switch (commandIndex % 6) {
             case 0:
-              section[command] = false
+              config[command] = false
               break
             case 1:
-              section[command] = []
+              config[command] = []
               break
             case 2:
-              section[command] = createKey(commandIndex)
+              config[command] = createKey(commandIndex)
               break
             case 3:
-              section[command] = [createKey(commandIndex), `ctrl+${createKey(commandIndex + 1)}`, "none"]
+              config[command] = [createKey(commandIndex), `ctrl+${createKey(commandIndex + 1)}`, "none"]
               break
             case 4:
-              section[command] = { key: { name: createKey(commandIndex), ctrl: true }, preventDefault: false }
+              config[command] = { key: { name: createKey(commandIndex), ctrl: true }, preventDefault: false }
               break
             default:
-              section[command] = "none"
+              config[command] = "none"
               break
           }
         }
@@ -1825,7 +1803,7 @@ const scenarios: BenchmarkScenario[] = [
             },
           })
           sink += resolved.sections["section-0"]?.length ?? 0
-          sink += resolved.get("section-3", "command-4")?.length ?? 0
+          sink += resolved.get("section-3", "section-3.command-4")?.length ?? 0
         },
         cleanup() {
           consume(sink)
@@ -1839,36 +1817,34 @@ const scenarios: BenchmarkScenario[] = [
     description: "Repeated binding-section command selection for many commands and binding value shapes",
     async setup() {
       const resources = await createScenarioResources()
-      const config: Record<string, Record<string, BindingValue>> = Object.create(null)
-      const section: Record<string, BindingValue> = Object.create(null)
-      config.app = section
+      const config: Record<string, BindingValue> = Object.create(null)
 
       for (let commandIndex = 0; commandIndex < 256; commandIndex += 1) {
-        const command = `command-${commandIndex}`
+        const command = `app.command-${commandIndex}`
         switch (commandIndex % 6) {
           case 0:
-            section[command] = false
+            config[command] = false
             break
           case 1:
-            section[command] = []
+            config[command] = []
             break
           case 2:
-            section[command] = createKey(commandIndex)
+            config[command] = createKey(commandIndex)
             break
           case 3:
-            section[command] = [createKey(commandIndex), `ctrl+${createKey(commandIndex + 1)}`, "none"]
+            config[command] = [createKey(commandIndex), `ctrl+${createKey(commandIndex + 1)}`, "none"]
             break
           case 4:
-            section[command] = { key: { name: createKey(commandIndex), ctrl: true }, preventDefault: false }
+            config[command] = { key: { name: createKey(commandIndex), ctrl: true }, preventDefault: false }
             break
           default:
-            section[command] = "none"
+            config[command] = "none"
             break
         }
       }
 
       const resolved = resolveBindingSections(config)
-      const commands = Array.from({ length: 96 }, (_, index) => `command-${(index * 5) % 256}`)
+      const commands = Array.from({ length: 96 }, (_, index) => `app.command-${(index * 5) % 256}`)
       let sink = 0
 
       return {
@@ -1889,36 +1865,34 @@ const scenarios: BenchmarkScenario[] = [
     description: "Repeated binding-section command exclusion for many commands and binding value shapes",
     async setup() {
       const resources = await createScenarioResources()
-      const config: Record<string, Record<string, BindingValue>> = Object.create(null)
-      const section: Record<string, BindingValue> = Object.create(null)
-      config.app = section
+      const config: Record<string, BindingValue> = Object.create(null)
 
       for (let commandIndex = 0; commandIndex < 256; commandIndex += 1) {
-        const command = `command-${commandIndex}`
+        const command = `app.command-${commandIndex}`
         switch (commandIndex % 6) {
           case 0:
-            section[command] = false
+            config[command] = false
             break
           case 1:
-            section[command] = []
+            config[command] = []
             break
           case 2:
-            section[command] = createKey(commandIndex)
+            config[command] = createKey(commandIndex)
             break
           case 3:
-            section[command] = [createKey(commandIndex), `ctrl+${createKey(commandIndex + 1)}`, "none"]
+            config[command] = [createKey(commandIndex), `ctrl+${createKey(commandIndex + 1)}`, "none"]
             break
           case 4:
-            section[command] = { key: { name: createKey(commandIndex), ctrl: true }, preventDefault: false }
+            config[command] = { key: { name: createKey(commandIndex), ctrl: true }, preventDefault: false }
             break
           default:
-            section[command] = "none"
+            config[command] = "none"
             break
         }
       }
 
       const resolved = resolveBindingSections(config)
-      const commands = Array.from({ length: 96 }, (_, index) => `command-${(index * 5) % 256}`)
+      const commands = Array.from({ length: 96 }, (_, index) => `app.command-${(index * 5) % 256}`)
       let sink = 0
 
       return {
@@ -1939,14 +1913,13 @@ const scenarios: BenchmarkScenario[] = [
     description: "Repeated binding-section resolution with many trimmed command overrides and disables",
     async setup() {
       const resources = await createScenarioResources()
-      const section: Record<string, BindingValue> = Object.create(null)
+      const config: Record<string, BindingValue> = Object.create(null)
 
       for (let index = 0; index < 512; index += 1) {
-        section[` command-${index} `] = createKey(index)
-        section[`command-${index}`] = index % 4 === 0 ? false : [createKey(index + 1), { key: createKey(index + 2) }]
+        config[` app.command-${index} `] = createKey(index)
+        config[`app.command-${index}`] = index % 4 === 0 ? false : [createKey(index + 1), { key: createKey(index + 2) }]
       }
 
-      const config = { app: section }
       let sink = 0
 
       return {
@@ -1954,7 +1927,7 @@ const scenarios: BenchmarkScenario[] = [
         runIteration() {
           const resolved = resolveBindingSections(config)
           sink += resolved.sections.app.length
-          sink += resolved.get("app", " command-7 ")?.length ?? 0
+          sink += resolved.get("app", " app.command-7 ")?.length ?? 0
         },
         cleanup() {
           consume(sink)
