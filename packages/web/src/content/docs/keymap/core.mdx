@@ -291,6 +291,8 @@ formatCommandBindings(keymap.getCommandBindings({ visibility: "registered", comm
 
 `createBindingLookup()` is an opinionated config-to-keymap transformation for flat command config. Keys are command names and become `binding.cmd`. Values can be `false`, `"none"`, a key, a full binding object, or arrays of keys/binding objects. `false`, `"none"`, and empty arrays emit no bindings.
 
+It deliberately keeps command identity separate from UI/layer grouping. Which bindings a component needs is a use-site concern, not part of the command name, so components gather named binding groups from plain command names when registering layers.
+
 ```ts
 import { createBindingLookup } from "@opentui/keymap/extras"
 
