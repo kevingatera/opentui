@@ -182,6 +182,18 @@ function toNumber(value: number | bigint): number {
   return typeof value === "bigint" ? Number(value) : value
 }
 
+function toSafeByteCount(value: number | bigint, label: string): number {
+  if (typeof value !== "bigint") {
+    return value
+  }
+
+  if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new RangeError(`${label} exceeds JavaScript safe integer range`)
+  }
+
+  return Number(value)
+}
+
 function ptrOrNull(value: ArrayBufferView): Pointer | null {
   return value.byteLength === 0 ? null : ptr(value)
 }
@@ -1162,7 +1174,7 @@ function getOpenTUILib(libPath?: string) {
 
     getArenaAllocatedBytes: {
       args: [],
-      returns: "usize",
+      returns: "u64",
     },
     getBuildOptions: {
       args: ["ptr"],
@@ -2185,10 +2197,8 @@ class FFIRenderLib implements RenderLib {
     }
 
     const logCallback = this.opentui.createCallback(
-      (level: number, msgPtr: Pointer, msgLenBigInt: bigint | number) => {
+      (level: number, msgPtr: Pointer, msgLen: number) => {
         try {
-          const msgLen = typeof msgLenBigInt === "bigint" ? Number(msgLenBigInt) : msgLenBigInt
-
           if (msgLen === 0 || !msgPtr) {
             return
           }
@@ -2218,7 +2228,7 @@ class FFIRenderLib implements RenderLib {
         }
       },
       {
-        args: ["u8", "ptr", "usize"],
+        args: ["u8", "ptr", "u32"],
         returns: "void",
       },
     )
@@ -2242,11 +2252,8 @@ class FFIRenderLib implements RenderLib {
     }
 
     const eventCallback = this.opentui.createCallback(
-      (namePtr: Pointer, nameLenBigInt: bigint | number, dataPtr: Pointer, dataLenBigInt: bigint | number) => {
+      (namePtr: Pointer, nameLen: number, dataPtr: Pointer, dataLen: number) => {
         try {
-          const nameLen = typeof nameLenBigInt === "bigint" ? Number(nameLenBigInt) : nameLenBigInt
-          const dataLen = typeof dataLenBigInt === "bigint" ? Number(dataLenBigInt) : dataLenBigInt
-
           if (nameLen === 0 || !namePtr) {
             return
           }
@@ -2266,7 +2273,7 @@ class FFIRenderLib implements RenderLib {
         }
       },
       {
-        args: ["ptr", "usize", "ptr", "usize"],
+        args: ["ptr", "u32", "ptr", "u32"],
         returns: "void",
       },
     )
@@ -2713,12 +2720,12 @@ class FFIRenderLib implements RenderLib {
 
     this.opentui.symbols.bufferDrawGrid(
       buffer,
-      borderChars,
+      ptr(borderChars),
       rgbaPtr(borderFg),
       rgbaPtr(borderBg),
-      columnOffsets,
+      ptr(columnOffsets),
       columnCount,
-      rowOffsets,
+      ptr(rowOffsets),
       rowCount,
       ptr(optionsBuffer),
     )
@@ -3107,8 +3114,8 @@ class FFIRenderLib implements RenderLib {
   }
 
   public textBufferSetDefaultAttributes(buffer: Pointer, attributes: number | null): void {
-    const attrValue = attributes === null ? null : new Uint8Array([attributes])
-    this.opentui.symbols.textBufferSetDefaultAttributes(buffer, attrValue)
+    const attrValue = attributes === null ? null : new Uint32Array([attributes])
+    this.opentui.symbols.textBufferSetDefaultAttributes(buffer, attrValue ? ptr(attrValue) : null)
   }
 
   public textBufferResetDefaults(buffer: Pointer): void {
@@ -3520,7 +3527,7 @@ class FFIRenderLib implements RenderLib {
 
   public getArenaAllocatedBytes(): number {
     const result = this.opentui.symbols.getArenaAllocatedBytes()
-    return typeof result === "bigint" ? Number(result) : result
+    return toSafeByteCount(result, "Arena allocated bytes")
   }
 
   public getBuildOptions(): BuildOptions {
@@ -4134,8 +4141,8 @@ class FFIRenderLib implements RenderLib {
     const textBytes = this.encoder.encode(text)
     const widthMethodCode = widthMethod === "wcwidth" ? 0 : 1
 
-    const outPtrBuffer = new ArrayBuffer(8) // Pointer size
-    const outLenBuffer = new ArrayBuffer(8) // usize
+    const outPtrBuffer = new ArrayBuffer(8) // Pointer-sized out slot
+    const outLenBuffer = new ArrayBuffer(8) // Native length out slot
 
     const success = this.opentui.symbols.encodeUnicode(
       ptrOrNull(textBytes),
