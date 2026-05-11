@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer"
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { BoxRenderable, KeyEvent, type Renderable, type TerminalCapabilities } from "@opentui/core"
-import { createTestRenderer, type MockInput, type TestRenderer } from "@opentui/core/testing"
+import { BoxRenderable, KeyEvent, type Renderable } from "@opentui/core"
+import { createTestRenderer, setRendererCapabilities, type MockInput, type TestRenderer } from "@opentui/core/testing"
 import * as addons from "../addons/index.js"
 import {
   stringifyKeySequence,
@@ -22,32 +22,6 @@ import { createKeymapTestHelpers, type OpenTuiKeymap } from "./keymap.test-suppo
 let renderer: TestRenderer
 let mockInput: MockInput
 const diagnostics = createDiagnosticHarness()
-
-function terminalCapabilities(overrides: Partial<TerminalCapabilities> = {}): TerminalCapabilities {
-  return {
-    kitty_keyboard: false,
-    kitty_graphics: false,
-    rgb: false,
-    ansi256: false,
-    unicode: "unicode",
-    sgr_pixels: false,
-    color_scheme_updates: false,
-    explicit_width: false,
-    scaled_text: false,
-    sixel: false,
-    focus_tracking: false,
-    sync: false,
-    bracketed_paste: false,
-    hyperlinks: false,
-    osc52: false,
-    notifications: false,
-    explicit_cursor_positioning: false,
-    in_tmux: false,
-    terminal: { name: "", version: "", from_xtversion: false },
-    ...overrides,
-  }
-}
-
 const {
   createFocusableBox,
   getActiveKey,
@@ -107,9 +81,7 @@ describe("keymap: core and commands", () => {
   })
 
   test("OpenTUI host marks super and hyper supported when terminal capabilities report Kitty keyboard", () => {
-    ;(renderer as unknown as { _capabilities: TerminalCapabilities })._capabilities = terminalCapabilities({
-      kitty_keyboard: true,
-    })
+    setRendererCapabilities(renderer, { kitty_keyboard: true })
     const keymap = createBareKeymap(renderer)
 
     expect(keymap.getHostMetadata().modifiers.super).toBe("supported")
