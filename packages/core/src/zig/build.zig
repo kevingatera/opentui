@@ -31,6 +31,20 @@ const DEFAULT_MACOS_SDK_PATH = "/Library/Developer/CommandLineTools/SDKs/MacOSX.
 const LIB_NAME = "opentui";
 const ROOT_SOURCE_FILE = "lib.zig";
 
+fn nativeExecutableTarget(b: *std.Build) std.Build.ResolvedTarget {
+    if (builtin.os.tag != .linux) {
+        return b.resolveTargetQuery(.{});
+    }
+
+    // Zig 0.15.2's ELF linker currently fails on newer glibc startup objects
+    // that ship .sframe relocations. Keep shipped libraries on linux-gnu, but
+    // use musl for local native executables so test/debug/bench still work.
+    var query = b.graph.host.query;
+    query.abi = .musl;
+    query.glibc_version = null;
+    return b.resolveTargetQuery(query);
+}
+
 fn pathExists(path: []const u8) bool {
     if (path.len == 0) return false;
     std.fs.cwd().access(path, .{}) catch return false;
@@ -227,7 +241,7 @@ pub fn build(b: *std.Build) void {
 
     // Test step (native only)
     const test_step = b.step("test", "Run unit tests");
-    const native_target = b.resolveTargetQuery(.{});
+    const native_target = nativeExecutableTarget(b);
     const test_mod = b.createModule(.{
         .root_source_file = b.path("test.zig"),
         .target = native_target,
