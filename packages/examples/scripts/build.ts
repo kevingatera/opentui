@@ -82,7 +82,13 @@ function getNativePackageDir(platform: string, arch: string): string {
 
 function getHostBuildTarget(): BuildTarget {
   const hostPlatform =
-    process.platform === "win32" ? "windows" : process.platform === "darwin" ? "darwin" : process.platform === "linux" ? "linux" : null
+    process.platform === "win32"
+      ? "windows"
+      : process.platform === "darwin"
+        ? "darwin"
+        : process.platform === "linux"
+          ? "linux"
+          : null
 
   if (!hostPlatform || (process.arch !== "x64" && process.arch !== "arm64")) {
     throw new Error(`Unsupported host platform for examples build: ${process.platform}-${process.arch}`)
