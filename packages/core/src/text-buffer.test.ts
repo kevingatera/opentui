@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { TextBuffer } from "./text-buffer.js"
+import { resolveRenderLib } from "./zig.js"
 import { StyledText, stringToStyledText } from "./lib/styled-text.js"
 import { RGBA } from "./lib/RGBA.js"
 import { SyntaxStyle } from "./syntax-style.js"
@@ -360,6 +361,18 @@ describe("TextBuffer", () => {
       buffer.setText("After reset")
       expect(buffer.length).toBe(11)
       expect(buffer.getPlainText()).toBe("After reset")
+    })
+
+    it("recovers if the native memory registry entry was cleared", () => {
+      buffer.setText("Hello World")
+
+      resolveRenderLib().textBufferClearMemRegistry(buffer.ptr)
+
+      buffer.setText("Recovered")
+
+      expect(buffer.length).toBe(9)
+      expect(buffer.byteSize).toBe(9)
+      expect(buffer.getPlainText()).toBe("Recovered")
     })
   })
 
