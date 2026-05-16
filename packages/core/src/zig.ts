@@ -8,8 +8,11 @@ import {
   type Pointer,
 } from "./platform/ffi.js"
 import { writeFile } from "./platform/runtime.js"
-import { existsSync, writeFileSync } from "fs"
+import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "fs"
 import { EventEmitter } from "events"
+import { tmpdir } from "node:os"
+import path from "node:path"
+import { isMainThread, threadId } from "node:worker_threads"
 import {
   type CursorStyle,
   type CursorStyleOptions,
@@ -64,6 +67,7 @@ import { isBunfsPath } from "./lib/bunfs.js"
 
 const nativePackage = await import(`@opentui/core-${process.platform}-${process.arch}`)
 let targetLibPath = nativePackage.default
+let workerLibPath: string | undefined
 
 if (isBunfsPath(targetLibPath)) {
   targetLibPath = targetLibPath.replace("../", "")
@@ -135,7 +139,7 @@ function optionalRgbaPtr(value: RGBA | null | undefined): Pointer | null {
 }
 
 function getOpenTUILib(libPath?: string) {
-  const resolvedLibPath = libPath || targetLibPath
+  const resolvedLibPath = libPath || resolveTargetLibPath()
 
   const rawSymbols = dlopen(resolvedLibPath, {
     // Logging
@@ -1304,6 +1308,20 @@ function getOpenTUILib(libPath?: string) {
   }
 
   return rawSymbols
+}
+
+function resolveTargetLibPath() {
+  if (isMainThread) return targetLibPath
+  if (workerLibPath) return workerLibPath
+
+  mkdirSync(path.join(tmpdir(), "opentui-native-workers"), { recursive: true })
+  workerLibPath = path.join(
+    tmpdir(),
+    "opentui-native-workers",
+    `${path.basename(targetLibPath, path.extname(targetLibPath))}-${process.pid}-${threadId}${path.extname(targetLibPath)}`,
+  )
+  copyFileSync(targetLibPath, workerLibPath)
+  return workerLibPath
 }
 
 function convertToDebugSymbols<T extends Record<string, any>>(symbols: T): T {
