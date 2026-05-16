@@ -138,15 +138,6 @@ pub const EditBuffer = struct {
         pool: *gp.GraphemePool,
         link_pool: *link.LinkPool,
         width_method: utf8.WidthMethod,
-    ) !*EditBuffer {
-        return initWithEventSink(allocator, pool, link_pool, width_method, null);
-    }
-
-    pub fn initWithEventSink(
-        allocator: Allocator,
-        pool: *gp.GraphemePool,
-        link_pool: *link.LinkPool,
-        width_method: utf8.WidthMethod,
         event_sink: ?*event_bus.EventSink,
     ) !*EditBuffer {
         const self = try allocator.create(EditBuffer);

@@ -12,11 +12,6 @@ pub fn createEventSink(allocator: std.mem.Allocator, callback: EventCallback) !*
     return sink;
 }
 
-pub fn destroyEventSink(allocator: std.mem.Allocator, sink: *EventSink) void {
-    sink.callback = null;
-    allocator.destroy(sink);
-}
-
 pub fn emit(sink: ?*EventSink, name: []const u8, data: []const u8) void {
     if (sink) |event_sink| {
         if (event_sink.callback) |callback| callback(name.ptr, name.len, data.ptr, data.len);

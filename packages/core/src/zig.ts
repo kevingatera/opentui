@@ -148,10 +148,6 @@ function getOpenTUILib(libPath?: string) {
       args: ["ptr"],
       returns: "ptr",
     },
-    destroyEventSink: {
-      args: ["ptr"],
-      returns: "void",
-    },
     // Renderer management
     createRenderer: {
       args: ["u32", "u32", "bool", "bool"],
@@ -2090,7 +2086,6 @@ class FFIRenderLib implements RenderLib {
   private logCallbackWrapper: FFICallbackInstance | null = null
   private eventCallbackWrapper: FFICallbackInstance | null = null
   private eventSinkPtr: Pointer | null = null
-  private eventSinkCleanupRegistered = false
   private _nativeEvents: EventEmitter = new EventEmitter()
   private _anyEventHandlers: Array<(name: string, data: ArrayBuffer) => void> = []
   private nativeSpanFeedCallbackWrapper: FFICallbackInstance | null = null
@@ -2174,17 +2169,10 @@ class FFIRenderLib implements RenderLib {
             return
           }
 
-          const nameBytes = new Uint8Array(toArrayBuffer(namePtr, 0, nameLen)).slice()
-          const eventDataBytes =
-            dataLen > 0 && dataPtr ? new Uint8Array(toArrayBuffer(dataPtr, 0, dataLen)).slice() : new Uint8Array()
+          const eventName = this.decoder.decode(toArrayBuffer(namePtr, 0, nameLen))
+          const eventData = dataLen > 0 && dataPtr ? toArrayBuffer(dataPtr, 0, dataLen).slice(0) : new ArrayBuffer(0)
 
           queueMicrotask(() => {
-            const eventName = this.decoder.decode(nameBytes)
-            const eventData = eventDataBytes.buffer.slice(
-              eventDataBytes.byteOffset,
-              eventDataBytes.byteOffset + eventDataBytes.byteLength,
-            )
-
             this._nativeEvents.emit(eventName, eventData)
 
             for (const handler of this._anyEventHandlers) {
@@ -2213,24 +2201,6 @@ class FFIRenderLib implements RenderLib {
       this.eventCallbackWrapper = null
       throw new Error("Failed to create native event sink")
     }
-
-    this.registerEventSinkCleanup()
-  }
-
-  private registerEventSinkCleanup() {
-    if (this.eventSinkCleanupRegistered) return
-    this.eventSinkCleanupRegistered = true
-    process.once("exit", () => this.destroyEventSink())
-  }
-
-  private destroyEventSink() {
-    if (this.eventSinkPtr) {
-      this.opentui.symbols.destroyEventSink(this.eventSinkPtr)
-      this.eventSinkPtr = null
-    }
-
-    this.eventCallbackWrapper?.close()
-    this.eventCallbackWrapper = null
   }
 
   private ensureNativeSpanFeedCallback(): FFICallbackInstance {
