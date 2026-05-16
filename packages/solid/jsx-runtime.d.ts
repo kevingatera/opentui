@@ -1,4 +1,3 @@
-import { Renderable } from "@opentui/core"
 import type {
   AsciiFontProps,
   BoxProps,
@@ -15,9 +14,16 @@ import type {
   TextareaProps,
   TextProps,
 } from "./src/types/elements.js"
-import type { DomNode } from "./dist"
+import type { DomNode } from "./src/reconciler.js"
 
-declare namespace JSX {
+type JsxComponent = (props: Record<string, unknown>) => unknown
+
+export declare function jsx(type: string | JsxComponent, props?: Record<string, unknown> | null): JSX.Element
+export declare const jsxs: typeof jsx
+export declare function jsxDEV(type: string | JsxComponent, props?: Record<string, unknown> | null): JSX.Element
+export declare function Fragment(props: { children?: JSX.Element }): JSX.Element
+
+export declare namespace JSX {
   // Replace Node with Renderable
   type Element = DomNode | ArrayElement | string | number | boolean | null | undefined
 
