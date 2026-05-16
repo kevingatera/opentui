@@ -58,6 +58,10 @@ export fn createEventSink(callback: ?event_bus.EventCallback) ?*event_bus.EventS
     return event_bus.createEventSink(globalAllocator, callback orelse return null) catch null;
 }
 
+export fn destroyEventSink(sink: *event_bus.EventSink) void {
+    event_bus.destroyEventSink(globalAllocator, sink);
+}
+
 var gpa: std.heap.GeneralPurposeAllocator(.{
     .enable_memory_limit = build_options.gpa_safe_stats,
     .safety = build_options.gpa_safe_stats,

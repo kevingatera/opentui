@@ -148,6 +148,10 @@ function getOpenTUILib(libPath?: string) {
       args: ["ptr"],
       returns: "ptr",
     },
+    destroyEventSink: {
+      args: ["ptr"],
+      returns: "void",
+    },
     // Renderer management
     createRenderer: {
       args: ["u32", "u32", "bool", "bool"],
