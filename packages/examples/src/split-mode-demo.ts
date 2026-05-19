@@ -8,6 +8,7 @@ import {
   type KeyEvent,
   type ScrollbackRenderContext,
   type ScrollbackSnapshot,
+  type SplitFooterResizeResetEvent,
   type ScrollbackWriter,
   type ThemeMode,
 } from "@opentui/core"
@@ -21,6 +22,7 @@ const DEFAULT_STREAM_INTERVAL = 1600
 const MIN_STREAM_INTERVAL = 180
 const MAX_STREAM_INTERVAL = 2000
 const STREAM_INTERVAL_STEP = 80
+const SPLIT_RESIZE_CONFIRM_DELAY_MS = 250
 const CTRL_R_HOLD_REPEAT_MS = 45
 const CTRL_R_HOLD_DURATION_MS = 1400
 const CTRL_R_HOLD_BOOT_DELAY_MS = 600
@@ -449,8 +451,13 @@ class SplitFooterDemo {
   private assistantTyping = false
   private statusMessage = "Ready"
   private destroyed = false
+  private readonly previousDebounceDelay: number
+  private resizeResetBurstCount = 0
 
   constructor(private renderer: CliRenderer) {
+    this.previousDebounceDelay = this.renderer.debounceDelay
+    this.renderer.debounceDelay = SPLIT_RESIZE_CONFIRM_DELAY_MS
+
     this.palette = resolveDemoPalette(this.renderer.themeMode)
     this.desiredFooterHeight = this.clampFooterHeight(this.desiredFooterHeight)
 
@@ -590,6 +597,7 @@ class SplitFooterDemo {
     this.composer.on("line-info-change", this.handleDraftChanged)
     this.renderer.keyInput.on("keypress", this.handleKeyPress)
     this.renderer.on("resize", this.handleResize)
+    this.renderer.on(CliRenderEvents.SPLIT_FOOTER_RESIZE_RESET, this.handleSplitFooterResizeReset)
     this.renderer.on(CliRenderEvents.THEME_MODE, this.handleThemeMode)
     this.renderer.on(CliRenderEvents.DESTROY, this.handleRendererDestroy)
 
@@ -656,7 +664,9 @@ class SplitFooterDemo {
 
     this.modeText.content = modeLabel
     this.statusText.content = `msg ${this.messageCount} draft ${this.draftLength} ${typingLabel} | ${this.statusMessage}`
-    this.metaText.content = `${mouseLabel} stream:${streamLabel} commits:${this.commitCount} lines:${this.streamCount}`
+    this.metaText.content =
+      `${mouseLabel} stream:${streamLabel} resize:${this.renderer.debounceDelay}ms bursts:${this.resizeResetBurstCount} ` +
+      `commits:${this.commitCount} lines:${this.streamCount}`
     this.controlsText.content =
       "Ctrl+Enter send · Enter newline · Shift+U mouse · Ctrl+S stream · Ctrl+0 mode · Ctrl+R hold-demo · /help"
   }
@@ -776,6 +786,11 @@ class SplitFooterDemo {
     )
 
     this.publishMessage("system", "Stream mode rotates through a short ordered setlist.", false)
+    this.publishMessage(
+      "system",
+      `Split resize reset policy is active. Debounce ${this.renderer.debounceDelay}ms. Drag resize and watch for reset start/update/settle messages.`,
+      false,
+    )
   }
 
   private syncStreamLoop(): void {
@@ -1211,6 +1226,49 @@ class SplitFooterDemo {
     this.refreshStatus(`theme ${mode}`)
   }
 
+  private formatResizeResetEvent(event: SplitFooterResizeResetEvent): string {
+    switch (event.phase) {
+      case "burst-start":
+        return [
+          `resize-reset start -> target ${event.targetTerminalWidth}x${event.targetTerminalHeight}`,
+          `clear row ${event.footerTopLine ?? 1}`,
+          `scroll ${event.upperHeight ?? 0}`,
+          `debounce ${event.debounceDelay}ms`,
+          event.terminalCleared === false ? "clear skipped" : "cleared",
+        ].join(" | ")
+      case "burst-update":
+        return [
+          `resize-reset update -> latest ${event.targetTerminalWidth}x${event.targetTerminalHeight}`,
+          `delta ${event.verticalDelta ?? 0}`,
+          `scroll ${event.scrollLines ?? 0}`,
+          `debounce ${event.debounceDelay}ms`,
+        ].join(" | ")
+      case "settle":
+        return [
+          `resize-reset settle -> applied ${event.targetTerminalWidth}x${event.targetTerminalHeight}`,
+          `render ${event.renderWidth}x${event.renderHeight}`,
+          `offset ${event.renderOffset}`,
+          `repaint ${event.forcedFullRepaint ? "forced" : "normal"}`,
+        ].join(" | ")
+      case "cancel":
+        return `resize-reset cancel -> target ${event.targetTerminalWidth}x${event.targetTerminalHeight} | reason ${event.reason ?? "unknown"}`
+    }
+  }
+
+  private handleSplitFooterResizeReset = (event: SplitFooterResizeResetEvent): void => {
+    if (this.destroyed) {
+      return
+    }
+
+    if (event.phase === "burst-start") {
+      this.resizeResetBurstCount += 1
+    }
+
+    const message = this.formatResizeResetEvent(event)
+    this.publishMessage("system", message, false)
+    this.refreshStatus(message)
+  }
+
   private handleResize = (): void => {
     this.desiredFooterHeight = this.clampFooterHeight(this.desiredFooterHeight)
     if (this.mode === "split-footer" && this.renderer.footerHeight !== this.desiredFooterHeight) {
@@ -1253,12 +1311,14 @@ class SplitFooterDemo {
     this.composer.onSubmit = undefined
     this.renderer.keyInput.off("keypress", this.handleKeyPress)
     this.renderer.off("resize", this.handleResize)
+    this.renderer.off(CliRenderEvents.SPLIT_FOOTER_RESIZE_RESET, this.handleSplitFooterResizeReset)
     this.renderer.off(CliRenderEvents.THEME_MODE, this.handleThemeMode)
     this.renderer.off(CliRenderEvents.DESTROY, this.handleRendererDestroy)
 
     this.renderer.root.remove(this.shell.id)
 
     if (!this.renderer.isDestroyed) {
+      this.renderer.debounceDelay = this.previousDebounceDelay
       this.renderer.externalOutputMode = "passthrough"
       this.renderer.screenMode = "main-screen"
     }
@@ -1287,6 +1347,7 @@ export function destroy(_rendererInstance: CliRenderer): void {
 if (import.meta.main) {
   const renderer = await createCliRenderer({
     targetFps: 30,
+    debounceDelay: SPLIT_RESIZE_CONFIRM_DELAY_MS,
     exitOnCtrlC: true,
     useMouse: true,
     screenMode: "split-footer",

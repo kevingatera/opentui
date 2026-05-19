@@ -22,6 +22,7 @@ const DEFAULT_INTERVAL_MS = 180
 const MIN_INTERVAL_MS = 60
 const MAX_INTERVAL_MS = 1000
 const INTERVAL_STEP_MS = 40
+const SPLIT_RESIZE_CONFIRM_DELAY_MS = 250
 
 type StreamKind = "text" | "code" | "markdown"
 
@@ -190,8 +191,12 @@ class SplitFooterStreamingDemo {
   private lastStatus = "Ready. Press R to replay the current sample."
   private pendingReplayReason: string | null = null
   private wrote = false
+  private readonly previousDebounceDelay: number
 
   constructor(private renderer: CliRenderer) {
+    this.previousDebounceDelay = this.renderer.debounceDelay
+    this.renderer.debounceDelay = SPLIT_RESIZE_CONFIRM_DELAY_MS
+
     if (this.renderer.screenMode !== "split-footer") {
       this.renderer.screenMode = "split-footer"
     }
@@ -280,7 +285,7 @@ class SplitFooterStreamingDemo {
     this.footerTable.content = [
       footerRow(
         "mode",
-        `${scenario.title} · start ${this.inlinePrefix ? "inline-prefix" : "newline"} · auto ${this.autoAdvance ? `${this.intervalMs}ms` : "off"} · ${runState}`,
+        `${scenario.title} · start ${this.inlinePrefix ? "inline-prefix" : "newline"} · auto ${this.autoAdvance ? `${this.intervalMs}ms` : "off"} · resize ${this.renderer.debounceDelay}ms · ${runState}`,
         getScenarioAccent(this.currentKind),
       ),
       footerRow("status", this.lastStatus, this.lastStatus.startsWith("Error:") ? PALETTE.error : PALETTE.status),
@@ -725,6 +730,7 @@ class SplitFooterStreamingDemo {
     }
 
     if (!this.renderer.isDestroyed) {
+      this.renderer.debounceDelay = this.previousDebounceDelay
       this.renderer.externalOutputMode = "passthrough"
       this.renderer.screenMode = "main-screen"
     }
@@ -753,6 +759,7 @@ export function destroy(_renderer: CliRenderer): void {
 if (import.meta.main) {
   const renderer = await createCliRenderer({
     targetFps: 30,
+    debounceDelay: SPLIT_RESIZE_CONFIRM_DELAY_MS,
     exitOnCtrlC: true,
     useMouse: false,
     screenMode: "split-footer",

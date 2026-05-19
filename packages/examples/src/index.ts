@@ -49,6 +49,7 @@ import * as textSelectionExample from "./text-selection-demo.js"
 import * as asciiFontSelectionExample from "./ascii-font-selection-demo.js"
 import * as splitModeExample from "./split-mode-demo.js"
 import * as splitFooterStreamingDemo from "./split-footer-streaming-demo.js"
+import * as splitResizeResetDemo from "./split-resize-reset-demo.js"
 import * as consoleExample from "./console-demo.js"
 import * as notificationDemo from "./notification-demo.js"
 import * as vnodeCompositionDemo from "./vnode-composition-demo.js"
@@ -248,6 +249,12 @@ const examples: Example[] = [
     description: "Focused split-footer surface demo for progressive text, code, and markdown scrollback",
     run: splitFooterStreamingDemo.run,
     destroy: splitFooterStreamingDemo.destroy,
+  },
+  {
+    name: "Split Resize Reset Demo",
+    description: "Minimal split-footer resize-reset tracer with buffered stdout heartbeats and lifecycle logs",
+    run: splitResizeResetDemo.run,
+    destroy: splitResizeResetDemo.destroy,
   },
   {
     name: "Live State Management Demo",

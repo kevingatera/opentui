@@ -5,7 +5,7 @@ import { capture } from "../console.ts"
 import { clearEnvCache } from "../lib/env.ts"
 import { createTestRenderer, type TestRenderer } from "../testing/test-renderer.js"
 import { ManualClock } from "../testing/manual-clock.js"
-import { TextRenderable, type ScrollbackRenderContext } from "../index.js"
+import { CliRenderEvents, TextRenderable, type ScrollbackRenderContext } from "../index.js"
 
 let renderer: TestRenderer | null = null
 let previousShowConsole: string | undefined
@@ -756,6 +756,244 @@ test("CliRenderer flushes pending writeToScrollback output before resize applies
 
   lib.commitSplitFooterSnapshot = originalCommitSplitFooterSnapshot
   lib.resizeRenderer = originalResizeRenderer
+})
+
+test("CliRenderer split-footer reset resize clears once, debounces geometry, and repaints from origin", async () => {
+  const clock = new ManualClock()
+  const result = await createTestRenderer({
+    width: 40,
+    height: 10,
+    screenMode: "split-footer",
+    footerHeight: 4,
+    externalOutputMode: "capture-stdout",
+    consoleMode: "disabled",
+    clock,
+  })
+
+  renderer = result.renderer
+  ;(renderer as any)._terminalIsSetup = true
+  ;(renderer as any).renderOffset = 6
+
+  const writeOutSpy = spyOn(renderer as any, "writeOut")
+  const resizeSpy = spyOn((renderer as any).lib, "resizeRenderer")
+  const repaintSpy = spyOn((renderer as any).lib, "repaintSplitFooter")
+
+  ;(renderer as any).handleResize(60, 16)
+  ;(renderer as any).handleResize(70, 18)
+
+  expect(writeOutSpy).toHaveBeenCalledTimes(2)
+  expect(writeOutSpy.mock.calls[0]?.[0]).toBe(
+    `${ANSI.moveCursorAndClear(13, 1)}${ANSI.moveCursor(1, 1)}${ANSI.scrollUp(12)}`,
+  )
+  expect(writeOutSpy.mock.calls[1]?.[0]).toBe(`${ANSI.moveCursor(1, 1)}${ANSI.scrollUp(2)}`)
+  expect(resizeSpy).toHaveBeenCalledTimes(0)
+  expect(renderer.width).toBe(40)
+  expect(renderer.height).toBe(4)
+  expect((renderer as any).splitFooterResizeResetState).toBe("resize_reset_settle")
+
+  clock.advance(99)
+
+  expect(renderer.width).toBe(40)
+  expect(renderer.height).toBe(4)
+  expect(resizeSpy).toHaveBeenCalledTimes(0)
+
+  clock.advance(1)
+  await result.renderOnce()
+
+  expect(renderer.width).toBe(70)
+  expect(renderer.height).toBe(4)
+  expect(renderer.terminalWidth).toBe(70)
+  expect(renderer.terminalHeight).toBe(18)
+  expect((renderer as any).renderOffset).toBe(0)
+  expect((renderer as any).splitFooterResizeResetState).toBe("idle")
+  expect(resizeSpy).toHaveBeenCalledTimes(1)
+  expect(repaintSpy.mock.calls.at(-1)?.[2]).toBe(true)
+
+  writeOutSpy.mockRestore()
+  resizeSpy.mockRestore()
+  repaintSpy.mockRestore()
+})
+
+test("CliRenderer split-footer reset resize buffers captured output until settle", async () => {
+  const clock = new ManualClock()
+  const result = await createTestRenderer({
+    width: 40,
+    height: 10,
+    screenMode: "split-footer",
+    footerHeight: 4,
+    externalOutputMode: "capture-stdout",
+    consoleMode: "disabled",
+    clock,
+  })
+
+  renderer = result.renderer
+  ;(renderer as any)._terminalIsSetup = true
+
+  const splitCommitSpy = spyOn((renderer as any).lib, "commitSplitFooterSnapshot")
+
+  ;(renderer as any).handleResize(60, 16)
+  ;(renderer as any).stdout.write("during-resize\n")
+  renderer.writeToScrollback(textScrollbackWrite("after-reset\n"))
+
+  clock.advance(20)
+  await result.renderOnce()
+
+  expect(splitCommitSpy).toHaveBeenCalledTimes(0)
+  expect((renderer as any).externalOutputQueue.size).toBe(2)
+
+  clock.advance(80)
+  await result.renderOnce()
+
+  expect(splitCommitSpy).toHaveBeenCalledTimes(2)
+  expect((renderer as any).externalOutputQueue.size).toBe(0)
+
+  splitCommitSpy.mockRestore()
+})
+
+test("CliRenderer split-footer reset cancellation applies the pending geometry before runtime mode changes", async () => {
+  const result = await createTestRenderer({
+    width: 40,
+    height: 10,
+    screenMode: "split-footer",
+    footerHeight: 4,
+    externalOutputMode: "capture-stdout",
+    consoleMode: "disabled",
+  })
+
+  renderer = result.renderer
+  ;(renderer as any)._terminalIsSetup = true
+
+  ;(renderer as any).handleResize(60, 16)
+
+  renderer.externalOutputMode = "passthrough"
+
+  expect(renderer.terminalWidth).toBe(60)
+  expect(renderer.terminalHeight).toBe(16)
+  expect(renderer.width).toBe(60)
+  expect(renderer.height).toBe(4)
+  expect((renderer as any).splitFooterResizeResetState).toBe("idle")
+
+  renderer.screenMode = "main-screen"
+
+  expect(renderer.width).toBe(60)
+  expect(renderer.height).toBe(16)
+
+  renderer.screenMode = "split-footer"
+  renderer.externalOutputMode = "capture-stdout"
+
+  ;(renderer as any).handleResize(72, 20)
+
+  renderer.externalOutputMode = "passthrough"
+
+  expect(renderer.terminalWidth).toBe(72)
+  expect(renderer.terminalHeight).toBe(20)
+  expect(renderer.width).toBe(72)
+  expect(renderer.height).toBe(4)
+  expect(renderer.externalOutputMode).toBe("passthrough")
+  expect((renderer as any).splitFooterResizeResetState).toBe("idle")
+})
+
+test("CliRenderer split-footer reset keeps queued output buffered when footerHeight changes during resize burst", async () => {
+  const clock = new ManualClock()
+  const result = await createTestRenderer({
+    width: 40,
+    height: 10,
+    screenMode: "split-footer",
+    footerHeight: 4,
+    externalOutputMode: "capture-stdout",
+    consoleMode: "disabled",
+    clock,
+  })
+
+  renderer = result.renderer
+  ;(renderer as any)._terminalIsSetup = true
+
+  const splitCommitSpy = spyOn((renderer as any).lib, "commitSplitFooterSnapshot")
+
+  ;(renderer as any).handleResize(60, 16)
+  ;(renderer as any).stdout.write("during-resize\n")
+
+  renderer.footerHeight = 3
+
+  expect(renderer.footerHeight).toBe(3)
+  expect(renderer.height).toBe(4)
+  expect((renderer as any).splitFooterResizeResetState).toBe("resize_reset_settle")
+  expect(splitCommitSpy).toHaveBeenCalledTimes(0)
+  expect((renderer as any).externalOutputQueue.size).toBe(1)
+
+  clock.advance(100)
+  await result.renderOnce()
+
+  expect(renderer.height).toBe(3)
+  expect(splitCommitSpy).toHaveBeenCalledTimes(1)
+  expect((renderer as any).externalOutputQueue.size).toBe(0)
+
+  splitCommitSpy.mockRestore()
+})
+
+test("CliRenderer split-footer reset resize emits resize reset lifecycle events", async () => {
+  const clock = new ManualClock()
+  const result = await createTestRenderer({
+    width: 40,
+    height: 10,
+    screenMode: "split-footer",
+    footerHeight: 4,
+    externalOutputMode: "capture-stdout",
+    consoleMode: "disabled",
+    clock,
+  })
+
+  renderer = result.renderer
+  ;(renderer as any)._terminalIsSetup = true
+  ;(renderer as any).renderOffset = 6
+
+  const events: Array<Record<string, unknown>> = []
+  renderer.on(CliRenderEvents.SPLIT_FOOTER_RESIZE_RESET, (event: Record<string, unknown>) => {
+    events.push(event)
+  })
+
+  ;(renderer as any).handleResize(60, 16)
+  ;(renderer as any).handleResize(70, 18)
+
+  clock.advance(100)
+  await result.renderOnce()
+
+  expect(events.map((event) => event.phase)).toEqual(["burst-start", "burst-update", "settle"])
+  expect(events[0]).toMatchObject({
+    phase: "burst-start",
+    previousTerminalWidth: 40,
+    previousTerminalHeight: 10,
+    targetTerminalWidth: 60,
+    targetTerminalHeight: 16,
+    verticalDelta: 6,
+    scrollLines: 12,
+    footerTopLine: 13,
+    upperHeight: 12,
+    terminalCleared: true,
+    debounceDelay: 100,
+  })
+  expect(events[1]).toMatchObject({
+    phase: "burst-update",
+    previousTerminalWidth: 60,
+    previousTerminalHeight: 16,
+    targetTerminalWidth: 70,
+    targetTerminalHeight: 18,
+    verticalDelta: 2,
+    scrollLines: 2,
+    debounceDelay: 100,
+  })
+  expect(events[2]).toMatchObject({
+    phase: "settle",
+    previousTerminalWidth: 40,
+    previousTerminalHeight: 10,
+    targetTerminalWidth: 70,
+    targetTerminalHeight: 18,
+    renderWidth: 70,
+    renderHeight: 4,
+    renderOffset: 0,
+    forcedFullRepaint: true,
+    debounceDelay: 100,
+  })
 })
 
 test("CliRenderer reuses generic suspend/resume native helpers in split-footer mode", async () => {

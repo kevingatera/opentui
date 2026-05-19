@@ -36,25 +36,26 @@ This page covers the options that most apps set directly.
 `CliRendererConfig` also includes lower-level hooks for testing and tuning, such as `stdin`, `stdout`, `clock`,
 `postProcessFns`, and `prependInputHandlers`.
 
-| Option                | Type                           | Default              | Description                                                                             |
-| --------------------- | ------------------------------ | -------------------- | --------------------------------------------------------------------------------------- |
-| `screenMode`          | `ScreenMode`                   | `"alternate-screen"` | How the renderer uses terminal space ([details](#screen-modes))                         |
-| `footerHeight`        | `number`                       | `12`                 | Requested footer rows for `"split-footer"` mode                                         |
-| `externalOutputMode`  | `ExternalOutputMode`           | varies               | How writes to `stdout.write` are handled ([details](#external-output-mode))             |
-| `consoleMode`         | `ConsoleMode`                  | `"console-overlay"`  | How the built-in console overlay behaves ([details](#console-mode))                     |
-| `exitOnCtrlC`         | `boolean`                      | `true`               | Call `renderer.destroy()` when Ctrl+C is pressed                                        |
-| `exitSignals`         | `NodeJS.Signals[]`             | see below            | Signals that trigger cleanup ([details](/docs/core-concepts/lifecycle#signal-handling)) |
-| `clearOnShutdown`     | `boolean`                      | `true`               | Clear the renderer-owned region on `suspend()` and `destroy()`                          |
-| `targetFps`           | `number`                       | `30`                 | Target frames per second for the render loop                                            |
-| `maxFps`              | `number`                       | `60`                 | Maximum FPS cap for immediate re-renders                                                |
-| `useMouse`            | `boolean`                      | `true`               | Enable mouse input                                                                      |
-| `autoFocus`           | `boolean`                      | `true`               | Focus the nearest focusable renderable on left click                                    |
-| `enableMouseMovement` | `boolean`                      | `true`               | Track mouse movement, not just clicks and scrolls                                       |
-| `useKittyKeyboard`    | `KittyKeyboardOptions \| null` | `{}`                 | Kitty keyboard protocol settings, or `null` to disable                                  |
-| `backgroundColor`     | `ColorInput`                   | transparent          | Background color for the render buffer                                                  |
-| `consoleOptions`      | `ConsoleOptions`               | -                    | Options forwarded to the built-in console overlay                                       |
-| `openConsoleOnError`  | `boolean`                      | `true` (dev)         | Open the console overlay on uncaught errors                                             |
-| `onDestroy`           | `() => void`                   | -                    | Run after the renderer finishes cleanup                                                 |
+| Option                | Type                           | Default              | Description                                                                                   |
+| --------------------- | ------------------------------ | -------------------- | --------------------------------------------------------------------------------------------- |
+| `screenMode`          | `ScreenMode`                   | `"alternate-screen"` | How the renderer uses terminal space ([details](#screen-modes))                               |
+| `footerHeight`        | `number`                       | `12`                 | Requested footer rows for `"split-footer"` mode                                               |
+| `externalOutputMode`  | `ExternalOutputMode`           | varies               | How writes to `stdout.write` are handled ([details](#external-output-mode))                   |
+| `debounceDelay`       | `number`                       | `100`                | Resize debounce in ms. The split-footer repaints once this delay elapses after resize settles |
+| `consoleMode`         | `ConsoleMode`                  | `"console-overlay"`  | How the built-in console overlay behaves ([details](#console-mode))                           |
+| `exitOnCtrlC`         | `boolean`                      | `true`               | Call `renderer.destroy()` when Ctrl+C is pressed                                              |
+| `exitSignals`         | `NodeJS.Signals[]`             | see below            | Signals that trigger cleanup ([details](/docs/core-concepts/lifecycle#signal-handling))       |
+| `clearOnShutdown`     | `boolean`                      | `true`               | Clear the renderer-owned region on `suspend()` and `destroy()`                                |
+| `targetFps`           | `number`                       | `30`                 | Target frames per second for the render loop                                                  |
+| `maxFps`              | `number`                       | `60`                 | Maximum FPS cap for immediate re-renders                                                      |
+| `useMouse`            | `boolean`                      | `true`               | Enable mouse input                                                                            |
+| `autoFocus`           | `boolean`                      | `true`               | Focus the nearest focusable renderable on left click                                          |
+| `enableMouseMovement` | `boolean`                      | `true`               | Track mouse movement, not just clicks and scrolls                                             |
+| `useKittyKeyboard`    | `KittyKeyboardOptions \| null` | `{}`                 | Kitty keyboard protocol settings, or `null` to disable                                        |
+| `backgroundColor`     | `ColorInput`                   | transparent          | Background color for the render buffer                                                        |
+| `consoleOptions`      | `ConsoleOptions`               | -                    | Options forwarded to the built-in console overlay                                             |
+| `openConsoleOnError`  | `boolean`                      | `true` (dev)         | Open the console overlay on uncaught errors                                                   |
+| `onDestroy`           | `() => void`                   | -                    | Run after the renderer finishes cleanup                                                       |
 
 You can also change `screenMode`, `footerHeight`, `externalOutputMode`, and `consoleMode` at runtime through their
 matching `renderer` properties.
@@ -103,7 +104,28 @@ renderer.footerHeight = 15
 
 Split-footer bookkeeping lives in the native renderer. A shared `SplitScrollback` model tracks the rows it has already published and the current tail column, so the footer pins to the bottom of the terminal as scrollback grows. Captured stdout and [scrollback writers](#writing-to-scrollback) both produce styled `OptimizedBuffer` snapshots. The native side emits these as ANSI alongside the footer repaint in one atomic frame. The renderer flushes pending output before `resize`, `suspend`, mode transitions, and `destroy`.
 
-## External output mode
+### Split-footer resize behavior
+
+In split-footer mode with `externalOutputMode: "capture-stdout"` is destructive.
+On the first resize in a burst, OpenTUI:
+
+1. Clears the old footer surface.
+2. Scrolls the old upper pane into terminal history.
+3. Leaves the viewport blank.
+4. Buffers new captured output instead of repainting during the drag.
+
+Once resize settles, OpenTUI:
+
+1. Waits for `debounceDelay`.
+2. Applies the latest terminal size.
+3. Resets split scrollback from origin.
+4. Forces one full footer repaint.
+5. Resumes flushing buffered output.
+
+To observe this lifecycle directly, listen for
+`CliRenderEvents.SPLIT_FOOTER_RESIZE_RESET`. The payload reports the current
+phase: entering a resize burst, updating the target size, settling, or
+canceling.## External output mode
 
 The `externalOutputMode` option controls what happens to writes that go through the renderer's configured `stdout.write` while the renderer is active. It does not change `stderr`, and it is separate from the built-in console overlay.
 
