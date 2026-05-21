@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test"
 import { BoxRenderable, TextRenderable } from "@opentui/core"
 import { createTestRenderer } from "@opentui/core/testing"
 import { createSignal } from "solid-js"
-import { createMarkerNode, insert, SolidTextRenderable, testRender } from "../index.js"
+import { createMarkerNode, insert, SolidTextNodeRenderable, SolidTextRenderable, testRender } from "../index.js"
 
 let testSetup: Awaited<ReturnType<typeof testRender>> | undefined
 
@@ -86,6 +86,67 @@ describe("marker text parents", () => {
       await Bun.sleep(0)
 
       expect(text.getTextChildren()).toHaveLength(0)
+      expect(marker.parent).toBeNull()
+      expect(marker.isDestroyed).toBe(true)
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
+  it("destroys nested marker children when a text parent is destroyed", async () => {
+    const setup = await createTestRenderer({ width: 40, height: 8 })
+    const text = new SolidTextRenderable(setup.renderer, {
+      id: "marker-nested-text-destroy-parent",
+      width: 20,
+      height: 1,
+    })
+    const span = new SolidTextNodeRenderable({ id: "marker-nested-text-span" })
+    const marker = createMarkerNode()
+
+    try {
+      setup.renderer.root.add(text)
+      span.add(marker)
+      text.add(span)
+
+      expect(text.getTextChildren()).toHaveLength(1)
+      expect(text.getTextChildren()[0]).toBe(span)
+      expect(marker.parent).toBe(span)
+
+      text.destroyRecursively()
+      await Bun.sleep(0)
+
+      expect(text.getTextChildren()).toHaveLength(0)
+      expect(span.parent).toBeNull()
+      expect(marker.parent).toBeNull()
+      expect(marker.isDestroyed).toBe(true)
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
+  it("destroys nested marker children when a text child is removed", async () => {
+    const setup = await createTestRenderer({ width: 40, height: 8 })
+    const text = new SolidTextRenderable(setup.renderer, {
+      id: "marker-nested-text-remove-parent",
+      width: 20,
+      height: 1,
+    })
+    const span = new SolidTextNodeRenderable({ id: "marker-nested-text-remove-span" })
+    const marker = createMarkerNode()
+
+    try {
+      setup.renderer.root.add(text)
+      span.add(marker)
+      text.add(span)
+
+      expect(text.getTextChildren()[0]).toBe(span)
+      expect(marker.parent).toBe(span)
+
+      text.remove(span.id)
+      await Bun.sleep(0)
+
+      expect(text.getTextChildren()).toHaveLength(0)
+      expect(span.parent).toBeNull()
       expect(marker.parent).toBeNull()
       expect(marker.isDestroyed).toBe(true)
     } finally {

@@ -68,8 +68,8 @@ export class TextRenderable extends TextBufferRenderable {
     return this._text.chunks
   }
 
-  get textNode(): TextNodeRenderable {
-    return this.rootTextNode
+  get textNode(): RootTextNodeRenderable {
+    return this.rootTextNode as RootTextNodeRenderable
   }
 
   set content(value: StyledText | string) {

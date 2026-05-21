@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach } from "bun:test"
 import { TextRenderable, type TextOptions } from "./Text.js"
-import { TextNodeRenderable } from "./TextNode.js"
+import { RootTextNodeRenderable, TextNodeRenderable } from "./TextNode.js"
 import { RGBA } from "../lib/RGBA.js"
 import { stringToStyledText, StyledText } from "../lib/styled-text.js"
 import { createTestRenderer, type MockMouse, type TestRenderer } from "../testing/test-renderer.js"
@@ -81,6 +81,18 @@ describe("TextRenderable Selection", () => {
       expect(text.y).toBeDefined()
       expect(text.width).toBeGreaterThan(0)
       expect(text.height).toBeGreaterThan(0)
+    })
+
+    it("should expose a root text node with its text parent", async () => {
+      const { text } = await createTextRenderable(currentRenderer, {
+        content: "Hello World",
+        selectable: true,
+      })
+
+      const rootTextNode: RootTextNodeRenderable = text.textNode
+
+      expect(rootTextNode).toBeInstanceOf(RootTextNodeRenderable)
+      expect(rootTextNode.textParent).toBe(text)
     })
   })
 

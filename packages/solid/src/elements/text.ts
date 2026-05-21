@@ -23,6 +23,43 @@ function detachMarkerChild(child: TextNodeRenderable): void {
   parent?.remove(child.id)
 }
 
+function destroyMarkerDescendants(node: TextNodeRenderable): void {
+  for (const child of [...node.getChildren()]) {
+    if (!isTextNodeRenderable(child)) {
+      continue
+    }
+
+    if (isMarkerRenderable(child)) {
+      child.destroy()
+      continue
+    }
+
+    destroyMarkerDescendants(child)
+  }
+}
+
+function detachRemovedTextChild(parent: TextNodeRenderable, child: TextNodeRenderable): void {
+  if (!isMarkerRenderable(child)) {
+    destroyMarkerDescendants(child)
+  }
+
+  if (child.parent === parent) {
+    child.parent = null
+  }
+}
+
+function destroyRemovedTextChild(parent: TextNodeRenderable, child: TextNodeRenderable): void {
+  if (isMarkerRenderable(child)) {
+    child.destroy()
+    return
+  }
+
+  destroyMarkerDescendants(child)
+  if (child.parent === parent) {
+    child.parent = null
+  }
+}
+
 export class SolidTextNodeRenderable extends TextNodeRenderable {
   private markerChildren?: Set<TextNodeRenderable>
 
@@ -65,25 +102,25 @@ export class SolidTextNodeRenderable extends TextNodeRenderable {
 
   public override replace(obj: TextNodeRenderable | string, index: number): void {
     const previous = this.children[index]
-    if (isMarkerRenderable(obj) || isMarkerRenderable(previous)) {
-      if (previous === obj) {
-        return
-      }
-
-      if (isMarkerRenderable(obj)) {
-        detachMarkerChild(obj)
-      }
-
-      if (typeof obj !== "string") {
-        obj.parent = this
-      }
-      const children = [...this.children]
-      children[index] = obj
-      this.children = children
+    if (previous === obj) {
       return
     }
 
-    super.replace(obj, index)
+    if (isTextNodeRenderable(previous)) {
+      detachRemovedTextChild(this, previous)
+    }
+
+    if (isMarkerRenderable(obj)) {
+      detachMarkerChild(obj)
+    }
+
+    if (typeof obj !== "string") {
+      obj.parent = this
+    }
+
+    const children = [...this.children]
+    children[index] = obj
+    this.children = children
   }
 
   public override insertBefore(
@@ -122,26 +159,40 @@ export class SolidTextNodeRenderable extends TextNodeRenderable {
 
   public override remove(id: string): this {
     const childIndex = this.getRenderableIndex(id)
-    const child = this.children[childIndex]
-    if (isMarkerRenderable(child)) {
-      const children = [...this.children]
-      children.splice(childIndex, 1)
-      this.children = children
+    if (childIndex === -1) {
       return this
     }
 
-    super.remove(id)
+    const child = this.children[childIndex]
+    if (isTextNodeRenderable(child)) {
+      detachRemovedTextChild(this, child)
+    }
+
+    const children = [...this.children]
+    children.splice(childIndex, 1)
+    this.children = children
     return this
   }
 
   public override clear(): void {
-    for (const child of [...(this.markerChildren ?? [])]) {
-      if (isMarkerRenderable(child) && child.parent === this) {
-        child.destroy()
+    for (const child of [...this.children]) {
+      if (!isTextNodeRenderable(child)) {
+        continue
       }
+
+      destroyRemovedTextChild(this, child)
     }
 
     this.children = []
+  }
+
+  public override destroyRecursively(): void {
+    if (this.parent) {
+      this.parent.remove(this.id)
+    }
+
+    this.clear()
+    this.removeAllListeners()
   }
 }
 
@@ -164,7 +215,7 @@ export class SolidRootTextNodeRenderable extends SolidTextNodeRenderable {
 }
 
 export class SolidTextRenderable extends TextRenderable {
-  protected override createRootTextNode(ctx: RenderContext, options: TextNodeOptions): TextNodeRenderable {
+  protected override createRootTextNode(ctx: RenderContext, options: TextNodeOptions): SolidRootTextNodeRenderable {
     return new SolidRootTextNodeRenderable(ctx, options, this)
   }
 
