@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { BoxRenderable, InputRenderable, InputRenderableEvents, TextareaRenderable } from "@opentui/core"
 import { createTestRenderer, type MockInput, type TestRenderer } from "@opentui/core/testing"
+import { commandBindings } from "@opentui/keymap/extras"
 import {
   createTextareaBindings,
   registerEditBufferCommands,
@@ -34,7 +35,7 @@ describe("edit buffer bindings addon", () => {
     const keymap = getKeymap(renderer)
 
     keymap.registerLayer({
-      bindings: [{ key: "ctrl+d", cmd: "delete-line" }],
+      bindings: [{ key: "ctrl+d", cmd: "input.delete.line" }],
     })
 
     expect(keymap.getActiveKeys().some((candidate) => candidate.stroke.name === "d" && candidate.stroke.ctrl)).toBe(
@@ -66,7 +67,7 @@ describe("edit buffer bindings addon", () => {
 
     registerEditBufferCommands(keymap, renderer)
     keymap.registerLayer({
-      bindings: [{ key: "dd", cmd: "delete-line" }],
+      bindings: [{ key: "dd", cmd: "input.delete.line" }],
     })
 
     const textarea = new TextareaRenderable(renderer, {
@@ -89,7 +90,7 @@ describe("edit buffer bindings addon", () => {
 
     registerEditBufferCommands(keymap, renderer)
     keymap.registerLayer({
-      bindings: [{ key: "left", cmd: "move-left" }],
+      bindings: [{ key: "left", cmd: "input.move.left" }],
     })
 
     const textarea = new TextareaRenderable(renderer, {
@@ -108,14 +109,70 @@ describe("edit buffer bindings addon", () => {
   test("createTextareaBindings prepends override-style bindings ahead of textarea defaults", () => {
     const bindings = createTextareaBindings([
       { key: "left", cmd: "custom-left" },
-      { key: "dd", cmd: "delete-line" },
+      { key: "dd", cmd: "input.delete.line" },
     ])
 
     expect(bindings[0]).toEqual({ key: "left", cmd: "custom-left" })
-    expect(bindings[1]).toEqual({ key: "dd", cmd: "delete-line" })
-    expect(bindings.some((binding) => binding.key === "right" && binding.cmd === "move-right")).toBe(true)
-    expect(bindings.some((binding) => binding.key === "left" && binding.cmd === "move-left")).toBe(true)
+    expect(bindings[1]).toEqual({ key: "dd", cmd: "input.delete.line" })
+    expect(bindings.some((binding) => binding.key === "right" && binding.cmd === "input.move.right")).toBe(true)
+    expect(bindings.some((binding) => binding.key === "left" && binding.cmd === "input.move.left")).toBe(true)
     expect(bindings.some((binding) => binding.key === "backspace" && binding.desc === "Delete backward")).toBe(true)
+  })
+
+  test("createTextareaBindings tags generated defaults with text editing metadata", () => {
+    const bindings = createTextareaBindings()
+
+    expect(bindings.find((binding) => binding.key === "left")).toMatchObject({
+      cmd: "input.move.left",
+      desc: "Cursor left",
+      group: "Text Editing",
+    })
+    expect(bindings.find((binding) => binding.key === "left")?.fineGroup).toBeUndefined()
+  })
+
+  test("createTextareaBindings can include hard-coded fineGroup fields when requested", () => {
+    const bindings = createTextareaBindings(undefined, { includeFineGroup: true })
+
+    expect(bindings.find((binding) => binding.key === "left")).toMatchObject({
+      cmd: "input.move.left",
+      group: "Text Editing",
+      fineGroup: "Cursor",
+    })
+    expect(bindings.find((binding) => binding.key === "shift+left")).toMatchObject({
+      cmd: "input.select.left",
+      group: "Text Editing",
+      fineGroup: "Selection",
+    })
+    expect(bindings.find((binding) => binding.key === "backspace")).toMatchObject({
+      cmd: "input.backspace",
+      group: "Text Editing",
+      fineGroup: "Delete",
+    })
+    expect(bindings.find((binding) => binding.key === "ctrl+-")).toMatchObject({
+      cmd: "input.undo",
+      group: "Text Editing",
+      fineGroup: "History",
+    })
+    expect(bindings.find((binding) => binding.key === "return")).toMatchObject({
+      cmd: "input.newline",
+      group: "Text Editing",
+      fineGroup: "Insert",
+    })
+    expect(bindings.find((binding) => binding.key === "meta+return")).toMatchObject({
+      cmd: "input.submit",
+      group: "Text Editing",
+      fineGroup: "Submit",
+    })
+  })
+
+  test("createTextareaBindings applies custom metadata group to generated defaults", () => {
+    const bindings = createTextareaBindings(undefined, { group: "Editor", includeFineGroup: true })
+
+    expect(bindings.find((binding) => binding.key === "left")).toMatchObject({
+      cmd: "input.move.left",
+      group: "Editor",
+      fineGroup: "Cursor",
+    })
   })
 
   test("createTextareaBindings applies custom command names to generated defaults", () => {
@@ -127,12 +184,12 @@ describe("edit buffer bindings addon", () => {
     })
 
     expect(bindings.some((binding) => binding.key === "left" && binding.cmd === "input_move_left")).toBe(true)
-    expect(bindings.some((binding) => binding.key === "left" && binding.cmd === "move-left")).toBe(false)
+    expect(bindings.some((binding) => binding.key === "left" && binding.cmd === "input.move.left")).toBe(false)
     expect(bindings.some((binding) => binding.key === "meta+return" && binding.cmd === "input_submit")).toBe(true)
-    expect(bindings.some((binding) => binding.key === "return" && binding.cmd === "newline")).toBe(true)
+    expect(bindings.some((binding) => binding.key === "return" && binding.cmd === "input.newline")).toBe(true)
   })
 
-  test("registerManagedTextareaLayer normalizes shorthand overrides through keymap.normalizeBindings", () => {
+  test("registerManagedTextareaLayer accepts commandBindings helper output for overrides", () => {
     const keymap = getKeymap(renderer)
     const textarea = new TextareaRenderable(renderer, {
       width: 20,
@@ -143,7 +200,7 @@ describe("edit buffer bindings addon", () => {
 
     registerEditBufferCommands(keymap, renderer)
     const off = registerManagedTextareaLayer(keymap, renderer, {
-      bindings: { dd: "delete-line" },
+      bindings: commandBindings({ "input.delete.line": "dd" }),
     })
 
     textarea.focus()
@@ -169,10 +226,10 @@ describe("edit buffer bindings addon", () => {
       target: textarea,
       // @ts-expect-error managed textarea layers are always global
       targetMode: "focus-within",
-      bindings: { dd: "delete-line" },
+      bindings: commandBindings({ "input.delete.line": "dd" }),
     }
 
-    expect(layer.bindings).toEqual({ dd: "delete-line" })
+    expect(layer.bindings).toEqual([{ key: "dd", cmd: "input.delete.line" }])
   })
 
   test("registerManagedTextareaLayer ignores scoped fields passed by untyped callers", () => {
@@ -193,7 +250,7 @@ describe("edit buffer bindings addon", () => {
     const off = registerManagedTextareaLayer(keymap, renderer, {
       target: primary,
       targetMode: "focus-within",
-      bindings: { dd: "delete-line" },
+      bindings: commandBindings({ "input.delete.line": "dd" }),
     } as Parameters<typeof registerManagedTextareaLayer>[2])
 
     secondary.focus()
@@ -271,7 +328,7 @@ describe("edit buffer bindings addon", () => {
 
     registerEditBufferCommands(keymap, renderer)
     keymap.registerLayer({
-      bindings: [{ key: "backspace", cmd: "backspace" }],
+      bindings: [{ key: "backspace", cmd: "input.backspace" }],
     })
 
     const textarea = new TextareaRenderable(renderer, {
@@ -295,7 +352,7 @@ describe("edit buffer bindings addon", () => {
 
     registerEditBufferCommands(keymap, renderer)
     keymap.registerLayer({
-      bindings: [{ key: "x", cmd: "submit" }],
+      bindings: [{ key: "x", cmd: "input.submit" }],
     })
 
     const input = new InputRenderable(renderer, {
@@ -321,7 +378,7 @@ describe("edit buffer bindings addon", () => {
     const offFirst = registerEditBufferCommands(keymap, renderer)
     const offSecond = registerEditBufferCommands(keymap, renderer)
     keymap.registerLayer({
-      bindings: [{ key: "x", cmd: "submit" }],
+      bindings: [{ key: "x", cmd: "input.submit" }],
     })
 
     const input = new InputRenderable(renderer, {
@@ -362,7 +419,7 @@ describe("edit buffer bindings addon", () => {
 
     registerEditBufferCommands(keymap, renderer)
     keymap.registerLayer({
-      bindings: [{ key: "x", cmd: "submit" }],
+      bindings: [{ key: "x", cmd: "input.submit" }],
     })
 
     const box = new BoxRenderable(renderer, {
@@ -394,7 +451,7 @@ describe("edit buffer bindings addon", () => {
     const keymap = getKeymap(renderer)
 
     const off = registerManagedTextareaLayer(keymap, renderer, {
-      bindings: [{ key: "dd", cmd: "delete-line" }],
+      bindings: [{ key: "dd", cmd: "input.delete.line" }],
     })
 
     const textarea = new TextareaRenderable(renderer, {
@@ -460,10 +517,25 @@ describe("edit buffer bindings addon", () => {
     off()
   })
 
-  test("registerEditBufferCommands applies custom command names and descriptions when metadata fields are registered", () => {
+  test("registerEditBufferCommands exposes command descriptions and category metadata", () => {
+    const keymap = getKeymap(renderer)
+
+    registerEditBufferCommands(keymap, renderer)
+
+    keymap.registerLayer({
+      bindings: [{ key: "x", cmd: "input.delete.line" }],
+    })
+
+    const activeKey = keymap.getActiveKeys({ includeMetadata: true }).find((candidate) => candidate.stroke.name === "x")
+
+    expect(activeKey?.commandAttrs).toEqual({ desc: "Delete line", category: "Text Editing" })
+  })
+
+  test("registerEditBufferCommands applies custom command names, descriptions, and category metadata", () => {
     const keymap = getKeymap(renderer)
 
     registerEditBufferCommands(keymap, renderer, {
+      category: "Editor",
       commandNames: {
         "delete-line": "input_delete_line",
       },
@@ -491,10 +563,62 @@ describe("edit buffer bindings addon", () => {
 
     expect(textarea.plainText).toBe("Line 1\nLine 3")
     expect(activeKey?.command).toBe("input_delete_line")
-    expect(activeKey?.commandAttrs).toEqual({ desc: "Supprimer la ligne" })
+    expect(activeKey?.commandAttrs).toEqual({ desc: "Supprimer la ligne", category: "Editor" })
   })
 
-  test("registerManagedTextareaLayer applies custom command names and descriptions to generated default bindings", () => {
+  test("registerManagedTextareaLayer exposes generated binding group metadata by default", () => {
+    const keymap = getKeymap(renderer)
+    const textarea = new TextareaRenderable(renderer, {
+      width: 20,
+      height: 4,
+      initialValue: "abc",
+    })
+    renderer.root.add(textarea)
+
+    const off = registerManagedTextareaLayer(keymap, renderer, {})
+
+    const activeKey = keymap
+      .getActiveKeys({ includeMetadata: true })
+      .find((candidate) => candidate.stroke.name === "left")
+
+    expect(activeKey?.command).toBe("input.move.left")
+    expect(activeKey?.bindingAttrs).toEqual({ desc: "Cursor left", group: "Text Editing" })
+    expect(activeKey?.commandAttrs).toEqual({ desc: "Cursor left", category: "Text Editing" })
+
+    off()
+  })
+
+  test("registerManagedTextareaLayer lets apps register and remap fineGroup metadata", () => {
+    const keymap = getKeymap(renderer)
+    keymap.registerBindingFields({
+      fineGroup(value, ctx) {
+        if (typeof value !== "string") {
+          throw new Error('Keymap metadata field "fineGroup" must be a string')
+        }
+
+        ctx.attr("subgroup", value)
+      },
+    })
+
+    const textarea = new TextareaRenderable(renderer, {
+      width: 20,
+      height: 4,
+      initialValue: "abc",
+    })
+    renderer.root.add(textarea)
+
+    const off = registerManagedTextareaLayer(keymap, renderer, {}, { includeFineGroup: true })
+
+    const activeKey = keymap
+      .getActiveKeys({ includeMetadata: true })
+      .find((candidate) => candidate.stroke.name === "left")
+
+    expect(activeKey?.bindingAttrs).toEqual({ desc: "Cursor left", group: "Text Editing", subgroup: "Cursor" })
+
+    off()
+  })
+
+  test("registerManagedTextareaLayer applies custom command names, descriptions, group, and category metadata", () => {
     const keymap = getKeymap(renderer)
     const textarea = new TextareaRenderable(renderer, {
       width: 20,
@@ -508,6 +632,8 @@ describe("edit buffer bindings addon", () => {
       renderer,
       {},
       {
+        category: "Editor Commands",
+        group: "Editor",
         commandNames: {
           "move-left": "input_move_left",
         },
@@ -527,10 +653,20 @@ describe("edit buffer bindings addon", () => {
 
     expect(textarea.cursorOffset).toBe(2)
     expect(activeKey?.command).toBe("input_move_left")
-    expect(activeKey?.bindingAttrs).toEqual({ desc: "Curseur gauche" })
-    expect(activeKey?.commandAttrs).toEqual({ desc: "Curseur gauche" })
+    expect(activeKey?.bindingAttrs).toEqual({ desc: "Curseur gauche", group: "Editor" })
+    expect(activeKey?.commandAttrs).toEqual({ desc: "Curseur gauche", category: "Editor Commands" })
 
     off()
+  })
+
+  test("rejects empty custom text editing metadata", () => {
+    expect(() => {
+      createTextareaBindings(undefined, { group: "   " })
+    }).toThrow('Edit buffer metadata field "group" cannot be empty')
+
+    expect(() => {
+      registerEditBufferCommands(getKeymap(renderer), renderer, { category: "   " })
+    }).toThrow('Edit buffer metadata field "category" cannot be empty')
   })
 
   test("shared edit buffer command registrations ignore later description overrides", () => {
@@ -603,7 +739,7 @@ describe("edit buffer bindings addon", () => {
     const keymap = getKeymap(renderer)
 
     keymap.registerLayer({
-      bindings: [{ key: "ctrl+d", cmd: "delete-line" }],
+      bindings: [{ key: "ctrl+d", cmd: "input.delete.line" }],
     })
 
     const off = registerEditBufferCommands(keymap, renderer)
@@ -643,7 +779,7 @@ describe("edit buffer bindings addon", () => {
     const keymap = getKeymap(renderer)
 
     keymap.registerLayer({
-      bindings: [{ key: "ctrl+d", cmd: "delete-line" }],
+      bindings: [{ key: "ctrl+d", cmd: "input.delete.line" }],
     })
 
     const textarea = new TextareaRenderable(renderer, {
@@ -675,13 +811,13 @@ describe("edit buffer bindings addon", () => {
     keymap.registerLayer({
       commands: [
         {
-          name: "delete-line",
+          name: "input.delete.line",
           run() {},
         },
       ],
     })
     keymap.registerLayer({
-      bindings: [{ key: "x", cmd: "submit" }],
+      bindings: [{ key: "x", cmd: "input.submit" }],
     })
 
     expect(() => {
@@ -689,10 +825,10 @@ describe("edit buffer bindings addon", () => {
     }).not.toThrow()
 
     expect(errors).toEqual([])
-    expect(keymap.getCommands().some((command) => command.name === "submit")).toBe(true)
+    expect(keymap.getCommands().some((command) => command.name === "input.submit")).toBe(true)
     expect(
-      keymap.getCommands({ visibility: "registered" }).filter((command) => command.name === "delete-line"),
+      keymap.getCommands({ visibility: "registered" }).filter((command) => command.name === "input.delete.line"),
     ).toHaveLength(2)
-    expect(keymap.getActiveKeys().find((candidate) => candidate.stroke.name === "x")?.command).toBe("submit")
+    expect(keymap.getActiveKeys().find((candidate) => candidate.stroke.name === "x")?.command).toBe("input.submit")
   })
 })

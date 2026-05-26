@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { createTestRenderer, type MockInput, type TestRenderer } from "@opentui/core/testing"
 import { registerLeader } from "@opentui/keymap/addons"
+import { createBindingLookup } from "@opentui/keymap/extras"
 import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
 import { createDiagnosticHarness } from "../../../tests/diagnostic-harness.js"
 
@@ -66,6 +67,36 @@ describe("leader addon", () => {
     expect(calls).toEqual(["leader", "plain"])
   })
 
+  test("accepts a single binding lookup result as the trigger", () => {
+    const keymap = getKeymap(renderer)
+    const calls: string[] = []
+    const bindings = createBindingLookup({ leader: { name: "x", ctrl: true } })
+
+    keymap.registerLayer({
+      commands: [
+        {
+          name: "leader-action",
+          run() {
+            calls.push("leader")
+          },
+        },
+      ],
+    })
+
+    registerLeader(keymap, {
+      trigger: bindings.get("leader"),
+    })
+
+    keymap.registerLayer({
+      bindings: [{ key: "<leader>a", cmd: "leader-action" }],
+    })
+
+    mockInput.pressKey("x", { ctrl: true })
+    mockInput.pressKey("a")
+
+    expect(calls).toEqual(["leader"])
+  })
+
   test("recompiles bindings that were registered before leader exists", () => {
     const keymap = getKeymap(renderer)
     const { takeWarnings } = diagnostics.captureDiagnostics(keymap)
@@ -88,9 +119,7 @@ describe("leader addon", () => {
 
     mockInput.pressKey("a")
 
-    expect(takeWarnings().warnings).toEqual([
-      '[Keymap] Unknown token "<leader>" in key sequence "<leader>a" was ignored',
-    ])
+    expect(takeWarnings().warnings).toEqual(['[Keymap] Unknown token "leader" in key sequence "<leader>a" was ignored'])
     expect(calls).toEqual(["leader"])
 
     registerLeader(keymap, {
@@ -136,11 +165,21 @@ describe("leader addon", () => {
 
     offLeader()
 
-    expect(takeWarnings().warnings).toEqual([
-      '[Keymap] Unknown token "<leader>" in key sequence "<leader>" was ignored',
-    ])
+    expect(takeWarnings().warnings).toEqual(['[Keymap] Unknown token "leader" in key sequence "<leader>" was ignored'])
 
     mockInput.pressKey("x", { ctrl: true })
     expect(calls).toEqual(["leader"])
+  })
+
+  test("formats raw leader bindings through registered tokens", () => {
+    const keymap = getKeymap(renderer)
+
+    registerLeader(keymap, {
+      trigger: { name: "space" },
+    })
+
+    expect(keymap.formatKey("<leader>s", { preferDisplay: true })).toBe("<leader>s")
+    expect(keymap.formatKey("<leader>s", { separator: " " })).toBe("space s")
+    expect(keymap.formatKey({ name: "x", ctrl: true })).toBe("ctrl+x")
   })
 })

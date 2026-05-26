@@ -54,6 +54,16 @@ jobs:
             echo "Copied core dist"
           fi
 
+          if [ -d "npm-packages/three-dist" ]; then
+            cp -r npm-packages/three-dist packages/three/dist
+            echo "Copied three dist"
+          fi
+
+          if [ -d "npm-packages/qrcode-dist" ]; then
+            cp -r npm-packages/qrcode-dist packages/qrcode/dist
+            echo "Copied qrcode dist"
+          fi
+
           # Copy native packages to core's node_modules
           if [ -d "npm-packages/core-native-packages" ]; then
             mkdir -p packages/core/node_modules/@opentui
@@ -104,6 +114,14 @@ jobs:
 
           echo "📦 Checking @opentui/core..."
           cd packages/core/dist && npm pack --dry-run
+
+          echo ""
+          echo "📦 Checking @opentui/three..."
+          cd ../../three/dist && npm pack --dry-run
+
+          echo ""
+          echo "📦 Checking @opentui/qrcode..."
+          cd ../../qrcode/dist && npm pack --dry-run
 
           echo ""
           echo "📦 Checking @opentui/react..."

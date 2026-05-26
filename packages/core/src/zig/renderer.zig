@@ -74,12 +74,23 @@ pub const SplitFooterTransitionMode = enum(u8) {
     clear_stale_rows = 2,
 };
 
+pub const RenderStatsSnapshot = struct {
+    lastFrameTime: f64,
+    averageFrameTime: f64,
+    frameCount: u64,
+    cellsUpdated: u32,
+    averageCellsUpdated: u32,
+    renderTime: ?f64,
+    stdoutWriteTime: ?f64,
+};
+
 const SplitFooterTransition = struct {
     mode: SplitFooterTransitionMode = .none,
     source_top_line: u32 = 0,
     source_height: u32 = 0,
     target_top_line: u32 = 0,
     target_height: u32 = 0,
+    scroll_lines: u32 = 0,
 
     fn clear(self: *SplitFooterTransition) void {
         self.* = .{};
@@ -321,8 +332,8 @@ pub const CliRenderer = struct {
         self.resetFallbackPaletteState();
         nextBuffer.setBlendBackdropColor(ansi.rgbColor(ansi.red(self.backgroundColor), ansi.green(self.backgroundColor), ansi.blue(self.backgroundColor), 255));
 
-        try currentBuffer.clear(self.backgroundColor, CLEAR_CHAR);
-        try nextBuffer.clear(self.backgroundColor, null);
+        currentBuffer.clear(self.backgroundColor, CLEAR_CHAR);
+        nextBuffer.clear(self.backgroundColor, null);
 
         return self;
     }
@@ -522,6 +533,18 @@ pub const CliRenderer = struct {
         self.renderStats.arrayBuffers = arrayBuffers;
     }
 
+    pub fn getRenderStats(self: *const CliRenderer) RenderStatsSnapshot {
+        return .{
+            .lastFrameTime = self.renderStats.lastFrameTime,
+            .averageFrameTime = getStatAverage(f64, &self.statSamples.lastFrameTime),
+            .frameCount = self.renderStats.frameCount,
+            .cellsUpdated = self.renderStats.cellsUpdated,
+            .averageCellsUpdated = getStatAverage(u32, &self.statSamples.cellsUpdated),
+            .renderTime = self.renderStats.renderTime,
+            .stdoutWriteTime = self.renderStats.stdoutWriteTime,
+        };
+    }
+
     pub fn resize(self: *CliRenderer, width: u32, height: u32) !void {
         if (self.width == width and self.height == height) return;
 
@@ -532,8 +555,8 @@ pub const CliRenderer = struct {
         try self.nextRenderBuffer.resize(width, height);
         self.nextRenderBuffer.setBlendBackdropColor(ansi.rgbColor(ansi.red(self.backgroundColor), ansi.green(self.backgroundColor), ansi.blue(self.backgroundColor), 255));
 
-        try self.currentRenderBuffer.clear(ansi.rgbColor(0, 0, 0, 255), CLEAR_CHAR);
-        try self.nextRenderBuffer.clear(self.backgroundColor, null);
+        self.currentRenderBuffer.clear(ansi.rgbColor(0, 0, 0, 255), CLEAR_CHAR);
+        self.nextRenderBuffer.clear(self.backgroundColor, null);
 
         const newHitGridSize = width * height;
         const currentHitGridSize = self.hitGridWidth * self.hitGridHeight;
@@ -705,6 +728,15 @@ pub const CliRenderer = struct {
         self.collectFrameStats(deltaTime);
     }
 
+    fn splitOutputOffset(self: *const CliRenderer, surface_offset: u32) u32 {
+        return self.splitScrollback.renderOffset(surface_offset);
+    }
+
+    fn clampSplitSurfaceOffset(self: *const CliRenderer, surface_offset: u32, pinned_render_offset: u32) u32 {
+        const output_offset = self.splitOutputOffset(pinned_render_offset);
+        return std.math.clamp(surface_offset, output_offset, pinned_render_offset);
+    }
+
     pub fn resetSplitScrollback(self: *CliRenderer, seed_rows: u32, pinned_render_offset: u32) u32 {
         self.splitScrollback.reset(seed_rows);
         self.renderOffset = self.splitScrollback.renderOffset(pinned_render_offset);
@@ -712,8 +744,12 @@ pub const CliRenderer = struct {
     }
 
     pub fn syncSplitScrollback(self: *CliRenderer, pinned_render_offset: u32) u32 {
-        self.renderOffset = self.splitScrollback.renderOffset(pinned_render_offset);
+        self.renderOffset = self.clampSplitSurfaceOffset(self.renderOffset, pinned_render_offset);
         return self.renderOffset;
+    }
+
+    pub fn getSplitOutputOffset(self: *CliRenderer, surface_offset: u32) u32 {
+        return self.splitOutputOffset(surface_offset);
     }
 
     pub fn setPendingSplitFooterTransition(
@@ -723,6 +759,7 @@ pub const CliRenderer = struct {
         source_height: u32,
         target_top_line: u32,
         target_height: u32,
+        scroll_lines: u32,
     ) void {
         self.pendingSplitFooterTransition = .{
             .mode = mode,
@@ -730,6 +767,7 @@ pub const CliRenderer = struct {
             .source_height = source_height,
             .target_top_line = target_top_line,
             .target_height = target_height,
+            .scroll_lines = scroll_lines,
         };
     }
 
@@ -752,10 +790,16 @@ pub const CliRenderer = struct {
 
         switch (transition.mode) {
             .viewport_scroll => {
-                if (transition.source_height > transition.target_height) {
-                    writer.print("\x1b[{d}T", .{transition.source_height - transition.target_height}) catch {};
-                } else if (transition.source_height < transition.target_height) {
-                    writer.print("\x1b[{d}S", .{transition.target_height - transition.source_height}) catch {};
+                if (transition.scroll_lines == 0) {
+                    return;
+                }
+
+                self.splitScrollback.noteViewportScroll(transition.scroll_lines);
+
+                if (transition.source_top_line < transition.target_top_line) {
+                    writer.print("\x1b[{d}T", .{transition.scroll_lines}) catch {};
+                } else if (transition.source_top_line > transition.target_top_line) {
+                    writer.print("\x1b[{d}S", .{transition.scroll_lines}) catch {};
                 }
             },
             .clear_stale_rows => {
@@ -1044,13 +1088,14 @@ pub const CliRenderer = struct {
         pinned_render_offset: u32,
         force: bool,
     ) bool {
-        const previousRenderOffset = self.renderOffset;
+        const previousSurfaceOffset = self.renderOffset;
+        const previousOutputOffset = self.splitOutputOffset(previousSurfaceOffset);
         const previousOutputColumn = self.splitScrollback.tail_column;
         const snapshot_has_content = snapshot.width > 0 and snapshot.height > 0;
         const normalized_row_columns = @min(row_columns, snapshot.width);
         const starts_mid_line = previousOutputColumn > 0 and start_on_new_line;
         const starts_wrapped_line = previousOutputColumn >= self.width;
-        const previousFooterTopLine: u32 = @max(previousRenderOffset + 1, @as(u32, 1));
+        const previousFooterTopLine: u32 = @max(previousSurfaceOffset + 1, @as(u32, 1));
 
         if (snapshot_has_content) {
             // First update logical split scrollback state, then emit terminal I/O.
@@ -1067,19 +1112,23 @@ pub const CliRenderer = struct {
                     row + 1 < snapshot.height or trailing_newline,
                 );
             }
+
+            self.splitScrollback.published_rows = @min(self.splitScrollback.published_rows, pinned_render_offset);
         }
 
-        const next_render_offset = self.splitScrollback.renderOffset(pinned_render_offset);
+        const next_output_offset = self.splitScrollback.renderOffset(pinned_render_offset);
+        const next_render_offset = self.clampSplitSurfaceOffset(previousSurfaceOffset, pinned_render_offset);
         const targetFooterTopLine: u32 = @max(next_render_offset + 1, @as(u32, 1));
         // Footer redraw is only needed when offset changes (settling/pinning) or
         // when an explicit force was requested by the caller.
-        const redraw_footer = force or previousRenderOffset != next_render_offset;
+        const redraw_footer = force or previousSurfaceOffset != next_render_offset;
         // When split scrollback is settled at the pinned boundary, newlines/wraps from
         // appended output must scroll only the upper pane. Without a temporary DECSTBM
         // region, terminals advance into the footer rows and overwrite them in place.
         const use_bounded_scroll_region = snapshot_has_content and
             pinned_render_offset > 0 and
-            next_render_offset == pinned_render_offset;
+            next_render_offset == pinned_render_offset and
+            next_output_offset == next_render_offset;
 
         if (snapshot_has_content or force) {
             if (snapshot_has_content) {
@@ -1101,7 +1150,7 @@ pub const CliRenderer = struct {
                     writer.print("\x1b[1;{d}r", .{pinned_render_offset}) catch {};
                 }
 
-                moveToSplitOutputCursor(writer, previousRenderOffset, previousOutputColumn, self.width);
+                moveToSplitOutputCursor(writer, previousOutputOffset, previousOutputColumn, self.width);
                 if (starts_mid_line or starts_wrapped_line) {
                     // The prior commit left output cursor mid-row and caller asked
                     // for newline anchoring. When the prior commit exactly filled the
@@ -1143,8 +1192,15 @@ pub const CliRenderer = struct {
         pinned_render_offset: u32,
         force: bool,
     ) void {
+        const transition = self.pendingSplitFooterTransition;
+        const hasPendingViewportTarget = transition.mode == .viewport_scroll and
+            transition.target_top_line > 0 and
+            transition.scroll_lines > 0;
         const previousRenderOffset = self.renderOffset;
-        const next_render_offset = self.splitScrollback.renderOffset(pinned_render_offset);
+        const next_render_offset = if (hasPendingViewportTarget)
+            transition.target_top_line - 1
+        else
+            self.clampSplitSurfaceOffset(previousRenderOffset, pinned_render_offset);
         const redraw_footer = force or previousRenderOffset != next_render_offset;
 
         self.renderOffset = next_render_offset;
@@ -1445,7 +1501,7 @@ pub const CliRenderer = struct {
         self.last_rendered_palette_epoch = self.palette_epoch;
         self.force_full_repaint = false;
 
-        self.nextRenderBuffer.clear(self.backgroundColor, null) catch {};
+        self.nextRenderBuffer.clear(self.backgroundColor, null);
 
         // Compare hit grids before swap to detect changes. This allows TypeScript to
         // know if hover state needs rechecking without manually tracking dirty state.
@@ -1566,7 +1622,7 @@ pub const CliRenderer = struct {
             return null;
         }
 
-        return buf.ClipRect{
+        return .{
             .x = intersect_x,
             .y = intersect_y,
             .width = @intCast(intersect_end_x - intersect_x),
@@ -1579,7 +1635,7 @@ pub const CliRenderer = struct {
     /// The rect is intersected with any existing scissor, so nested overflow:hidden
     /// containers compound correctly. All coordinates are in screen space.
     pub fn hitGridPushScissorRect(self: *CliRenderer, x: i32, y: i32, width: u32, height: u32) void {
-        var rect = buf.ClipRect{
+        var rect: buf.ClipRect = .{
             .x = x,
             .y = y,
             .width = width,
@@ -1837,6 +1893,16 @@ pub const CliRenderer = struct {
         return true;
     }
 
+    pub fn triggerNotification(self: *CliRenderer, message: []const u8, title: ?[]const u8) bool {
+        var stream: std.ArrayListUnmanaged(u8) = .{};
+        defer stream.deinit(self.allocator);
+
+        const ok = self.terminal.writeNotification(self.allocator, stream.writer(self.allocator), message, title) catch return false;
+        if (!ok) return false;
+        self.writeOut(stream.items);
+        return true;
+    }
+
     fn renderDebugOverlay(self: *CliRenderer) void {
         if (!self.debugOverlay.enabled) return;
 
@@ -1866,7 +1932,7 @@ pub const CliRenderer = struct {
             },
         }
 
-        self.nextRenderBuffer.fillRect(x, y, width, height, ansi.rgbColor(20, 20, 40, 255)) catch {};
+        self.nextRenderBuffer.fillRect(x, y, width, height, ansi.rgbColor(20, 20, 40, 255));
         self.nextRenderBuffer.drawText("Debug Information", x + 1, y + 1, ansi.rgbColor(255, 255, 100, 255), ansi.rgbColor(0, 0, 0, 0), ansi.TextAttributes.BOLD) catch {};
 
         var row: u32 = 2;

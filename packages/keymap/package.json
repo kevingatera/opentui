@@ -1,6 +1,6 @@
 {
   "name": "@opentui/keymap",
-  "version": "0.2.0",
+  "version": "0.2.16",
   "description": "Standalone keymap package for OpenTUI",
   "license": "MIT",
   "repository": {
@@ -17,6 +17,14 @@
       "import": "./src/index.ts",
       "types": "./src/index.ts"
     },
+    "./extras": {
+      "import": "./src/extras/index.ts",
+      "types": "./src/extras/index.ts"
+    },
+    "./extras/graph": {
+      "import": "./src/extras/graph.ts",
+      "types": "./src/extras/graph.ts"
+    },
     "./addons": {
       "import": "./src/addons/index.ts",
       "types": "./src/addons/index.ts"
@@ -24,6 +32,10 @@
     "./addons/opentui": {
       "import": "./src/addons/opentui/index.ts",
       "types": "./src/addons/opentui/index.ts"
+    },
+    "./testing": {
+      "import": "./src/testing/index.ts",
+      "types": "./src/testing/index.ts"
     },
     "./html": {
       "import": "./src/html.ts",
@@ -40,6 +52,10 @@
     "./solid": {
       "import": "./src/solid/index.ts",
       "types": "./src/solid/index.ts"
+    },
+    "./runtime-modules": {
+      "import": "./src/runtime-modules.ts",
+      "types": "./src/runtime-modules.ts"
     }
   },
   "scripts": {
@@ -53,7 +69,7 @@
   "peerDependencies": {
     "@opentui/react": "workspace:*",
     "@opentui/solid": "workspace:*",
-    "react": ">=19.0.0",
+    "react": ">=19.2.0",
     "solid-js": "1.9.12"
   },
   "peerDependenciesMeta": {
@@ -75,8 +91,8 @@
     "@opentui/solid": "workspace:*",
     "@types/bun": "latest",
     "@types/node": "^24.0.0",
-    "@types/react": "^19.0.0",
-    "react": ">=19.0.0",
+    "@types/react": "^19.2.0",
+    "react": ">=19.2.0",
     "solid-js": "1.9.12",
     "typescript": "^5"
   },

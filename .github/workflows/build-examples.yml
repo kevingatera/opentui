@@ -34,16 +34,6 @@ jobs:
 
           echo ""
           echo "✅ Base dependencies installed"
-          echo "Note: bun-webgpu platform packages will be installed in a dedicated CI step"
-
-      - name: Install bun-webgpu for all target platforms
-        run: |
-          set -e
-          BUN_WEBGPU_VERSION=$(bun -e 'import { readFileSync } from "node:fs"; const pkg = JSON.parse(readFileSync("packages/core/package.json", "utf8")); process.stdout.write(pkg.optionalDependencies["bun-webgpu"]);')
-          echo "Installing bun-webgpu@${BUN_WEBGPU_VERSION} for all target platforms..."
-          cd packages/core
-          bun install --os="*" --cpu="*" bun-webgpu@${BUN_WEBGPU_VERSION}
-          echo "✅ bun-webgpu installed for all target platforms"
 
       - name: Download npm packages artifact
         uses: actions/download-artifact@v4
@@ -67,6 +57,18 @@ jobs:
           cp -r npm-packages/core-dist packages/core/dist
           test -f packages/core/dist/package.json || (echo "❌ core dist/package.json missing after copy!" && exit 1)
           echo "✅ Core dist copied"
+
+          echo "Copying three dist..."
+          test -d "npm-packages/three-dist" || (echo "❌ three-dist not found in artifact!" && exit 1)
+          cp -r npm-packages/three-dist packages/three/dist
+          test -f packages/three/dist/package.json || (echo "❌ three dist/package.json missing after copy!" && exit 1)
+          echo "✅ Three dist copied"
+
+          echo "Copying qrcode dist..."
+          test -d "npm-packages/qrcode-dist" || (echo "❌ qrcode-dist not found in artifact!" && exit 1)
+          cp -r npm-packages/qrcode-dist packages/qrcode/dist
+          test -f packages/qrcode/dist/package.json || (echo "❌ qrcode dist/package.json missing after copy!" && exit 1)
+          echo "✅ QRCode dist copied"
 
           # Copy native packages to core's node_modules (required - these OVERRIDE the npm versions)
           echo "Copying built native packages (overriding any npm versions)..."
@@ -98,68 +100,37 @@ jobs:
           echo ""
           echo "Package extraction complete:"
           ls -lah packages/core/dist/
+          ls -lah packages/qrcode/dist/
+          ls -lah packages/three/dist/
           ls -lah packages/core/node_modules/@opentui/
-
-      - name: Verify bun-webgpu is available for build
-        run: |
-          echo "Checking bun-webgpu installation..."
-
-          # Check root node_modules first
-          if [ -d node_modules/bun-webgpu ]; then
-            echo "✅ bun-webgpu found in root node_modules"
-          # Check packages/core/node_modules
-          elif [ -d packages/core/node_modules/bun-webgpu ]; then
-            echo "✅ bun-webgpu found in packages/core/node_modules"
-          else
-            echo "❌ bun-webgpu not found in root or packages/core/node_modules!"
-            echo "Note: The build script will install it, but it should already be present"
-            exit 1
-          fi
-
-          # Check for platform-specific packages in .bun cache (where bun install --os="*" --cpu="*" puts them)
-          BUN_WEBGPU_VERSION=$(bun -e 'import { readFileSync } from "node:fs"; const pkg = JSON.parse(readFileSync("packages/core/package.json", "utf8")); process.stdout.write(pkg.optionalDependencies["bun-webgpu"]);')
-
-          echo ""
-          echo "Checking for platform-specific bun-webgpu packages in cache (version ${BUN_WEBGPU_VERSION})..."
-          for platform in darwin-arm64 darwin-x64 linux-x64 win32-x64; do
-            if [ -d "node_modules/.bun/bun-webgpu-${platform}@${BUN_WEBGPU_VERSION}" ]; then
-              echo "✅ bun-webgpu-${platform} found in cache"
-            else
-              echo "⚠️  bun-webgpu-${platform} not found (will be installed during build)"
-            fi
-          done
-
-          echo ""
-          echo "✅ bun-webgpu ready for bundling"
 
       - name: Build examples
         env:
           OPENTUI_EXAMPLES_USE_PREBUILT_ARTIFACTS: "true"
-          OPENTUI_EXAMPLES_SKIP_BUN_WEBGPU_INSTALL: "true"
         run: |
           set -e
-          cd packages/core
-          bun src/examples/build.ts
+          cd packages/examples
+          bun run build
 
       - name: Verify example builds
         run: |
           set -e
           echo "Verifying example executables..."
-          test -f "packages/core/src/examples/dist/darwin-x64/opentui-examples" || (echo "❌ darwin-x64 example missing!" && exit 1)
-          test -f "packages/core/src/examples/dist/darwin-arm64/opentui-examples" || (echo "❌ darwin-arm64 example missing!" && exit 1)
-          test -f "packages/core/src/examples/dist/linux-x64/opentui-examples" || (echo "❌ linux-x64 example missing!" && exit 1)
-          test -f "packages/core/src/examples/dist/windows-x64/opentui-examples.exe" || (echo "❌ windows-x64 example missing!" && exit 1)
+          test -f "packages/examples/dist/darwin-x64/opentui-examples" || (echo "❌ darwin-x64 example missing!" && exit 1)
+          test -f "packages/examples/dist/darwin-arm64/opentui-examples" || (echo "❌ darwin-arm64 example missing!" && exit 1)
+          test -f "packages/examples/dist/linux-x64/opentui-examples" || (echo "❌ linux-x64 example missing!" && exit 1)
+          test -f "packages/examples/dist/windows-x64/opentui-examples.exe" || (echo "❌ windows-x64 example missing!" && exit 1)
 
           echo "✅ All example executables verified"
           echo ""
-          ls -lah packages/core/src/examples/dist/*/
+          ls -lah packages/examples/dist/*/
 
       # Create separate zips for each platform's examples
       - name: Package examples - darwin-x64
         run: |
           set -e
           mkdir -p artifacts/examples-darwin-x64
-          cp packages/core/src/examples/dist/darwin-x64/opentui-examples artifacts/examples-darwin-x64/
+          cp packages/examples/dist/darwin-x64/opentui-examples artifacts/examples-darwin-x64/
           cd artifacts
           zip -r examples-darwin-x64.zip examples-darwin-x64/
           test -f examples-darwin-x64.zip || (echo "❌ Failed to create darwin-x64 zip" && exit 1)
@@ -170,7 +141,7 @@ jobs:
         run: |
           set -e
           mkdir -p artifacts/examples-darwin-arm64
-          cp packages/core/src/examples/dist/darwin-arm64/opentui-examples artifacts/examples-darwin-arm64/
+          cp packages/examples/dist/darwin-arm64/opentui-examples artifacts/examples-darwin-arm64/
           cd artifacts
           zip -r examples-darwin-arm64.zip examples-darwin-arm64/
           test -f examples-darwin-arm64.zip || (echo "❌ Failed to create darwin-arm64 zip" && exit 1)
@@ -181,7 +152,7 @@ jobs:
         run: |
           set -e
           mkdir -p artifacts/examples-linux-x64
-          cp packages/core/src/examples/dist/linux-x64/opentui-examples artifacts/examples-linux-x64/
+          cp packages/examples/dist/linux-x64/opentui-examples artifacts/examples-linux-x64/
           cd artifacts
           zip -r examples-linux-x64.zip examples-linux-x64/
           test -f examples-linux-x64.zip || (echo "❌ Failed to create linux-x64 zip" && exit 1)
@@ -192,7 +163,7 @@ jobs:
         run: |
           set -e
           mkdir -p artifacts/examples-windows-x64
-          cp packages/core/src/examples/dist/windows-x64/opentui-examples.exe artifacts/examples-windows-x64/
+          cp packages/examples/dist/windows-x64/opentui-examples.exe artifacts/examples-windows-x64/
           cd artifacts
           zip -r examples-windows-x64.zip examples-windows-x64/
           test -f examples-windows-x64.zip || (echo "❌ Failed to create windows-x64 zip" && exit 1)

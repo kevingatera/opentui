@@ -9,6 +9,7 @@ const gp = @import("grapheme.zig");
 const link = @import("link.zig");
 const text_buffer = @import("text-buffer.zig");
 const text_buffer_view = @import("text-buffer-view.zig");
+const text_buffer_iterators = @import("text-buffer-iterators.zig");
 const edit_buffer_mod = @import("edit-buffer.zig");
 const editor_view = @import("editor-view.zig");
 const syntax_style = @import("syntax-style.zig");
@@ -17,6 +18,7 @@ const utf8 = @import("utf8.zig");
 const logger = @import("logger.zig");
 const event_bus = @import("event-bus.zig");
 const native_span_feed = @import("native-span-feed.zig");
+const native_audio = @import("audio.zig");
 const buffer_effects = @import("buffer-methods.zig");
 
 pub const OptimizedBuffer = buffer.OptimizedBuffer;
@@ -45,20 +47,25 @@ inline fn selectionStyle(bg: ?RGBA, fg: ?RGBA) text_buffer_view.SelectionStyle {
 
 comptime {
     _ = native_span_feed;
+    _ = native_audio;
 }
 
 export fn setLogCallback(callback: ?*const fn (level: u8, msgPtr: [*]const u8, msgLen: usize) callconv(.c) void) void {
     logger.setLogCallback(callback);
 }
 
-export fn setEventCallback(callback: ?*const fn (namePtr: [*]const u8, nameLen: usize, dataPtr: [*]const u8, dataLen: usize) callconv(.c) void) void {
-    event_bus.setEventCallback(callback);
+export fn createEventSink(callback: ?event_bus.EventCallback) ?*event_bus.EventSink {
+    return event_bus.createEventSink(globalAllocator, callback orelse return null) catch null;
 }
 
-var gpa = std.heap.GeneralPurposeAllocator(.{
+export fn destroyEventSink(sink: *event_bus.EventSink) void {
+    event_bus.destroyEventSink(globalAllocator, sink);
+}
+
+var gpa: std.heap.GeneralPurposeAllocator(.{
     .enable_memory_limit = build_options.gpa_safe_stats,
     .safety = build_options.gpa_safe_stats,
-}){};
+}) = .{};
 const globalAllocator = gpa.allocator();
 var arena = std.heap.ArenaAllocator.init(globalAllocator);
 const globalArena = arena.allocator();
@@ -74,6 +81,18 @@ pub const ExternalAllocatorStats = extern struct {
     small_allocations: u64,
     large_allocations: u64,
     requested_bytes_valid: bool,
+};
+
+pub const ExternalRenderStats = extern struct {
+    last_frame_time: f64,
+    average_frame_time: f64,
+    render_time: f64,
+    stdout_write_time: f64,
+    frame_count: u64,
+    cells_updated: u32,
+    average_cells_updated: u32,
+    render_time_valid: bool,
+    stdout_write_time_valid: bool,
 };
 
 fn toNonNegativeU64(value: anytype) u64 {
@@ -177,6 +196,98 @@ export fn createNativeSpanFeed(options_ptr: ?*const native_span_feed.Options) ?*
     return native_span_feed.createNativeSpanFeedWithAllocator(globalAllocator, options_ptr);
 }
 
+export fn createAudioEngine(options_ptr: ?*const native_audio.CreateOptions) ?*native_audio.Engine {
+    return native_audio.create(globalAllocator, options_ptr);
+}
+
+export fn destroyAudioEngine(engine: *native_audio.Engine) void {
+    native_audio.destroy(engine);
+}
+
+export fn audioRefreshPlaybackDevices(engine: *native_audio.Engine) i32 {
+    return native_audio.refreshPlaybackDevices(engine);
+}
+
+export fn audioGetPlaybackDeviceCount(engine: *native_audio.Engine) u32 {
+    return native_audio.getPlaybackDeviceCount(engine);
+}
+
+export fn audioGetPlaybackDeviceName(engine: *native_audio.Engine, index: u32, out_ptr: [*]u8, max_len: usize) usize {
+    return native_audio.getPlaybackDeviceName(engine, index, out_ptr, max_len);
+}
+
+export fn audioIsPlaybackDeviceDefault(engine: *native_audio.Engine, index: u32) bool {
+    return native_audio.isPlaybackDeviceDefault(engine, index);
+}
+
+export fn audioSelectPlaybackDevice(engine: *native_audio.Engine, index: u32) i32 {
+    return native_audio.selectPlaybackDevice(engine, index);
+}
+
+export fn audioClearPlaybackDeviceSelection(engine: *native_audio.Engine) void {
+    native_audio.clearPlaybackDeviceSelection(engine);
+}
+
+export fn audioStart(engine: *native_audio.Engine, options_ptr: ?*const native_audio.StartOptions) i32 {
+    return native_audio.start(engine, options_ptr);
+}
+
+export fn audioStartMixer(engine: *native_audio.Engine) i32 {
+    return native_audio.startMixer(engine);
+}
+
+export fn audioStop(engine: *native_audio.Engine) i32 {
+    return native_audio.stop(engine);
+}
+
+export fn audioLoad(engine: *native_audio.Engine, data_ptr: ?[*]const u8, data_len: usize, out_sound_id: ?*u32) i32 {
+    return native_audio.load(engine, data_ptr, data_len, out_sound_id);
+}
+
+export fn audioUnload(engine: *native_audio.Engine, sound_id: u32) i32 {
+    return native_audio.unload(engine, sound_id);
+}
+
+export fn audioPlay(engine: *native_audio.Engine, sound_id: u32, options_ptr: ?*const native_audio.VoiceOptions, out_voice_id: ?*u32) i32 {
+    return native_audio.play(engine, sound_id, options_ptr, out_voice_id);
+}
+
+export fn audioStopVoice(engine: *native_audio.Engine, voice_id: u32) i32 {
+    return native_audio.stopVoice(engine, voice_id);
+}
+
+export fn audioSetVoiceGroup(engine: *native_audio.Engine, voice_id: u32, group_id: u32) i32 {
+    return native_audio.setVoiceGroup(engine, voice_id, group_id);
+}
+
+export fn audioCreateGroup(engine: *native_audio.Engine, name_ptr: ?[*]const u8, name_len: usize, out_group_id: ?*u32) i32 {
+    return native_audio.createGroup(engine, name_ptr, name_len, out_group_id);
+}
+
+export fn audioSetGroupVolume(engine: *native_audio.Engine, group_id: u32, volume: f32) i32 {
+    return native_audio.setGroupVolume(engine, group_id, volume);
+}
+
+export fn audioSetMasterVolume(engine: *native_audio.Engine, volume: f32) i32 {
+    return native_audio.setMasterVolume(engine, volume);
+}
+
+export fn audioMixToBuffer(engine: *native_audio.Engine, out_ptr: ?[*]f32, frame_count: u32, channels: u8) i32 {
+    return native_audio.mixToBuffer(engine, out_ptr, frame_count, channels);
+}
+
+export fn audioEnableTap(engine: *native_audio.Engine, enabled: bool, capacity_frames: u32) i32 {
+    return native_audio.enableTap(engine, enabled, capacity_frames);
+}
+
+export fn audioReadTap(engine: *native_audio.Engine, out_ptr: ?[*]f32, frame_count: u32, channels: u8, out_frames_read: ?*u32) i32 {
+    return native_audio.readTap(engine, out_ptr, frame_count, channels, out_frames_read);
+}
+
+export fn audioGetStats(engine: *native_audio.Engine, out_stats: ?*native_audio.Stats) i32 {
+    return native_audio.getStats(engine, out_stats);
+}
+
 export fn getArenaAllocatedBytes() usize {
     return arena.queryCapacity();
 }
@@ -271,6 +382,10 @@ export fn syncSplitScrollback(rendererPtr: *renderer.CliRenderer, pinnedRenderOf
     return rendererPtr.syncSplitScrollback(pinnedRenderOffset);
 }
 
+export fn getSplitOutputOffset(rendererPtr: *renderer.CliRenderer, surfaceOffset: u32) u32 {
+    return rendererPtr.getSplitOutputOffset(surfaceOffset);
+}
+
 export fn setPendingSplitFooterTransition(
     rendererPtr: *renderer.CliRenderer,
     mode: u8,
@@ -278,6 +393,7 @@ export fn setPendingSplitFooterTransition(
     sourceHeight: u32,
     targetTopLine: u32,
     targetHeight: u32,
+    scrollLines: u32,
 ) void {
     rendererPtr.setPendingSplitFooterTransition(
         @enumFromInt(mode),
@@ -285,6 +401,7 @@ export fn setPendingSplitFooterTransition(
         sourceHeight,
         targetTopLine,
         targetHeight,
+        scrollLines,
     );
 }
 
@@ -298,6 +415,22 @@ export fn updateStats(rendererPtr: *renderer.CliRenderer, time: f64, fps: u32, f
 
 export fn updateMemoryStats(rendererPtr: *renderer.CliRenderer, heapUsed: u32, heapTotal: u32, arrayBuffers: u32) void {
     rendererPtr.updateMemoryStats(heapUsed, heapTotal, arrayBuffers);
+}
+
+export fn getRenderStats(rendererPtr: *renderer.CliRenderer, outPtr: *ExternalRenderStats) void {
+    const stats = rendererPtr.getRenderStats();
+
+    outPtr.* = .{
+        .last_frame_time = stats.lastFrameTime,
+        .average_frame_time = stats.averageFrameTime,
+        .render_time = stats.renderTime orelse 0,
+        .stdout_write_time = stats.stdoutWriteTime orelse 0,
+        .frame_count = stats.frameCount,
+        .cells_updated = stats.cellsUpdated,
+        .average_cells_updated = stats.averageCellsUpdated,
+        .render_time_valid = stats.renderTime != null,
+        .stdout_write_time_valid = stats.stdoutWriteTime != null,
+    };
 }
 
 export fn getNextBuffer(rendererPtr: *renderer.CliRenderer) *buffer.OptimizedBuffer {
@@ -448,7 +581,9 @@ pub const ExternalCapabilities = extern struct {
     bracketed_paste: bool,
     hyperlinks: bool,
     osc52: bool,
+    notifications: bool,
     explicit_cursor_positioning: bool,
+    in_tmux: bool,
     term_name_ptr: [*]const u8,
     term_name_len: usize,
     term_version_ptr: [*]const u8,
@@ -476,7 +611,9 @@ export fn getTerminalCapabilities(rendererPtr: *renderer.CliRenderer, capsPtr: *
         .bracketed_paste = caps.bracketed_paste,
         .hyperlinks = caps.hyperlinks,
         .osc52 = caps.osc52,
+        .notifications = caps.notifications,
         .explicit_cursor_positioning = caps.explicit_cursor_positioning,
+        .in_tmux = term.in_tmux,
         .term_name_ptr = &term.term_info.name,
         .term_name_len = term.term_info.name_len,
         .term_version_ptr = &term.term_info.version,
@@ -606,9 +743,15 @@ export fn clearClipboardOSC52(rendererPtr: *renderer.CliRenderer, target: u8) bo
     return rendererPtr.clearClipboardOSC52(targetEnum);
 }
 
+export fn triggerNotification(rendererPtr: *renderer.CliRenderer, messagePtr: [*]const u8, messageLen: usize, titlePtr: ?[*]const u8, titleLen: usize) bool {
+    const message = messagePtr[0..messageLen];
+    const title = if (titlePtr) |ptr| ptr[0..titleLen] else null;
+    return rendererPtr.triggerNotification(message, title);
+}
+
 // Buffer functions
 export fn bufferClear(bufferPtr: *buffer.OptimizedBuffer, bg: [*]const u16) void {
-    bufferPtr.clear(ptrToRGBA(bg), null) catch {};
+    bufferPtr.clear(ptrToRGBA(bg), null);
 }
 
 export fn bufferGetCharPtr(bufferPtr: *buffer.OptimizedBuffer) [*]u32 {
@@ -663,7 +806,7 @@ export fn bufferDrawText(bufferPtr: *buffer.OptimizedBuffer, text: [*]const u8, 
 }
 
 export fn bufferSetCellWithAlphaBlending(bufferPtr: *buffer.OptimizedBuffer, x: u32, y: u32, char: u32, fg: [*]const u16, bg: [*]const u16, attributes: u32) void {
-    bufferPtr.setCellWithAlphaBlending(x, y, char, ptrToRGBA(fg), ptrToRGBA(bg), attributes) catch {};
+    bufferPtr.setCellWithAlphaBlending(x, y, char, ptrToRGBA(fg), ptrToRGBA(bg), attributes);
 }
 
 export fn bufferSetCell(bufferPtr: *buffer.OptimizedBuffer, x: u32, y: u32, char: u32, fg: [*]const u16, bg: [*]const u16, attributes: u32) void {
@@ -676,7 +819,7 @@ export fn bufferSetCell(bufferPtr: *buffer.OptimizedBuffer, x: u32, y: u32, char
 }
 
 export fn bufferFillRect(bufferPtr: *buffer.OptimizedBuffer, x: u32, y: u32, width: u32, height: u32, bg: [*]const u16) void {
-    bufferPtr.fillRect(x, y, width, height, ptrToRGBA(bg)) catch {};
+    bufferPtr.fillRect(x, y, width, height, ptrToRGBA(bg));
 }
 
 export fn bufferColorMatrix(bufferPtr: *buffer.OptimizedBuffer, matrixPtr: [*]const f32, cellMaskPtr: [*]const f32, cellMaskCount: usize, strength: f32, target: u8) void {
@@ -752,7 +895,7 @@ export fn bufferClearOpacity(bufferPtr: *buffer.OptimizedBuffer) void {
 }
 
 export fn bufferDrawSuperSampleBuffer(bufferPtr: *buffer.OptimizedBuffer, x: u32, y: u32, pixelData: [*]const u8, len: usize, format: u8, alignedBytesPerRow: u32) void {
-    bufferPtr.drawSuperSampleBuffer(x, y, pixelData, len, format, alignedBytesPerRow) catch {};
+    bufferPtr.drawSuperSampleBuffer(x, y, pixelData, len, format, alignedBytesPerRow);
 }
 
 export fn linkAlloc(urlPtr: [*]const u8, urlLen: usize) u32 {
@@ -821,7 +964,7 @@ export fn bufferDrawBox(
     bottomTitle: ?[*]const u8,
     bottomTitleLen: u32,
 ) void {
-    const borderSides = buffer.BorderSides{
+    const borderSides: buffer.BorderSides = .{
         .top = (packedOptions & 0b1000) != 0,
         .right = (packedOptions & 0b0100) != 0,
         .bottom = (packedOptions & 0b0010) != 0,
@@ -1129,7 +1272,7 @@ export fn textBufferViewSetViewportSize(view: *text_buffer_view.UnifiedTextBuffe
 }
 
 export fn textBufferViewSetViewport(view: *text_buffer_view.UnifiedTextBufferView, x: u32, y: u32, width: u32, height: u32) void {
-    view.setViewport(text_buffer_view.Viewport{
+    view.setViewport(.{
         .x = x,
         .y = y,
         .width = width,
@@ -1211,7 +1354,7 @@ export fn textBufferViewMeasureForDimensions(view: *text_buffer_view.UnifiedText
 
 // ===== EditBuffer Exports =====
 
-export fn createEditBuffer(widthMethod: u8) ?*edit_buffer_mod.EditBuffer {
+export fn createEditBuffer(widthMethod: u8, event_sink: ?*event_bus.EventSink) ?*edit_buffer_mod.EditBuffer {
     const pool = gp.initGlobalPool(globalArena);
     const link_pool = link.initGlobalLinkPool(globalArena);
     const wMethod: utf8.WidthMethod = if (widthMethod == 0) .wcwidth else .unicode;
@@ -1221,6 +1364,7 @@ export fn createEditBuffer(widthMethod: u8) ?*edit_buffer_mod.EditBuffer {
         pool,
         link_pool,
         wMethod,
+        event_sink,
     ) catch null;
 }
 
@@ -1238,8 +1382,8 @@ export fn editBufferInsertText(edit_buffer: *edit_buffer_mod.EditBuffer, textPtr
 }
 
 export fn editBufferDeleteRange(edit_buffer: *edit_buffer_mod.EditBuffer, start_row: u32, start_col: u32, end_row: u32, end_col: u32) void {
-    const start = edit_buffer_mod.Cursor{ .row = start_row, .col = start_col };
-    const end = edit_buffer_mod.Cursor{ .row = end_row, .col = end_col };
+    const start: edit_buffer_mod.Cursor = .{ .row = start_row, .col = start_col };
+    const end: edit_buffer_mod.Cursor = .{ .row = end_row, .col = end_col };
     edit_buffer.deleteRange(start, end) catch {};
 }
 
@@ -1313,8 +1457,7 @@ export fn editBufferGetEOL(edit_buffer: *edit_buffer_mod.EditBuffer, outPtr: *Ex
 }
 
 export fn editBufferOffsetToPosition(edit_buffer: *edit_buffer_mod.EditBuffer, offset: u32, outPtr: *ExternalLogicalCursor) bool {
-    const iter_mod = @import("text-buffer-iterators.zig");
-    const coords = iter_mod.offsetToCoords(edit_buffer.tb.rope(), offset) orelse return false;
+    const coords = text_buffer_iterators.offsetToCoords(edit_buffer.tb.rope(), offset) orelse return false;
     outPtr.* = .{
         .row = coords.row,
         .col = coords.col,
@@ -1324,13 +1467,11 @@ export fn editBufferOffsetToPosition(edit_buffer: *edit_buffer_mod.EditBuffer, o
 }
 
 export fn editBufferPositionToOffset(edit_buffer: *edit_buffer_mod.EditBuffer, row: u32, col: u32) u32 {
-    const iter_mod = @import("text-buffer-iterators.zig");
-    return iter_mod.coordsToOffset(edit_buffer.tb.rope(), row, col) orelse 0;
+    return text_buffer_iterators.coordsToOffset(edit_buffer.tb.rope(), row, col) orelse 0;
 }
 
 export fn editBufferGetLineStartOffset(edit_buffer: *edit_buffer_mod.EditBuffer, row: u32) u32 {
-    const iter_mod = @import("text-buffer-iterators.zig");
-    return iter_mod.coordsToOffset(edit_buffer.tb.rope(), row, 0) orelse 0;
+    return text_buffer_iterators.coordsToOffset(edit_buffer.tb.rope(), row, 0) orelse 0;
 }
 
 export fn editBufferGetTextRange(edit_buffer: *edit_buffer_mod.EditBuffer, start_offset: u32, end_offset: u32, outPtr: [*]u8, maxLen: usize) usize {
@@ -1441,7 +1582,7 @@ export fn destroyEditorView(view: *editor_view.EditorView) void {
 }
 
 export fn editorViewSetViewport(view: *editor_view.EditorView, x: u32, y: u32, width: u32, height: u32, moveCursor: bool) void {
-    view.setViewport(text_buffer_view.Viewport{ .x = x, .y = y, .width = width, .height = height }, moveCursor);
+    view.setViewport(.{ .x = x, .y = y, .width = width, .height = height }, moveCursor);
 }
 
 export fn editorViewClearViewport(view: *editor_view.EditorView) void {
@@ -1688,7 +1829,7 @@ export fn bufferDrawEditorView(
     x: i32,
     y: i32,
 ) void {
-    bufferPtr.drawEditorView(viewPtr, x, y) catch {};
+    bufferPtr.drawEditorView(viewPtr, x, y);
 }
 
 export fn bufferDrawTextBufferView(
@@ -1697,7 +1838,7 @@ export fn bufferDrawTextBufferView(
     x: i32,
     y: i32,
 ) void {
-    bufferPtr.drawTextBuffer(viewPtr, x, y) catch {};
+    bufferPtr.drawTextBuffer(viewPtr, x, y);
 }
 
 pub const ExternalHighlight = extern struct {
@@ -1855,11 +1996,18 @@ pub const EncodedChar = extern struct {
 export fn encodeUnicode(
     textPtr: [*]const u8,
     textLen: usize,
-    outPtr: *[*]EncodedChar,
+    outPtr: *?[*]EncodedChar,
     outLenPtr: *usize,
     widthMethod: u8,
 ) bool {
     const text = textPtr[0..textLen];
+
+    if (text.len == 0) {
+        outPtr.* = @ptrFromInt(0);
+        outLenPtr.* = 0;
+        return true;
+    }
+
     const pool = gp.initGlobalPool(globalArena);
     const wMethod: utf8.WidthMethod = if (widthMethod == 0) .wcwidth else .unicode;
 
@@ -1871,7 +2019,7 @@ export fn encodeUnicode(
     defer grapheme_list.deinit(globalAllocator);
 
     const tab_width: u8 = 2;
-    utf8.findGraphemeInfo(text, tab_width, is_ascii_only, wMethod, globalAllocator, &grapheme_list) catch return false;
+    utf8.findGraphemeInfo(globalAllocator, text, tab_width, is_ascii_only, wMethod, &grapheme_list) catch return false;
     const specials = grapheme_list.items;
 
     // Allocate output array
@@ -1974,8 +2122,12 @@ export fn encodeUnicode(
     return true;
 }
 
-export fn freeUnicode(charsPtr: [*]const EncodedChar, charsLen: usize) void {
-    const chars = charsPtr[0..charsLen];
+export fn freeUnicode(charsPtr: ?[*]const EncodedChar, charsLen: usize) void {
+    if (charsLen == 0 or charsPtr == null) {
+        return;
+    }
+
+    const chars = charsPtr.?[0..charsLen];
     const pool = gp.initGlobalPool(globalArena);
 
     for (chars) |encoded_char| {
@@ -2001,5 +2153,5 @@ export fn bufferDrawChar(
     bg: [*]const u16,
     attributes: u32,
 ) void {
-    bufferPtr.drawChar(char, x, y, ptrToRGBA(fg), ptrToRGBA(bg), attributes) catch {};
+    bufferPtr.drawChar(char, x, y, ptrToRGBA(fg), ptrToRGBA(bg), attributes);
 }

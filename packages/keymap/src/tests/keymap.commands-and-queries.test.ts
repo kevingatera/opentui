@@ -9,7 +9,7 @@ import {
   type ActiveKey,
   type ActiveKeyOptions,
   type BindingParser,
-  type CommandRecord,
+  type Command,
   type ErrorEvent,
   type EventMatchResolverContext,
   type Keymap,
@@ -62,7 +62,11 @@ describe("keymap: commands and queries", () => {
           title: "Save File",
           category: "File",
           run(ctx) {
-            seen.push({ ...(ctx.command?.attrs ?? {}) })
+            seen.push({
+              desc: ctx.command?.desc,
+              title: ctx.command?.title,
+              category: ctx.command?.category,
+            })
           },
         },
       ],
@@ -131,17 +135,12 @@ describe("keymap: commands and queries", () => {
     expect(keymap.getCommands({ search: "write", searchIn: ["label"] }).map((command) => command.name)).toEqual([
       "save-current",
     ])
-    expect(getCommand(keymap, "save-current")).toEqual({
+    expect(getCommand(keymap, "save-current")).toMatchObject({
       name: "save-current",
-      fields: {
-        namespace: "excommands",
-        title: "Write File",
-        usage: ":write <file>",
-        tags: ["file", "write"],
-      },
-      attrs: {
-        label: "Write File",
-      },
+      namespace: "excommands",
+      title: "Write File",
+      usage: ":write <file>",
+      tags: ["file", "write"],
     })
   })
 
@@ -211,8 +210,8 @@ describe("keymap: commands and queries", () => {
       keymap
         .getCommands({
           filter: {
-            usage(value: unknown, command: CommandRecord) {
-              return typeof value === "string" && value.includes("<file>") && command.fields.namespace === "excommands"
+            usage(value: unknown, command: Command) {
+              return typeof value === "string" && value.includes("<file>") && command.namespace === "excommands"
             },
           },
         })
@@ -233,6 +232,15 @@ describe("keymap: commands and queries", () => {
     expect(
       keymap.getCommands({ filter: (command) => command.name === "palette-help" }).map((command) => command.name),
     ).toEqual(["palette-help"])
+    expect(
+      keymap.getCommands({ filter: { name: ["palette-help", "missing"] } }).map((command) => command.name),
+    ).toEqual(["palette-help"])
+    expect(
+      keymap
+        .getCommands({ filter: { name: ["save-current", "palette-help"], namespace: "excommands" } })
+        .map((command) => command.name),
+    ).toEqual(["save-current"])
+    expect(keymap.getCommands({ filter: { name: [] } }).map((command) => command.name)).toEqual([])
 
     offCommands()
 
@@ -257,12 +265,12 @@ describe("keymap: commands and queries", () => {
     })
 
     expect(keymap.getCommands().map((command) => command.name)).toEqual(["save", "quit"])
-    expect(keymap.getCommands().map((command) => command.fields.title)).toEqual(["Global Save", "Quit"])
-    expect(keymap.getCommands({ visibility: "active" }).map((command) => command.fields.title)).toEqual([
+    expect(keymap.getCommands().map((command) => command.title)).toEqual(["Global Save", "Quit"])
+    expect(keymap.getCommands({ visibility: "active" }).map((command) => command.title)).toEqual([
       "Global Save",
       "Quit",
     ])
-    expect(keymap.getCommands({ visibility: "registered" }).map((command) => command.fields.title)).toEqual([
+    expect(keymap.getCommands({ visibility: "registered" }).map((command) => command.title)).toEqual([
       "Global Save",
       "Quit",
       "Local Save",
@@ -270,13 +278,13 @@ describe("keymap: commands and queries", () => {
 
     target.focus()
 
-    expect(keymap.getCommands().map((command) => command.fields.title)).toEqual(["Local Save", "Quit"])
-    expect(keymap.getCommands({ visibility: "active" }).map((command) => command.fields.title)).toEqual([
+    expect(keymap.getCommands().map((command) => command.title)).toEqual(["Local Save", "Quit"])
+    expect(keymap.getCommands({ visibility: "active" }).map((command) => command.title)).toEqual([
       "Local Save",
       "Global Save",
       "Quit",
     ])
-    expect(keymap.getCommands({ visibility: "registered" }).map((command) => command.fields.title)).toEqual([
+    expect(keymap.getCommands({ visibility: "registered" }).map((command) => command.title)).toEqual([
       "Global Save",
       "Quit",
       "Local Save",
@@ -306,7 +314,7 @@ describe("keymap: commands and queries", () => {
 
     const snapshot = (visibility?: "reachable" | "active" | "registered") => {
       return keymap.getCommandEntries(visibility ? { visibility } : undefined).map((entry) => ({
-        title: entry.command.fields.title,
+        title: entry.command.title,
         bindings: entry.bindings
           .map((binding) => stringifyKeySequence(binding.sequence, { preferDisplay: true }))
           .sort(),
@@ -336,6 +344,176 @@ describe("keymap: commands and queries", () => {
     ])
   })
 
+  test("getCommandBindings returns requested command binding groups", () => {
+    const keymap = getKeymap(renderer)
+
+    keymap.registerLayer({
+      commands: [
+        { name: "save", title: "Save", run() {} },
+        { name: "quit", title: "Quit", run() {} },
+      ],
+      bindings: [
+        { key: "ctrl+s", cmd: "save", desc: "Save with control" },
+        { key: "s", cmd: "save" },
+        { key: "q", cmd: "quit" },
+        { key: "x", cmd: "unrequested" },
+      ],
+    })
+
+    const bindings = keymap.getCommandBindings({
+      visibility: "registered",
+      commands: ["quit", "missing", "save"],
+    })
+
+    expect([...bindings.keys()]).toEqual(["quit", "missing", "save"])
+    expect(bindings.get("quit")?.map((binding) => stringifyKeySequence(binding.sequence))).toEqual(["q"])
+    expect(bindings.get("missing")).toEqual([])
+    expect(bindings.get("save")?.map((binding) => stringifyKeySequence(binding.sequence))).toEqual(["ctrl+s", "s"])
+    expect(bindings.get("save")?.[0]).toMatchObject({
+      command: "save",
+      commandAttrs: {
+        title: "Save",
+      },
+      attrs: {
+        desc: "Save with control",
+      },
+      event: "press",
+      preventDefault: true,
+      fallthrough: false,
+    })
+  })
+
+  test("getCommandBindings collapses duplicate command records without duplicating bindings", () => {
+    const keymap = getKeymap(renderer)
+
+    keymap.registerLayer({
+      commands: [{ name: "duplicate", title: "First", run() {} }],
+      bindings: [{ key: "a", cmd: "duplicate" }],
+    })
+    keymap.registerLayer({
+      commands: [{ name: "duplicate", title: "Second", run() {} }],
+      bindings: [{ key: "b", cmd: "duplicate" }],
+    })
+
+    expect(
+      keymap
+        .getCommandEntries({ visibility: "registered", filter: { name: "duplicate" } })
+        .map((entry) => entry.bindings.map((binding) => stringifyKeySequence(binding.sequence))),
+    ).toEqual([
+      ["a", "b"],
+      ["a", "b"],
+    ])
+    expect(
+      keymap
+        .getCommandBindings({ visibility: "registered", commands: ["duplicate"] })
+        .get("duplicate")
+        ?.map((binding) => stringifyKeySequence(binding.sequence)),
+    ).toEqual(["a", "b"])
+  })
+
+  test("getCommandBindings respects registered and active visibility", () => {
+    const keymap = getKeymap(renderer)
+    const target = createFocusableBox("command-binding-visibility-target")
+    renderer.root.add(target)
+
+    keymap.registerLayer({
+      commands: [{ name: "save", title: "Global Save", run() {} }],
+      bindings: [{ key: "x", cmd: "save" }],
+    })
+    keymap.registerLayer({
+      target,
+      commands: [{ name: "save", title: "Local Save", run() {} }],
+      bindings: [{ key: "l", cmd: "save" }],
+    })
+
+    const labels = (visibility?: "reachable" | "active" | "registered") => {
+      return keymap
+        .getCommandBindings({ visibility, commands: ["save"] })
+        .get("save")
+        ?.map((binding) => stringifyKeySequence(binding.sequence))
+    }
+
+    expect(labels()).toEqual(["x"])
+    expect(labels("active")).toEqual(["x"])
+    expect(labels("registered")).toEqual(["x", "l"])
+
+    target.focus()
+
+    expect(labels()).toEqual(["l", "x"])
+    expect(labels("active")).toEqual(["l", "x"])
+    expect(labels("registered")).toEqual(["x", "l"])
+  })
+
+  test("getCommandBindings filters inactive bindings outside registered visibility", () => {
+    const keymap = getKeymap(renderer)
+    let enabled = false
+
+    keymap.registerBindingFields({
+      active(value, ctx) {
+        if (value !== true) {
+          throw new Error('Keymap binding field "active" must be true')
+        }
+
+        ctx.activeWhen(() => enabled)
+      },
+    })
+    keymap.registerLayer({
+      commands: [{ name: "conditional", run() {} }],
+      bindings: [{ key: "x", cmd: "conditional", active: true }],
+    })
+
+    const labels = (visibility?: "reachable" | "active" | "registered") => {
+      return keymap
+        .getCommandBindings({ visibility, commands: ["conditional"] })
+        .get("conditional")
+        ?.map((binding) => stringifyKeySequence(binding.sequence))
+    }
+
+    expect(labels()).toEqual([])
+    expect(labels("active")).toEqual([])
+    expect(labels("registered")).toEqual(["x"])
+
+    enabled = true
+
+    expect(labels()).toEqual(["x"])
+    expect(labels("active")).toEqual(["x"])
+  })
+
+  test("getCommandBindings includes registered bindings and applies resolver visibility", () => {
+    const keymap = getKeymap(renderer)
+
+    keymap.registerLayer({
+      bindings: [{ key: "x", cmd: "external-run" }],
+    })
+
+    const labels = (visibility?: "reachable" | "active" | "registered") => {
+      return keymap
+        .getCommandBindings({ visibility, commands: ["external-run"] })
+        .get("external-run")
+        ?.map((binding) => stringifyKeySequence(binding.sequence))
+    }
+
+    expect(labels("registered")).toEqual(["x"])
+    expect(labels()).toEqual([])
+
+    keymap.appendCommandResolver((command) => {
+      if (command !== "external-run") {
+        return undefined
+      }
+
+      return {
+        name: command,
+        title: "External Run",
+        run() {},
+      }
+    })
+
+    const activeBindings = keymap.getCommandBindings({ commands: ["external-run"] }).get("external-run")
+
+    expect(activeBindings?.map((binding) => stringifyKeySequence(binding.sequence))).toEqual(["x"])
+    expect(activeBindings?.[0]?.commandAttrs).toEqual({ title: "External Run" })
+  })
+
   test("getCommandEntries reuses active binding views and keeps command-only entries", () => {
     const keymap = getKeymap(renderer)
 
@@ -358,19 +536,12 @@ describe("keymap: commands and queries", () => {
     })
 
     const save = getCommandEntry(keymap, "save-file")
-    expect(save).toEqual({
+    expect(save).toMatchObject({
       command: {
         name: "save-file",
-        fields: {
-          desc: "Save the current file",
-          title: "Save File",
-          category: "File",
-        },
-        attrs: {
-          desc: "Save the current file",
-          title: "Save File",
-          category: "File",
-        },
+        desc: "Save the current file",
+        title: "Save File",
+        category: "File",
       },
       bindings: [
         {
@@ -392,15 +563,10 @@ describe("keymap: commands and queries", () => {
       ],
     })
 
-    expect(getCommandEntry(keymap, "palette-help")).toEqual({
+    expect(getCommandEntry(keymap, "palette-help")).toMatchObject({
       command: {
         name: "palette-help",
-        fields: {
-          title: "Open Help",
-        },
-        attrs: {
-          title: "Open Help",
-        },
+        title: "Open Help",
       },
       bindings: [],
     })
@@ -453,6 +619,28 @@ describe("keymap: commands and queries", () => {
     ])
   })
 
+  test("getCommandEntries supports result limits", () => {
+    const keymap = getParserKeymap()
+
+    keymap.registerLayer({
+      commands: [
+        { name: "alpha", run() {} },
+        { name: "beta", run() {} },
+        { name: "gamma", run() {} },
+      ],
+      bindings: [
+        { key: "a", cmd: "alpha" },
+        { key: "b", cmd: "beta" },
+        { key: "g", cmd: "gamma" },
+      ],
+    })
+
+    expect(keymap.getCommandEntries({ visibility: "registered", limit: 2 }).map((entry) => entry.command.name)).toEqual(
+      ["alpha", "beta"],
+    )
+    expect(keymap.getCommandEntries({ visibility: "registered", limit: 0 })).toEqual([])
+  })
+
   test("getCommands treats thrown filter predicates as errors and returns no matches", () => {
     const keymap = getKeymap(renderer)
     const { takeErrors } = captureDiagnostics(keymap)
@@ -497,39 +685,62 @@ describe("keymap: commands and queries", () => {
     ])
   })
 
-  test("getCommands returns immutable metadata records across repeated reads", () => {
+  test("failed command registration does not reserve the command name", () => {
     const keymap = getKeymap(renderer)
+    const { takeErrors } = captureDiagnostics(keymap)
+    const calls: string[] = []
+
+    keymap.registerCommandFields({
+      broken() {
+        throw new Error("broken command field")
+      },
+    })
 
     keymap.registerLayer({
       commands: [
         {
-          name: "save-current",
-          tags: ["file", "write"],
-          run() {},
+          name: "retry-command",
+          broken: true,
+          run() {
+            calls.push("broken")
+          },
+        },
+        {
+          name: "retry-command",
+          run() {
+            calls.push("registered")
+          },
         },
       ],
     })
 
-    const first = getCommand(keymap, "save-current")
-    expect(first).toBeDefined()
-    expect(Object.isFrozen(first!.fields)).toBe(true)
-    expect(Object.isFrozen(first!.fields.tags as object)).toBe(true)
+    expect(keymap.getCommands().map((command) => command.name)).toEqual(["retry-command"])
+    expect(keymap.runCommand("retry-command")).toEqual({ ok: true })
+    expect(calls).toEqual(["registered"])
+    expect(takeErrors().errors).toEqual(["broken command field"])
+  })
 
-    expect(() => {
-      ;(first!.fields.tags as string[]).push("mutated")
-    }).toThrow()
+  test("getCommands returns the registered command object across repeated reads", () => {
+    const keymap = getKeymap(renderer)
+    const command = {
+      name: "save-current",
+      tags: ["file", "write"],
+      run() {},
+    }
+
+    keymap.registerLayer({
+      commands: [command],
+    })
+
+    const first = getCommand(keymap, "save-current")
+    expect(first).toBe(command)
 
     const second = getCommand(keymap, "save-current")
     expect(second).toBe(first)
-    expect(second).toEqual({
-      name: "save-current",
-      fields: {
-        tags: ["file", "write"],
-      },
-    })
+    expect(second?.tags).toEqual(["file", "write"])
   })
 
-  test("getCommands clones plain metadata deeply but preserves opaque values by reference", () => {
+  test("getCommands returns command metadata by reference", () => {
     const keymap = getKeymap(renderer)
     const opaque = new Map([["recent", 1]])
     const helper = () => "ok"
@@ -554,26 +765,16 @@ describe("keymap: commands and queries", () => {
     ;(payload.tags[1] as { kind: string }).kind = "mutated"
 
     const command = getCommand(keymap, "save-current")
-    const storedPayload = command?.fields.payload as {
-      nested: { title: string }
-      tags: [string, { kind: string }]
-      opaque: Map<string, number>
-      helper: () => string
-    }
-
+    const storedPayload = command?.payload as typeof payload
     expect(storedPayload).toBeDefined()
-    expect(storedPayload).not.toBe(payload)
-    expect(storedPayload.nested).not.toBe(payload.nested)
-    expect(storedPayload.tags).not.toBe(payload.tags)
-    expect(storedPayload.tags[1]).not.toBe(payload.tags[1])
-    expect(storedPayload.nested.title).toBe("Write File")
-    expect(storedPayload.tags[1]).toEqual({ kind: "write" })
+    expect(storedPayload).toBe(payload)
+    expect(storedPayload.nested).toBe(payload.nested)
+    expect(storedPayload.tags).toBe(payload.tags)
+    expect(storedPayload.tags[1]).toBe(payload.tags[1])
+    expect(storedPayload.nested.title).toBe("Mutated")
+    expect(storedPayload.tags[1]).toEqual({ kind: "mutated" })
     expect(storedPayload.opaque).toBe(opaque)
     expect(storedPayload.helper).toBe(helper)
-    expect(Object.isFrozen(storedPayload)).toBe(true)
-    expect(Object.isFrozen(storedPayload.nested)).toBe(true)
-    expect(Object.isFrozen(storedPayload.tags)).toBe(true)
-    expect(Object.isFrozen(storedPayload.tags[1])).toBe(true)
   })
 
   test("keeps active key projections isolated across repeated reads", () => {

@@ -1,4 +1,13 @@
-import { dlopen, toArrayBuffer, JSCallback, ptr, type Pointer } from "bun:ffi"
+import {
+  dlopen,
+  ffiBool,
+  toArrayBuffer,
+  ptr,
+  toPointer,
+  type FFICallbackInstance,
+  type Pointer,
+} from "./platform/ffi.js"
+import { writeFile } from "./platform/runtime.js"
 import { existsSync, writeFileSync } from "fs"
 import { EventEmitter } from "events"
 import {
@@ -7,11 +16,12 @@ import {
   type TargetChannel,
   type DebugOverlayCorner,
   type WidthMethod,
+  type TerminalCapabilities,
   type Highlight,
   type LineInfo,
   type MousePointerStyle,
 } from "./types.js"
-export type { LineInfo, AllocatorStats, BuildOptions }
+export type { LineInfo, AllocatorStats, BuildOptions, NativeRenderStats }
 
 import { RGBA } from "./lib/RGBA.js"
 import { OptimizedBuffer } from "./buffer.js"
@@ -32,21 +42,30 @@ import {
   NativeSpanFeedOptionsStruct,
   NativeSpanFeedStatsStruct,
   ReserveInfoStruct,
+  AudioCreateOptionsStruct,
+  AudioStartOptionsStruct,
+  AudioVoiceOptionsStruct,
+  AudioStatsStruct,
   BuildOptionsStruct,
   AllocatorStatsStruct,
+  NativeRenderStatsStruct,
 } from "./zig-structs.js"
 import type {
   NativeSpanFeedOptions,
   NativeSpanFeedStats,
   ReserveInfo,
+  AudioCreateOptions,
+  AudioStartOptions,
+  AudioVoiceOptions,
+  AudioStats,
   BuildOptions,
   AllocatorStats,
+  NativeRenderStats,
 } from "./zig-structs.js"
 import { isBunfsPath } from "./lib/bunfs.js"
-import { toPointer as toPlatformPointer } from "./platform/ffi.js"
 
-const module = await import(`@opentui/core-${process.platform}-${process.arch}/index.ts`)
-let targetLibPath = module.default
+const nativePackage = await import(`@opentui/core-${process.platform}-${process.arch}`)
+let targetLibPath = nativePackage.default
 
 if (isBunfsPath(targetLibPath)) {
   targetLibPath = targetLibPath.replace("../", "")
@@ -100,13 +119,10 @@ registerEnvVar({
 const CURSOR_STYLE_TO_ID = { block: 0, line: 1, underline: 2, default: 3 } as const
 const CURSOR_ID_TO_STYLE = ["block", "line", "underline", "default"] as const
 const MOUSE_STYLE_TO_ID = { default: 0, pointer: 1, text: 2, crosshair: 3, move: 4, "not-allowed": 5 } as const
-
 // Global singleton state for FFI tracing to prevent duplicate exit handlers
 let globalTraceSymbols: Record<string, number[]> | null = null
 let globalFFILogPath: string | null = null
 let exitHandlerRegistered = false
-// TODO: Remove this temporary shim once current Bun FFI call sites use the platform backend.
-const toPointer = toPlatformPointer as unknown as (value: number | bigint) => Pointer
 
 function toNumber(value: number | bigint): number {
   return typeof value === "bigint" ? Number(value) : value
@@ -130,7 +146,11 @@ function getOpenTUILib(libPath?: string) {
       returns: "void",
     },
     // Event bus
-    setEventCallback: {
+    createEventSink: {
+      args: ["ptr"],
+      returns: "ptr",
+    },
+    destroyEventSink: {
       args: ["ptr"],
       returns: "void",
     },
@@ -171,8 +191,12 @@ function getOpenTUILib(libPath?: string) {
       args: ["ptr", "u32"],
       returns: "u32",
     },
+    getSplitOutputOffset: {
+      args: ["ptr", "u32"],
+      returns: "u32",
+    },
     setPendingSplitFooterTransition: {
-      args: ["ptr", "u8", "u32", "u32", "u32", "u32"],
+      args: ["ptr", "u8", "u32", "u32", "u32", "u32", "u32"],
       returns: "void",
     },
     clearPendingSplitFooterTransition: {
@@ -185,6 +209,10 @@ function getOpenTUILib(libPath?: string) {
     },
     updateMemoryStats: {
       args: ["ptr", "u32", "u32", "u32"],
+      returns: "void",
+    },
+    getRenderStats: {
+      args: ["ptr", "ptr"],
       returns: "void",
     },
     render: {
@@ -379,6 +407,10 @@ function getOpenTUILib(libPath?: string) {
     },
     clearClipboardOSC52: {
       args: ["ptr", "u8"],
+      returns: "bool",
+    },
+    triggerNotification: {
+      args: ["ptr", "ptr", "usize", "ptr", "usize"],
       returns: "bool",
     },
 
@@ -813,7 +845,7 @@ function getOpenTUILib(libPath?: string) {
 
     // EditBuffer functions
     createEditBuffer: {
-      args: ["u8"],
+      args: ["u8", "ptr"],
       returns: "ptr",
     },
     destroyEditBuffer: {
@@ -1129,6 +1161,100 @@ function getOpenTUILib(libPath?: string) {
       returns: "void",
     },
 
+    // Audio
+    createAudioEngine: {
+      args: ["ptr"],
+      returns: "ptr",
+    },
+    destroyAudioEngine: {
+      args: ["ptr"],
+      returns: "void",
+    },
+    audioRefreshPlaybackDevices: {
+      args: ["ptr"],
+      returns: "i32",
+    },
+    audioGetPlaybackDeviceCount: {
+      args: ["ptr"],
+      returns: "u32",
+    },
+    audioGetPlaybackDeviceName: {
+      args: ["ptr", "u32", "ptr", "usize"],
+      returns: "usize",
+    },
+    audioIsPlaybackDeviceDefault: {
+      args: ["ptr", "u32"],
+      returns: "bool",
+    },
+    audioSelectPlaybackDevice: {
+      args: ["ptr", "u32"],
+      returns: "i32",
+    },
+    audioClearPlaybackDeviceSelection: {
+      args: ["ptr"],
+      returns: "void",
+    },
+    audioStart: {
+      args: ["ptr", "ptr"],
+      returns: "i32",
+    },
+    audioStartMixer: {
+      args: ["ptr"],
+      returns: "i32",
+    },
+    audioStop: {
+      args: ["ptr"],
+      returns: "i32",
+    },
+    audioLoad: {
+      args: ["ptr", "ptr", "u64", "ptr"],
+      returns: "i32",
+    },
+    audioUnload: {
+      args: ["ptr", "u32"],
+      returns: "i32",
+    },
+    audioPlay: {
+      args: ["ptr", "u32", "ptr", "ptr"],
+      returns: "i32",
+    },
+    audioStopVoice: {
+      args: ["ptr", "u32"],
+      returns: "i32",
+    },
+    audioSetVoiceGroup: {
+      args: ["ptr", "u32", "u32"],
+      returns: "i32",
+    },
+    audioCreateGroup: {
+      args: ["ptr", "ptr", "u64", "ptr"],
+      returns: "i32",
+    },
+    audioSetGroupVolume: {
+      args: ["ptr", "u32", "f32"],
+      returns: "i32",
+    },
+    audioSetMasterVolume: {
+      args: ["ptr", "f32"],
+      returns: "i32",
+    },
+    audioMixToBuffer: {
+      args: ["ptr", "ptr", "u32", "u8"],
+      returns: "i32",
+    },
+    audioEnableTap: {
+      args: ["ptr", "bool", "u32"],
+      returns: "i32",
+    },
+    audioReadTap: {
+      args: ["ptr", "ptr", "u32", "u8", "ptr"],
+      returns: "i32",
+    },
+    audioGetStats: {
+      args: ["ptr", "ptr"],
+      returns: "i32",
+    },
+
     // NativeSpanFeed
     createNativeSpanFeed: {
       args: ["ptr"],
@@ -1182,6 +1308,7 @@ function getOpenTUILib(libPath?: string) {
 
   if (env.OTUI_DEBUG_FFI || env.OTUI_TRACE_FFI) {
     return {
+      ...rawSymbols,
       symbols: convertToDebugSymbols(rawSymbols.symbols),
     }
   }
@@ -1372,7 +1499,9 @@ function convertToDebugSymbols<T extends Record<string, any>>(symbols: T): T {
           const now = new Date()
           const timestamp = now.toISOString().replace(/[:.]/g, "-").replace(/T/, "_").split("Z")[0]
           const traceFilePath = `ffi_otui_trace_${timestamp}.log`
-          Bun.write(traceFilePath, output)
+          void writeFile(traceFilePath, output).catch((error) => {
+            console.error("Failed to write FFI trace file:", error)
+          })
         } catch (e) {
           console.error("Failed to write FFI trace file:", e)
         }
@@ -1422,8 +1551,47 @@ export interface CursorState {
 
 export type NativeSpanFeedEventHandler = (eventId: number, arg0: Pointer, arg1: number | bigint) => void
 
-export interface RenderLib {
-  createRenderer: (width: number, height: number, options?: { testing?: boolean; remote?: boolean }) => Pointer | null
+export interface AudioEngineLib {
+  createAudioEngine: (options?: AudioCreateOptions | null) => Pointer | null
+  destroyAudioEngine: (engine: Pointer) => void
+  audioRefreshPlaybackDevices: (engine: Pointer) => number
+  audioGetPlaybackDeviceCount: (engine: Pointer) => number
+  audioGetPlaybackDeviceName: (engine: Pointer, index: number) => string
+  audioIsPlaybackDeviceDefault: (engine: Pointer, index: number) => boolean
+  audioSelectPlaybackDevice: (engine: Pointer, index: number) => number
+  audioClearPlaybackDeviceSelection: (engine: Pointer) => void
+  audioStart: (engine: Pointer, options?: AudioStartOptions | null) => number
+  audioStartMixer: (engine: Pointer) => number
+  audioStop: (engine: Pointer) => number
+  audioLoad: (engine: Pointer, data: Uint8Array) => { status: number; soundId: number | null }
+  audioUnload: (engine: Pointer, soundId: number) => number
+  audioPlay: (
+    engine: Pointer,
+    soundId: number,
+    options?: AudioVoiceOptions,
+  ) => { status: number; voiceId: number | null }
+  audioStopVoice: (engine: Pointer, voiceId: number) => number
+  audioSetVoiceGroup: (engine: Pointer, voiceId: number, groupId: number) => number
+  audioCreateGroup: (engine: Pointer, name: string) => { status: number; groupId: number | null }
+  audioSetGroupVolume: (engine: Pointer, groupId: number, volume: number) => number
+  audioSetMasterVolume: (engine: Pointer, volume: number) => number
+  audioMixToBuffer: (engine: Pointer, outBuffer: Float32Array, frameCount: number, channels: number) => number
+  audioEnableTap: (engine: Pointer, enabled: boolean, capacityFrames: number) => number
+  audioReadTap: (
+    engine: Pointer,
+    outBuffer: Float32Array,
+    frameCount: number,
+    channels: number,
+  ) => { status: number; framesRead: number }
+  audioGetStats: (engine: Pointer) => AudioStats | null
+}
+
+export interface RenderLib extends AudioEngineLib {
+  createRenderer: (
+    width: number,
+    height: number,
+    options?: { testing?: boolean; remote?: boolean; feedPtr?: Pointer | null },
+  ) => Pointer | null
   setTerminalEnvVar: (renderer: Pointer, key: string, value: string) => boolean
   destroyRenderer: (renderer: Pointer) => void
   setUseThread: (renderer: Pointer, useThread: boolean) => void
@@ -1432,6 +1600,7 @@ export interface RenderLib {
   setRenderOffset: (renderer: Pointer, offset: number) => void
   resetSplitScrollback: (renderer: Pointer, seedRows: number, pinnedRenderOffset: number) => number
   syncSplitScrollback: (renderer: Pointer, pinnedRenderOffset: number) => number
+  getSplitOutputOffset: (renderer: Pointer, surfaceOffset: number) => number
   setPendingSplitFooterTransition: (
     renderer: Pointer,
     mode: number,
@@ -1439,10 +1608,12 @@ export interface RenderLib {
     sourceHeight: number,
     targetTopLine: number,
     targetHeight: number,
+    scrollLines: number,
   ) => void
   clearPendingSplitFooterTransition: (renderer: Pointer) => void
   updateStats: (renderer: Pointer, time: number, fps: number, frameCallbackTime: number) => void
   updateMemoryStats: (renderer: Pointer, heapUsed: number, heapTotal: number, arrayBuffers: number) => void
+  getRenderStats: (renderer: Pointer) => NativeRenderStats
   render: (renderer: Pointer, force: boolean) => void
   repaintSplitFooter: (renderer: Pointer, pinnedRenderOffset: number, force: boolean) => number
   commitSplitFooterSnapshot: (
@@ -1607,6 +1778,7 @@ export interface RenderLib {
   setTerminalTitle: (renderer: Pointer, title: string) => void
   copyToClipboardOSC52: (renderer: Pointer, target: number, payload: Uint8Array) => boolean
   clearClipboardOSC52: (renderer: Pointer, target: number) => boolean
+  triggerNotification: (renderer: Pointer, message: string, title?: string) => boolean
   addToHitGrid: (renderer: Pointer, x: number, y: number, width: number, height: number, id: number) => void
   clearCurrentHitGrid: (renderer: Pointer) => void
   hitGridPushScissorRect: (renderer: Pointer, x: number, y: number, width: number, height: number) => void
@@ -1892,7 +2064,7 @@ export interface RenderLib {
   syntaxStyleResolveByName: (style: Pointer, name: string) => number | null
   syntaxStyleGetStyleCount: (style: Pointer) => number
 
-  getTerminalCapabilities: (renderer: Pointer) => any
+  getTerminalCapabilities: (renderer: Pointer) => TerminalCapabilities
   processCapabilityResponse: (renderer: Pointer, response: string) => void
 
   encodeUnicode: (
@@ -1926,11 +2098,12 @@ class FFIRenderLib implements RenderLib {
   private opentui: ReturnType<typeof getOpenTUILib>
   public readonly encoder: TextEncoder = new TextEncoder()
   public readonly decoder: TextDecoder = new TextDecoder()
-  private logCallbackWrapper: any // Store the FFI callback wrapper
-  private eventCallbackWrapper: any // Store the FFI event callback wrapper
+  private logCallbackWrapper: FFICallbackInstance | null = null
+  private eventCallbackWrapper: FFICallbackInstance | null = null
+  private eventSinkPtr: Pointer | null = null
   private _nativeEvents: EventEmitter = new EventEmitter()
   private _anyEventHandlers: Array<(name: string, data: ArrayBuffer) => void> = []
-  private nativeSpanFeedCallbackWrapper: JSCallback | null = null
+  private nativeSpanFeedCallbackWrapper: FFICallbackInstance | null = null
   private nativeSpanFeedHandlers = new Map<Pointer, NativeSpanFeedEventHandler>()
 
   constructor(libPath?: string) {
@@ -1944,7 +2117,7 @@ class FFIRenderLib implements RenderLib {
       return
     }
 
-    const logCallback = new JSCallback(
+    const logCallback = this.opentui.createCallback(
       (level: number, msgPtr: Pointer, msgLenBigInt: bigint | number) => {
         try {
           const msgLen = typeof msgLenBigInt === "bigint" ? Number(msgLenBigInt) : msgLenBigInt
@@ -2001,7 +2174,7 @@ class FFIRenderLib implements RenderLib {
       return
     }
 
-    const eventCallback = new JSCallback(
+    const eventCallback = this.opentui.createCallback(
       (namePtr: Pointer, nameLenBigInt: bigint | number, dataPtr: Pointer, dataLenBigInt: bigint | number) => {
         try {
           const nameLen = typeof nameLenBigInt === "bigint" ? Number(nameLenBigInt) : nameLenBigInt
@@ -2011,16 +2184,8 @@ class FFIRenderLib implements RenderLib {
             return
           }
 
-          const nameBuffer = toArrayBuffer(namePtr, 0, nameLen)
-          const nameBytes = new Uint8Array(nameBuffer)
-          const eventName = this.decoder.decode(nameBytes)
-
-          let eventData: ArrayBuffer
-          if (dataLen > 0 && dataPtr) {
-            eventData = toArrayBuffer(dataPtr, 0, dataLen).slice()
-          } else {
-            eventData = new ArrayBuffer(0)
-          }
+          const eventName = this.decoder.decode(toArrayBuffer(namePtr, 0, nameLen))
+          const eventData = dataLen > 0 && dataPtr ? toArrayBuffer(dataPtr, 0, dataLen).slice(0) : new ArrayBuffer(0)
 
           queueMicrotask(() => {
             this._nativeEvents.emit(eventName, eventData)
@@ -2045,17 +2210,22 @@ class FFIRenderLib implements RenderLib {
       throw new Error("Failed to create event callback")
     }
 
-    this.setEventCallback(eventCallback.ptr)
+    this.eventSinkPtr = this.opentui.symbols.createEventSink(eventCallback.ptr)
+    if (!this.eventSinkPtr) {
+      eventCallback.close()
+      this.eventCallbackWrapper = null
+      throw new Error("Failed to create native event sink")
+    }
   }
 
-  private ensureNativeSpanFeedCallback(): JSCallback {
+  private ensureNativeSpanFeedCallback(): FFICallbackInstance {
     if (this.nativeSpanFeedCallbackWrapper) {
       return this.nativeSpanFeedCallbackWrapper
     }
 
-    const callback = new JSCallback(
+    const callback = this.opentui.createCallback(
       (streamPtr: Pointer, eventId: number, arg0: Pointer, arg1: number | bigint) => {
-        const handler = this.nativeSpanFeedHandlers.get(toPointer(streamPtr))
+        const handler = this.nativeSpanFeedHandlers.get(streamPtr)
         if (handler) {
           handler(eventId, arg0, arg1)
         }
@@ -2075,10 +2245,6 @@ class FFIRenderLib implements RenderLib {
     return callback
   }
 
-  private setEventCallback(callbackPtr: Pointer) {
-    this.opentui.symbols.setEventCallback(callbackPtr)
-  }
-
   public createRenderer(
     width: number,
     height: number,
@@ -2091,7 +2257,7 @@ class FFIRenderLib implements RenderLib {
     // Writable). Public callers pass their stdout stream; `createCliRenderer`
     // decides which backend to wire.
     const feedPtr = options.feedPtr ?? null
-    return this.opentui.symbols.createRenderer(width, height, testing, remote, feedPtr)
+    return this.opentui.symbols.createRenderer(width, height, ffiBool(testing), ffiBool(remote), feedPtr)
   }
 
   public setTerminalEnvVar(renderer: Pointer, key: string, value: string): boolean {
@@ -2105,11 +2271,11 @@ class FFIRenderLib implements RenderLib {
   }
 
   public setUseThread(renderer: Pointer, useThread: boolean) {
-    this.opentui.symbols.setUseThread(renderer, useThread)
+    this.opentui.symbols.setUseThread(renderer, ffiBool(useThread))
   }
 
   public setClearOnShutdown(renderer: Pointer, clear: boolean) {
-    this.opentui.symbols.setClearOnShutdown(renderer, clear)
+    this.opentui.symbols.setClearOnShutdown(renderer, ffiBool(clear))
   }
 
   public setBackgroundColor(renderer: Pointer, color: RGBA) {
@@ -2128,6 +2294,10 @@ class FFIRenderLib implements RenderLib {
     return this.opentui.symbols.syncSplitScrollback(renderer, pinnedRenderOffset)
   }
 
+  public getSplitOutputOffset(renderer: Pointer, surfaceOffset: number): number {
+    return this.opentui.symbols.getSplitOutputOffset(renderer, surfaceOffset)
+  }
+
   public setPendingSplitFooterTransition(
     renderer: Pointer,
     mode: number,
@@ -2135,6 +2305,7 @@ class FFIRenderLib implements RenderLib {
     sourceHeight: number,
     targetTopLine: number,
     targetHeight: number,
+    scrollLines: number,
   ): void {
     this.opentui.symbols.setPendingSplitFooterTransition(
       renderer,
@@ -2143,6 +2314,7 @@ class FFIRenderLib implements RenderLib {
       sourceHeight,
       targetTopLine,
       targetHeight,
+      scrollLines,
     )
   }
 
@@ -2156,6 +2328,22 @@ class FFIRenderLib implements RenderLib {
 
   public updateMemoryStats(renderer: Pointer, heapUsed: number, heapTotal: number, arrayBuffers: number) {
     this.opentui.symbols.updateMemoryStats(renderer, heapUsed, heapTotal, arrayBuffers)
+  }
+
+  public getRenderStats(renderer: Pointer): NativeRenderStats {
+    const statsBuffer = new ArrayBuffer(NativeRenderStatsStruct.size)
+    this.opentui.symbols.getRenderStats(renderer, ptr(statsBuffer))
+    const stats = NativeRenderStatsStruct.unpack(statsBuffer)
+
+    return {
+      nativeLastFrameTime: stats.lastFrameTime,
+      nativeAverageFrameTime: stats.averageFrameTime,
+      nativeFrameCount: toNumber(stats.frameCount),
+      cellsUpdated: stats.cellsUpdated,
+      averageCellsUpdated: stats.averageCellsUpdated,
+      nativeRenderTime: stats.renderTimeValid ? stats.renderTime : undefined,
+      nativeStdoutWriteTime: stats.stdoutWriteTimeValid ? stats.stdoutWriteTime : undefined,
+    }
   }
 
   public getNextBuffer(renderer: Pointer): OptimizedBuffer {
@@ -2242,7 +2430,7 @@ class FFIRenderLib implements RenderLib {
   }
 
   public bufferSetRespectAlpha(buffer: Pointer, respectAlpha: boolean): void {
-    this.opentui.symbols.bufferSetRespectAlpha(buffer, respectAlpha)
+    this.opentui.symbols.bufferSetRespectAlpha(buffer, ffiBool(respectAlpha))
   }
 
   public bufferGetId(buffer: Pointer): string {
@@ -2262,7 +2450,7 @@ class FFIRenderLib implements RenderLib {
       buffer,
       outputBuffer,
       outputBuffer.length,
-      addLineBreaks,
+      ffiBool(addLineBreaks),
     )
     return typeof bytesWritten === "bigint" ? Number(bytesWritten) : bytesWritten
   }
@@ -2529,7 +2717,7 @@ class FFIRenderLib implements RenderLib {
   }
 
   public setCursorPosition(renderer: Pointer, x: number, y: number, visible: boolean) {
-    this.opentui.symbols.setCursorPosition(renderer, x, y, visible)
+    this.opentui.symbols.setCursorPosition(renderer, x, y, ffiBool(visible))
   }
 
   public setCursorColor(renderer: Pointer, color: RGBA) {
@@ -2561,11 +2749,11 @@ class FFIRenderLib implements RenderLib {
   }
 
   public render(renderer: Pointer, force: boolean) {
-    this.opentui.symbols.render(renderer, force)
+    this.opentui.symbols.render(renderer, ffiBool(force))
   }
 
   public repaintSplitFooter(renderer: Pointer, pinnedRenderOffset: number, force: boolean): number {
-    return this.opentui.symbols.repaintSplitFooter(renderer, pinnedRenderOffset, force)
+    return this.opentui.symbols.repaintSplitFooter(renderer, pinnedRenderOffset, ffiBool(force))
   }
 
   public commitSplitFooterSnapshot(
@@ -2583,12 +2771,12 @@ class FFIRenderLib implements RenderLib {
       renderer,
       snapshot.ptr,
       rowColumns,
-      startOnNewLine,
-      trailingNewline,
+      ffiBool(startOnNewLine),
+      ffiBool(trailingNewline),
       pinnedRenderOffset,
-      force,
-      beginFrame,
-      finalizeFrame,
+      ffiBool(force),
+      ffiBool(beginFrame),
+      ffiBool(finalizeFrame),
     )
   }
 
@@ -2609,7 +2797,7 @@ class FFIRenderLib implements RenderLib {
     const bufferPtr = this.opentui.symbols.createOptimizedBuffer(
       width,
       height,
-      respectAlpha,
+      ffiBool(respectAlpha),
       widthMethodCode,
       idBytes,
       idBytes.length,
@@ -2643,7 +2831,7 @@ class FFIRenderLib implements RenderLib {
   }
 
   public setDebugOverlay(renderer: Pointer, enabled: boolean, corner: DebugOverlayCorner) {
-    this.opentui.symbols.setDebugOverlay(renderer, enabled, corner)
+    this.opentui.symbols.setDebugOverlay(renderer, ffiBool(enabled), corner)
   }
 
   public clearTerminal(renderer: Pointer) {
@@ -2661,6 +2849,18 @@ class FFIRenderLib implements RenderLib {
 
   public clearClipboardOSC52(renderer: Pointer, target: number): boolean {
     return this.opentui.symbols.clearClipboardOSC52(renderer, target)
+  }
+
+  public triggerNotification(renderer: Pointer, message: string, title?: string): boolean {
+    const messageBytes = this.encoder.encode(message)
+    const titleBytes = title === undefined ? null : this.encoder.encode(title)
+    return this.opentui.symbols.triggerNotification(
+      renderer,
+      messageBytes,
+      messageBytes.length,
+      titleBytes,
+      titleBytes?.length ?? 0,
+    )
   }
 
   public addToHitGrid(renderer: Pointer, x: number, y: number, width: number, height: number, id: number) {
@@ -2721,7 +2921,7 @@ class FFIRenderLib implements RenderLib {
   }
 
   public enableMouse(renderer: Pointer, enableMovement: boolean): void {
-    this.opentui.symbols.enableMouse(renderer, enableMovement)
+    this.opentui.symbols.enableMouse(renderer, ffiBool(enableMovement))
   }
 
   public disableMouse(renderer: Pointer): void {
@@ -2745,7 +2945,7 @@ class FFIRenderLib implements RenderLib {
   }
 
   public setupTerminal(renderer: Pointer, useAlternateScreen: boolean): void {
-    this.opentui.symbols.setupTerminal(renderer, useAlternateScreen)
+    this.opentui.symbols.setupTerminal(renderer, ffiBool(useAlternateScreen))
   }
 
   public suspendRenderer(renderer: Pointer): void {
@@ -2834,7 +3034,7 @@ class FFIRenderLib implements RenderLib {
   }
 
   public textBufferRegisterMemBuffer(buffer: Pointer, bytes: Uint8Array, owned: boolean = false): number {
-    const result = this.opentui.symbols.textBufferRegisterMemBuffer(buffer, bytes, bytes.length, owned)
+    const result = this.opentui.symbols.textBufferRegisterMemBuffer(buffer, bytes, bytes.length, ffiBool(owned))
     if (result === 0xffff) {
       throw new Error("Failed to register memory buffer")
     }
@@ -2847,7 +3047,7 @@ class FFIRenderLib implements RenderLib {
     bytes: Uint8Array,
     owned: boolean = false,
   ): boolean {
-    return this.opentui.symbols.textBufferReplaceMemBuffer(buffer, memId, bytes, bytes.length, owned)
+    return this.opentui.symbols.textBufferReplaceMemBuffer(buffer, memId, bytes, bytes.length, ffiBool(owned))
   }
 
   public textBufferClearMemRegistry(buffer: Pointer): void {
@@ -3156,7 +3356,7 @@ class FFIRenderLib implements RenderLib {
   }
 
   public textBufferViewSetTruncate(view: Pointer, truncate: boolean): void {
-    this.opentui.symbols.textBufferViewSetTruncate(view, truncate)
+    this.opentui.symbols.textBufferViewSetTruncate(view, ffiBool(truncate))
   }
 
   public textBufferViewMeasureForDimensions(
@@ -3283,7 +3483,7 @@ class FFIRenderLib implements RenderLib {
     height: number,
     moveCursor: boolean,
   ): void {
-    this.opentui.symbols.editorViewSetViewport(view, x, y, width, height, moveCursor)
+    this.opentui.symbols.editorViewSetViewport(view, x, y, width, height, ffiBool(moveCursor))
   }
 
   public editorViewGetViewport(view: Pointer): { offsetY: number; offsetX: number; height: number; width: number } {
@@ -3366,7 +3566,7 @@ class FFIRenderLib implements RenderLib {
   // EditBuffer implementations
   public createEditBuffer(widthMethod: WidthMethod): Pointer {
     const widthMethodCode = widthMethod === "wcwidth" ? 0 : 1
-    const bufferPtr = this.opentui.symbols.createEditBuffer(widthMethodCode)
+    const bufferPtr = this.opentui.symbols.createEditBuffer(widthMethodCode, this.eventSinkPtr)
     if (!bufferPtr) {
       throw new Error("Failed to create EditBuffer")
     }
@@ -3646,8 +3846,8 @@ class FFIRenderLib implements RenderLib {
       focusY,
       bg,
       fg,
-      updateCursor,
-      followCursor,
+      ffiBool(updateCursor),
+      ffiBool(followCursor),
     )
   }
 
@@ -3678,8 +3878,8 @@ class FFIRenderLib implements RenderLib {
       focusY,
       bg,
       fg,
-      updateCursor,
-      followCursor,
+      ffiBool(updateCursor),
+      ffiBool(followCursor),
     )
   }
 
@@ -3790,7 +3990,7 @@ class FFIRenderLib implements RenderLib {
     this.opentui.symbols.bufferClearOpacity(buffer)
   }
 
-  public getTerminalCapabilities(renderer: Pointer) {
+  public getTerminalCapabilities(renderer: Pointer): TerminalCapabilities {
     const capsBuffer = new ArrayBuffer(TerminalCapabilitiesStruct.size)
     this.opentui.symbols.getTerminalCapabilities(renderer, ptr(capsBuffer))
 
@@ -3812,7 +4012,9 @@ class FFIRenderLib implements RenderLib {
       bracketed_paste: caps.bracketed_paste,
       hyperlinks: caps.hyperlinks,
       osc52: caps.osc52,
+      notifications: caps.notifications,
       explicit_cursor_positioning: caps.explicit_cursor_positioning,
+      in_tmux: caps.in_tmux,
       terminal: {
         name: caps.term_name ?? "",
         version: caps.term_version ?? "",
@@ -3851,7 +4053,7 @@ class FFIRenderLib implements RenderLib {
     const outPtrView = new BigUint64Array(outPtrBuffer)
     const outLenView = new BigUint64Array(outLenBuffer)
 
-    const resultPtr = Number(outPtrView[0]) as Pointer
+    const resultPtr = toPointer(outPtrView[0])
     const resultLen = Number(outLenView[0])
 
     if (resultLen === 0) {
@@ -3882,15 +4084,174 @@ class FFIRenderLib implements RenderLib {
     this.opentui.symbols.bufferDrawChar(buffer, char, x, y, rgbaPtr(fg), rgbaPtr(bg), attributes)
   }
 
+  public createAudioEngine(options?: AudioCreateOptions | null): Pointer | null {
+    const optionsBuffer = options == null ? null : AudioCreateOptionsStruct.pack(options)
+    const enginePtr = this.opentui.symbols.createAudioEngine(optionsBuffer ? ptr(optionsBuffer) : null)
+    return enginePtr ? toPointer(enginePtr) : null
+  }
+
+  public destroyAudioEngine(engine: Pointer): void {
+    this.opentui.symbols.destroyAudioEngine(engine)
+  }
+
+  public audioRefreshPlaybackDevices(engine: Pointer): number {
+    return this.opentui.symbols.audioRefreshPlaybackDevices(engine)
+  }
+
+  public audioGetPlaybackDeviceCount(engine: Pointer): number {
+    return this.opentui.symbols.audioGetPlaybackDeviceCount(engine)
+  }
+
+  public audioGetPlaybackDeviceName(engine: Pointer, index: number): string {
+    const outBuffer = new Uint8Array(512)
+    const bytesWritten = toNumber(
+      this.opentui.symbols.audioGetPlaybackDeviceName(engine, index, ptr(outBuffer), outBuffer.length),
+    )
+    const safeBytesWritten = Math.max(0, Math.min(outBuffer.length, bytesWritten))
+    return this.decoder.decode(outBuffer.subarray(0, safeBytesWritten))
+  }
+
+  public audioIsPlaybackDeviceDefault(engine: Pointer, index: number): boolean {
+    return this.opentui.symbols.audioIsPlaybackDeviceDefault(engine, index)
+  }
+
+  public audioSelectPlaybackDevice(engine: Pointer, index: number): number {
+    return this.opentui.symbols.audioSelectPlaybackDevice(engine, index)
+  }
+
+  public audioClearPlaybackDeviceSelection(engine: Pointer): void {
+    this.opentui.symbols.audioClearPlaybackDeviceSelection(engine)
+  }
+
+  public audioStart(engine: Pointer, options?: AudioStartOptions | null): number {
+    const optionsBuffer = options == null ? null : AudioStartOptionsStruct.pack(options)
+    return this.opentui.symbols.audioStart(engine, optionsBuffer ? ptr(optionsBuffer) : null)
+  }
+
+  public audioStartMixer(engine: Pointer): number {
+    return this.opentui.symbols.audioStartMixer(engine)
+  }
+
+  public audioStop(engine: Pointer): number {
+    return this.opentui.symbols.audioStop(engine)
+  }
+
+  public audioLoad(engine: Pointer, data: Uint8Array): { status: number; soundId: number | null } {
+    const outBuffer = new ArrayBuffer(4)
+    const status = this.opentui.symbols.audioLoad(engine, ptr(data), data.length, ptr(outBuffer))
+    if (status !== 0) {
+      return { status, soundId: null }
+    }
+    const view = new Uint32Array(outBuffer)
+    return { status, soundId: view[0] }
+  }
+
+  public audioUnload(engine: Pointer, soundId: number): number {
+    return this.opentui.symbols.audioUnload(engine, soundId)
+  }
+
+  public audioPlay(
+    engine: Pointer,
+    soundId: number,
+    options?: AudioVoiceOptions,
+  ): { status: number; voiceId: number | null } {
+    const outBuffer = new ArrayBuffer(4)
+    const optionsBuffer = options ? AudioVoiceOptionsStruct.pack(options) : null
+    const status = this.opentui.symbols.audioPlay(
+      engine,
+      soundId,
+      optionsBuffer ? ptr(optionsBuffer) : null,
+      ptr(outBuffer),
+    )
+    if (status !== 0) {
+      return { status, voiceId: null }
+    }
+    const view = new Uint32Array(outBuffer)
+    return { status, voiceId: view[0] }
+  }
+
+  public audioStopVoice(engine: Pointer, voiceId: number): number {
+    return this.opentui.symbols.audioStopVoice(engine, voiceId)
+  }
+
+  public audioSetVoiceGroup(engine: Pointer, voiceId: number, groupId: number): number {
+    return this.opentui.symbols.audioSetVoiceGroup(engine, voiceId, groupId)
+  }
+
+  public audioCreateGroup(engine: Pointer, name: string): { status: number; groupId: number | null } {
+    const outBuffer = new ArrayBuffer(4)
+    const nameBytes = this.encoder.encode(name)
+    const status = this.opentui.symbols.audioCreateGroup(engine, ptr(nameBytes), nameBytes.length, ptr(outBuffer))
+    if (status !== 0) {
+      return { status, groupId: null }
+    }
+    const view = new Uint32Array(outBuffer)
+    return { status, groupId: view[0] }
+  }
+
+  public audioSetGroupVolume(engine: Pointer, groupId: number, volume: number): number {
+    return this.opentui.symbols.audioSetGroupVolume(engine, groupId, volume)
+  }
+
+  public audioSetMasterVolume(engine: Pointer, volume: number): number {
+    return this.opentui.symbols.audioSetMasterVolume(engine, volume)
+  }
+
+  public audioMixToBuffer(engine: Pointer, outBuffer: Float32Array, frameCount: number, channels: number): number {
+    return this.opentui.symbols.audioMixToBuffer(engine, ptr(outBuffer), frameCount, channels)
+  }
+
+  public audioEnableTap(engine: Pointer, enabled: boolean, capacityFrames: number): number {
+    return this.opentui.symbols.audioEnableTap(engine, enabled, capacityFrames)
+  }
+
+  public audioReadTap(
+    engine: Pointer,
+    outBuffer: Float32Array,
+    frameCount: number,
+    channels: number,
+  ): { status: number; framesRead: number } {
+    const outFramesReadBuffer = new ArrayBuffer(4)
+    const status = this.opentui.symbols.audioReadTap(
+      engine,
+      ptr(outBuffer),
+      frameCount,
+      channels,
+      ptr(outFramesReadBuffer),
+    )
+    if (status !== 0) {
+      return { status, framesRead: 0 }
+    }
+    const view = new Uint32Array(outFramesReadBuffer)
+    return { status, framesRead: view[0] ?? 0 }
+  }
+
+  public audioGetStats(engine: Pointer): AudioStats | null {
+    const statsBuffer = new ArrayBuffer(AudioStatsStruct.size)
+    const status = this.opentui.symbols.audioGetStats(engine, ptr(statsBuffer))
+    if (status !== 0) {
+      return null
+    }
+    const stats = AudioStatsStruct.unpack(statsBuffer)
+    return {
+      soundsLoaded: stats.soundsLoaded,
+      voicesActive: stats.voicesActive,
+      framesMixed: typeof stats.framesMixed === "bigint" ? stats.framesMixed : BigInt(stats.framesMixed),
+      lockMisses: stats.lockMisses,
+      lastPeak: stats.lastPeak,
+      lastRms: stats.lastRms,
+    }
+  }
+
   public registerNativeSpanFeedStream(stream: Pointer, handler: NativeSpanFeedEventHandler): void {
     const callback = this.ensureNativeSpanFeedCallback()
-    this.nativeSpanFeedHandlers.set(toPointer(stream), handler)
+    this.nativeSpanFeedHandlers.set(stream, handler)
     this.opentui.symbols.streamSetCallback(stream, callback.ptr)
   }
 
   public unregisterNativeSpanFeedStream(stream: Pointer): void {
     this.opentui.symbols.streamSetCallback(stream, null)
-    this.nativeSpanFeedHandlers.delete(toPointer(stream))
+    this.nativeSpanFeedHandlers.delete(stream)
   }
 
   public createNativeSpanFeed(options?: NativeSpanFeedOptions | null): Pointer {
@@ -3899,7 +4260,7 @@ class FFIRenderLib implements RenderLib {
     if (!streamPtr) {
       throw new Error("Failed to create stream")
     }
-    return toPointer(streamPtr)
+    return streamPtr as Pointer
   }
 
   public attachNativeSpanFeed(stream: Pointer): number {
@@ -3908,7 +4269,7 @@ class FFIRenderLib implements RenderLib {
 
   public destroyNativeSpanFeed(stream: Pointer): void {
     this.opentui.symbols.destroyNativeSpanFeed(stream)
-    this.nativeSpanFeedHandlers.delete(toPointer(stream))
+    this.nativeSpanFeedHandlers.delete(stream)
   }
 
   public streamWrite(stream: Pointer, data: Uint8Array | string): number {

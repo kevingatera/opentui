@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer"
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { BoxRenderable, KeyEvent, type Renderable } from "@opentui/core"
-import { createTestRenderer, type MockInput, type TestRenderer } from "@opentui/core/testing"
+import { createTestRenderer, setRendererCapabilities, type MockInput, type TestRenderer } from "@opentui/core/testing"
 import * as addons from "../addons/index.js"
 import {
   stringifyKeySequence,
@@ -9,7 +9,6 @@ import {
   type ActiveKey,
   type ActiveKeyOptions,
   type BindingParser,
-  type CommandRecord,
   type ErrorEvent,
   type EventMatchResolverContext,
   type Keymap,
@@ -55,6 +54,38 @@ describe("keymap: core and commands", () => {
     const second = createBareKeymap(renderer)
 
     expect(first).not.toBe(second)
+  })
+
+  test("OpenTUI host exposes platform and modifier metadata", () => {
+    const keymap = createBareKeymap(renderer)
+    const platform =
+      process.platform === "darwin"
+        ? "macos"
+        : process.platform === "win32"
+          ? "windows"
+          : process.platform === "linux"
+            ? "linux"
+            : "unknown"
+
+    expect(keymap.getHostMetadata()).toEqual({
+      platform,
+      primaryModifier: platform === "macos" ? "super" : platform === "unknown" ? "unknown" : "ctrl",
+      modifiers: {
+        ctrl: "supported",
+        shift: "supported",
+        meta: "supported",
+        super: "unknown",
+        hyper: "unknown",
+      },
+    })
+  })
+
+  test("OpenTUI host marks super and hyper supported when terminal capabilities report Kitty keyboard", () => {
+    setRendererCapabilities(renderer, { kitty_keyboard: true })
+    const keymap = createBareKeymap(renderer)
+
+    expect(keymap.getHostMetadata().modifiers.super).toBe("supported")
+    expect(keymap.getHostMetadata().modifiers.hyper).toBe("supported")
   })
 
   test("throws when requesting a keymap for a destroyed renderer", () => {
@@ -238,55 +269,129 @@ describe("keymap: core and commands", () => {
   test("runCommand and dispatchCommand execute commands and only include metadata when requested", () => {
     const keymap = getKeymap(renderer)
     const calls: string[] = []
+    const command = {
+      name: "save-file",
+      run() {
+        calls.push("save-file")
+      },
+    }
 
     keymap.registerLayer({
-      commands: [
-        {
-          name: "save-file",
-          run() {
-            calls.push("save-file")
-          },
-        },
-      ],
+      commands: [command],
     })
 
     expect(keymap.runCommand("save-file")).toEqual({ ok: true })
     expect(keymap.dispatchCommand("save-file")).toEqual({ ok: true })
-    expect(keymap.runCommand("save-file", { includeCommand: true })).toEqual({
-      ok: true,
-      command: {
-        name: "save-file",
-        fields: {},
-      },
-    })
-    expect(keymap.dispatchCommand("save-file", { includeCommand: true })).toEqual({
-      ok: true,
-      command: {
-        name: "save-file",
-        fields: {},
-      },
-    })
+    expect(keymap.runCommand("save-file", { includeCommand: true })).toEqual({ ok: true, command })
+    expect(keymap.dispatchCommand("save-file", { includeCommand: true })).toEqual({ ok: true, command })
     expect(keymap.runCommand("missing-command")).toEqual({ ok: false, reason: "not-found" })
     expect(keymap.dispatchCommand("missing-command")).toEqual({ ok: false, reason: "not-found" })
     expect(calls).toEqual(["save-file", "save-file", "save-file", "save-file"])
   })
 
-  test("normalizeCommandName exposes command normalization on the public facade", () => {
+  test("command contexts include invocation input and payload", () => {
     const keymap = getKeymap(renderer)
+    const seen: Array<{ input: string; payload: unknown }> = []
 
-    expect(keymap.normalizeCommandName("  save-file  ")).toBe("save-file")
-    expect(() => keymap.normalizeCommandName("save file")).toThrow(
-      'Invalid keymap command name "save file": command names cannot contain whitespace',
-    )
+    keymap.registerLayer({
+      commands: [
+        {
+          name: "save-file",
+          run(ctx) {
+            seen.push({ input: ctx.input, payload: ctx.payload })
+          },
+        },
+      ],
+      bindings: [{ key: "x", cmd: "save-file" }],
+    })
+
+    expect(keymap.runCommand("save-file", { payload: "run-payload" })).toEqual({ ok: true })
+    expect(keymap.dispatchCommand("save-file", { payload: "dispatch-payload" })).toEqual({
+      ok: true,
+    })
+    mockInput.pressKey("x")
+
+    expect(seen).toEqual([
+      { input: "save-file", payload: "run-payload" },
+      { input: "save-file", payload: "dispatch-payload" },
+      { input: "save-file", payload: undefined },
+    ])
   })
 
-  test("normalizeBindings exposes binding shorthand normalization on the public facade", () => {
+  test("command resolvers can adjust invocation context for the resolved command", () => {
     const keymap = getKeymap(renderer)
+    const seen: Array<{ input: string; payload: unknown }> = []
 
-    expect(keymap.normalizeBindings({ x: "save-file", y: () => {} })).toEqual([
-      { key: "x", cmd: "save-file" },
-      { key: "y", cmd: expect.any(Function) },
+    keymap.registerLayer({
+      commands: [
+        {
+          name: "target-command",
+          run(ctx) {
+            seen.push({ input: ctx.input, payload: ctx.payload })
+          },
+        },
+      ],
+    })
+
+    keymap.appendCommandResolver((command, ctx) => {
+      if (command !== "alias target") {
+        return undefined
+      }
+
+      ctx.setPayload("leaked")
+      return undefined
+    })
+    keymap.appendCommandResolver((command, ctx) => {
+      if (command !== "alias target") {
+        return undefined
+      }
+
+      ctx.setInput(command)
+      ctx.setPayload({ parsed: true, original: ctx.payload })
+      return ctx.getCommand("target-command")
+    })
+
+    expect(keymap.runCommand("alias target", { payload: "original-payload" })).toEqual({ ok: true })
+
+    expect(seen).toEqual([
+      {
+        input: "alias target",
+        payload: { parsed: true, original: "original-payload" },
+      },
     ])
+  })
+
+  test("resolver returned registered commands keep active command target", () => {
+    const keymap = getKeymap(renderer)
+    const target = createFocusableBox("resolver-command-target")
+    const seen: Array<boolean> = []
+
+    renderer.root.add(target)
+
+    keymap.registerLayer({
+      target,
+      commands: [
+        {
+          name: "target-command",
+          run(ctx) {
+            seen.push(ctx.target === target)
+          },
+        },
+      ],
+    })
+
+    keymap.appendCommandResolver((command, ctx) => {
+      if (command !== "alias-command") {
+        return undefined
+      }
+
+      return ctx.getCommand("target-command")
+    })
+
+    target.focus()
+
+    expect(keymap.dispatchCommand("alias-command")).toEqual({ ok: true })
+    expect(seen).toEqual([true])
   })
 
   test("acquireResource shares setup and disposes on last release", () => {
@@ -377,6 +482,7 @@ describe("keymap: core and commands", () => {
       }
 
       return {
+        name: command,
         run() {
           calls.push("resolver")
         },
@@ -402,6 +508,7 @@ describe("keymap: core and commands", () => {
       }
 
       return {
+        name: command,
         run() {
           calls.push("append")
         },
@@ -413,6 +520,7 @@ describe("keymap: core and commands", () => {
       }
 
       return {
+        name: command,
         run() {
           calls.push("prepend")
         },
@@ -432,6 +540,7 @@ describe("keymap: core and commands", () => {
       }
 
       return {
+        name: command,
         run() {},
       }
     })
@@ -441,6 +550,155 @@ describe("keymap: core and commands", () => {
     keymap.clearCommandResolvers()
 
     expect(keymap.runCommand("shared-command")).toEqual({ ok: false, reason: "not-found" })
+  })
+
+  test("programmatic resolver fallback resolves freshly for each call", () => {
+    const keymap = getKeymap(renderer)
+    const calls: string[] = []
+    let resolverCalls = 0
+
+    keymap.appendCommandResolver((command) => {
+      if (command !== "dynamic-command") {
+        return undefined
+      }
+
+      resolverCalls += 1
+      const generation = resolverCalls
+      return {
+        name: command,
+        run() {
+          calls.push(`run:${generation}`)
+        },
+      }
+    })
+
+    expect(keymap.runCommand("dynamic-command")).toEqual({ ok: true })
+    expect(keymap.runCommand("dynamic-command")).toEqual({ ok: true })
+    expect(keymap.dispatchCommand("dynamic-command")).toEqual({ ok: true })
+    expect(keymap.dispatchCommand("dynamic-command")).toEqual({ ok: true })
+    expect(resolverCalls).toBe(4)
+    expect(calls).toEqual(["run:1", "run:2", "run:3", "run:4"])
+  })
+
+  test("static binding resolver fallback resolves on each read and dispatch", () => {
+    const keymap = getKeymap(renderer)
+    const calls: string[] = []
+    let resolverCalls = 0
+
+    keymap.appendCommandResolver((command) => {
+      if (command !== "dynamic-binding") {
+        return undefined
+      }
+
+      resolverCalls += 1
+      const generation = resolverCalls
+      return {
+        name: command,
+        generation,
+        run() {
+          calls.push(`run:${generation}`)
+        },
+      }
+    })
+
+    keymap.registerLayer({
+      bindings: [{ key: "x", cmd: "dynamic-binding" }],
+    })
+
+    expect(getActiveKey(keymap, "x", { includeMetadata: true })?.commandAttrs).toEqual({ generation: 3 })
+    expect(resolverCalls).toBe(3)
+
+    mockInput.pressKey("x")
+    mockInput.pressKey("x")
+
+    expect(resolverCalls).toBeGreaterThan(3)
+    expect(calls).toHaveLength(2)
+    expect(calls[0]).not.toBe(calls[1])
+
+    expect(keymap.dispatchCommand("dynamic-binding")).toEqual({ ok: true })
+    expect(keymap.runCommand("dynamic-binding")).toEqual({ ok: true })
+    expect(resolverCalls).toBeGreaterThan(5)
+    expect(calls).toHaveLength(4)
+    expect(new Set(calls).size).toBe(4)
+  })
+
+  test("programmatic fallback resolves freshly after rejecting registered commands", () => {
+    const keymap = getKeymap(renderer)
+    const calls: string[] = []
+    let resolverCalls = 0
+
+    keymap.registerLayer({
+      commands: [
+        {
+          name: "shared-reject",
+          run() {
+            calls.push("registered")
+            return false
+          },
+        },
+      ],
+    })
+
+    keymap.appendCommandResolver((command) => {
+      if (command !== "shared-reject") {
+        return undefined
+      }
+
+      resolverCalls += 1
+      const generation = resolverCalls
+      return {
+        name: command,
+        run() {
+          calls.push(`resolver:${generation}`)
+        },
+      }
+    })
+
+    expect(keymap.runCommand("shared-reject")).toEqual({ ok: true })
+    expect(keymap.runCommand("shared-reject")).toEqual({ ok: true })
+    expect(keymap.dispatchCommand("shared-reject")).toEqual({ ok: true })
+    expect(keymap.dispatchCommand("shared-reject")).toEqual({ ok: true })
+    expect(resolverCalls).toBe(4)
+    expect(calls).toEqual([
+      "registered",
+      "resolver:1",
+      "registered",
+      "resolver:2",
+      "registered",
+      "resolver:3",
+      "registered",
+      "resolver:4",
+    ])
+  })
+
+  test("dispatchCommand does not resolve fallback when active registered command handles", () => {
+    const keymap = getKeymap(renderer)
+    const { errors } = captureDiagnostics(keymap)
+    const calls: string[] = []
+
+    keymap.registerLayer({
+      commands: [
+        {
+          name: "handled-command",
+          run() {
+            calls.push("registered")
+          },
+        },
+      ],
+    })
+
+    keymap.appendCommandResolver((command) => {
+      if (command === "handled-command") {
+        throw new Error("resolver should not run")
+      }
+
+      return undefined
+    })
+
+    expect(keymap.dispatchCommand("handled-command")).toEqual({ ok: true })
+    expect(keymap.runCommand("handled-command")).toEqual({ ok: true })
+    expect(calls).toEqual(["registered", "registered"])
+    expect(errors).toEqual([])
   })
 
   test("dispatchCommand resolves active layer commands while runCommand uses registered precedence", () => {
@@ -485,21 +743,13 @@ describe("keymap: core and commands", () => {
 
     mockInput.pressKey("x")
 
-    expect(keymap.dispatchCommand("submit", { includeCommand: true })).toEqual({
+    expect(keymap.dispatchCommand("submit", { includeCommand: true })).toMatchObject({
       ok: true,
-      command: {
-        name: "submit",
-        fields: { desc: "Local submit" },
-        attrs: { desc: "Local submit" },
-      },
+      command: { name: "submit", desc: "Local submit" },
     })
-    expect(keymap.runCommand("submit", { includeCommand: true })).toEqual({
+    expect(keymap.runCommand("submit", { includeCommand: true })).toMatchObject({
       ok: true,
-      command: {
-        name: "submit",
-        fields: { desc: "Local submit" },
-        attrs: { desc: "Local submit" },
-      },
+      command: { name: "submit", desc: "Local submit" },
     })
     expect(calls).toEqual(["global", "local", "local", "local", "local"])
     expect(warnings).toEqual([])
@@ -642,13 +892,10 @@ describe("keymap: core and commands", () => {
     })
 
     expect(keymap.dispatchCommand("submit")).toEqual({ ok: false, reason: "inactive" })
-    expect(keymap.dispatchCommand("submit", { includeCommand: true })).toEqual({
+    expect(keymap.dispatchCommand("submit", { includeCommand: true })).toMatchObject({
       ok: false,
       reason: "inactive",
-      command: {
-        name: "submit",
-        fields: {},
-      },
+      command: { name: "submit" },
     })
     expect(keymap.runCommand("submit")).toEqual({ ok: true })
 
@@ -720,7 +967,7 @@ describe("keymap: core and commands", () => {
     expect(keymap.dispatchCommand("external-run")).toEqual({ ok: false, reason: "error" })
     expect(keymap.runCommand("external-run")).toEqual({ ok: false, reason: "error" })
     const { errors } = takeErrors()
-    expect(errors).toHaveLength(2)
+    expect(errors).toHaveLength(3)
     expect(errors.every((message) => message.includes('Error in command resolver for "external-run":'))).toBe(true)
   })
 })

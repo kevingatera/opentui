@@ -70,7 +70,7 @@ if (!packageJson.module) {
 
 console.log("Building main entry point...")
 const mainBuildResult = await Bun.build({
-  entrypoints: [join(rootDir, packageJson.module)],
+  entrypoints: [join(rootDir, packageJson.module), join(rootDir, "components.ts")],
   target: "bun",
   outdir: join(rootDir, "dist"),
   external: externalDeps,
@@ -140,6 +140,13 @@ if (existsSync(join(rootDir, "scripts", "runtime-plugin-support.ts"))) {
   )
 }
 
+if (existsSync(join(rootDir, "scripts", "runtime-plugin-support-configure.ts"))) {
+  copyFileSync(
+    join(rootDir, "scripts", "runtime-plugin-support-configure.ts"),
+    join(distDir, "scripts", "runtime-plugin-support-configure.ts"),
+  )
+}
+
 const exports = {
   ".": {
     types: "./index.d.ts",
@@ -156,6 +163,15 @@ const exports = {
   "./runtime-plugin-support": {
     types: "./scripts/runtime-plugin-support.d.ts",
     import: "./scripts/runtime-plugin-support.ts",
+  },
+  "./runtime-plugin-support/configure": {
+    types: "./scripts/runtime-plugin-support-configure.d.ts",
+    import: "./scripts/runtime-plugin-support-configure.ts",
+  },
+  "./components": {
+    types: "./components.d.ts",
+    import: "./components.js",
+    require: "./components.js",
   },
   "./jsx-runtime": "./jsx-runtime.d.ts",
   "./jsx-dev-runtime": "./jsx-runtime.d.ts",

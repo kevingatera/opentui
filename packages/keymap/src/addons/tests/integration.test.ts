@@ -69,21 +69,21 @@ describe("keymap addon composition", () => {
       trigger: { name: "x", ctrl: true },
     })
 
-    registerExCommands(keymap, [
-      {
-        name: "reset",
-        aliases: ["r"],
-        nargs: "0",
-        run() {
-          alphaCount = 0
-          betaCount = 0
-          actions.push("reset")
-        },
-      },
-    ])
+    registerExCommands(keymap)
 
     keymap.registerLayer({
       commands: [
+        {
+          name: "reset",
+          namespace: "excommands",
+          aliases: ["r"],
+          nargs: "0",
+          run() {
+            alphaCount = 0
+            betaCount = 0
+            actions.push("reset")
+          },
+        },
         {
           name: "focus-next",
           run() {
@@ -152,7 +152,7 @@ describe("keymap addon composition", () => {
     })
 
     const offManagedTextareas = registerManagedTextareaLayer(keymap, renderer, {
-      bindings: [{ key: "dd", cmd: "delete-line" }],
+      bindings: [{ key: "dd", cmd: "input.delete.line" }],
     })
 
     alpha.focus()

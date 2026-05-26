@@ -81,7 +81,7 @@ fn runTranslucentBoxes(
 
     const run_translucent_bg = bench_utils.matchesBenchFilter(name_translucent_bg, bench_filter);
     const run_translucent_opacity = bench_utils.matchesBenchFilter(name_translucent_opacity, bench_filter);
-    if (!run_translucent_bg and !run_translucent_opacity) return try results.toOwnedSlice(allocator);
+    if (!run_translucent_bg and !run_translucent_opacity) return results.toOwnedSlice(allocator);
 
     const buf = try OptimizedBuffer.init(allocator, BUFFER_WIDTH, BUFFER_HEIGHT, .{ .pool = pool });
     defer buf.deinit();
@@ -92,9 +92,9 @@ fn runTranslucentBoxes(
         const border_color = rgba(0.5, 0.5, 0.5, 1.0);
         const bg_color = rgba(0.2, 0.2, 0.2, 0.5);
 
-        var stats = BenchStats{};
+        var stats: BenchStats = .{};
         for (0..iterations) |i| {
-            try buf.clear(CLEAR_BG, null);
+            buf.clear(CLEAR_BG, null);
 
             var timer = try std.time.Timer.start();
             var box_i: usize = 0;
@@ -130,7 +130,7 @@ fn runTranslucentBoxes(
             break :blk s;
         } else null;
 
-        try results.append(allocator, BenchResult{
+        try results.append(allocator, .{
             .name = name_translucent_bg,
             .min_ns = stats.min_ns,
             .avg_ns = stats.avg(),
@@ -145,9 +145,9 @@ fn runTranslucentBoxes(
         const border_color = rgba(0.5, 0.5, 0.5, 1.0);
         const bg_color = rgba(0.2, 0.2, 0.2, 1.0);
 
-        var stats = BenchStats{};
+        var stats: BenchStats = .{};
         for (0..iterations) |i| {
-            try buf.clear(CLEAR_BG, null);
+            buf.clear(CLEAR_BG, null);
 
             try buf.pushOpacity(0.5);
             errdefer buf.popOpacity();
@@ -186,7 +186,7 @@ fn runTranslucentBoxes(
             break :blk s;
         } else null;
 
-        try results.append(allocator, BenchResult{
+        try results.append(allocator, .{
             .name = name_translucent_opacity,
             .min_ns = stats.min_ns,
             .avg_ns = stats.avg(),
@@ -197,7 +197,7 @@ fn runTranslucentBoxes(
         });
     }
 
-    return try results.toOwnedSlice(allocator);
+    return results.toOwnedSlice(allocator);
 }
 
 fn runTranslucentTextBuffers(
@@ -215,7 +215,7 @@ fn runTranslucentTextBuffers(
 
     const run_translucent_bg = bench_utils.matchesBenchFilter(name_translucent_bg, bench_filter);
     const run_translucent_opacity = bench_utils.matchesBenchFilter(name_translucent_opacity, bench_filter);
-    if (!run_translucent_bg and !run_translucent_opacity) return try results.toOwnedSlice(allocator);
+    if (!run_translucent_bg and !run_translucent_opacity) return results.toOwnedSlice(allocator);
 
     const buf = try OptimizedBuffer.init(allocator, BUFFER_WIDTH, BUFFER_HEIGHT, .{ .pool = pool });
     defer buf.deinit();
@@ -223,9 +223,9 @@ fn runTranslucentTextBuffers(
     var final_mem: usize = 0;
 
     if (run_translucent_bg) {
-        var stats = BenchStats{};
+        var stats: BenchStats = .{};
         for (0..iterations) |i| {
-            try buf.clear(CLEAR_BG, null);
+            buf.clear(CLEAR_BG, null);
 
             const tbs = try allocator.alloc(*UnifiedTextBuffer, TEXT_COUNT);
             const views = try allocator.alloc(*UnifiedTextBufferView, TEXT_COUNT);
@@ -245,7 +245,7 @@ fn runTranslucentTextBuffers(
                 const x: i32 = @intCast(@as(i32, @intCast(buf_i % BUFFER_WIDTH)));
                 const y: i32 = 0;
 
-                try buf.drawTextBuffer(views[buf_i % TEXT_COUNT], x, y);
+                buf.drawTextBuffer(views[buf_i % TEXT_COUNT], x, y);
             }
             stats.record(timer.read());
 
@@ -260,7 +260,7 @@ fn runTranslucentTextBuffers(
             break :blk s;
         } else null;
 
-        try results.append(allocator, BenchResult{
+        try results.append(allocator, .{
             .name = name_translucent_bg,
             .min_ns = stats.min_ns,
             .avg_ns = stats.avg(),
@@ -272,9 +272,9 @@ fn runTranslucentTextBuffers(
     }
 
     if (run_translucent_opacity) {
-        var stats = BenchStats{};
+        var stats: BenchStats = .{};
         for (0..iterations) |i| {
-            try buf.clear(CLEAR_BG, null);
+            buf.clear(CLEAR_BG, null);
 
             const tbs = try allocator.alloc(*UnifiedTextBuffer, TEXT_COUNT);
             const views = try allocator.alloc(*UnifiedTextBufferView, TEXT_COUNT);
@@ -297,7 +297,7 @@ fn runTranslucentTextBuffers(
                 const x: i32 = @intCast(@as(i32, @intCast(buf_i % BUFFER_WIDTH)));
                 const y: i32 = 0;
 
-                try buf.drawTextBuffer(views[buf_i % TEXT_COUNT], x, y);
+                buf.drawTextBuffer(views[buf_i % TEXT_COUNT], x, y);
             }
             stats.record(timer.read());
 
@@ -312,7 +312,7 @@ fn runTranslucentTextBuffers(
             break :blk s;
         } else null;
 
-        try results.append(allocator, BenchResult{
+        try results.append(allocator, .{
             .name = name_translucent_opacity,
             .min_ns = stats.min_ns,
             .avg_ns = stats.avg(),
@@ -323,7 +323,7 @@ fn runTranslucentTextBuffers(
         });
     }
 
-    return try results.toOwnedSlice(allocator);
+    return results.toOwnedSlice(allocator);
 }
 
 pub fn run(
@@ -344,5 +344,5 @@ pub fn run(
     const text_buffers_results = try runTranslucentTextBuffers(allocator, pool, show_mem, iterations, bench_filter);
     try all_results.appendSlice(allocator, text_buffers_results);
 
-    return try all_results.toOwnedSlice(allocator);
+    return all_results.toOwnedSlice(allocator);
 }

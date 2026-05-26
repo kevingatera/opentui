@@ -52,6 +52,15 @@ const variants: Variant[] = [
   { platform: "win32", arch: "arm64" },
 ]
 
+const getHostVariant = (): Variant => {
+  const hostVariant = variants.find((variant) => variant.platform === process.platform && variant.arch === process.arch)
+  if (!hostVariant) {
+    console.error(`Error: Unsupported host platform for native builds: ${process.platform}-${process.arch}`)
+    process.exit(1)
+  }
+  return hostVariant
+}
+
 if (!buildLib && !buildNative) {
   console.error("Error: Please specify --lib, --native, or both")
   process.exit(1)
@@ -105,7 +114,9 @@ if (buildNative) {
     process.exit(1)
   }
 
-  for (const { platform, arch } of variants) {
+  const variantsToPackage = buildAll ? variants : [getHostVariant()]
+
+  for (const { platform, arch } of variantsToPackage) {
     const nativeName = `${packageJson.name}-${platform}-${arch}`
     const nativeDir = join(rootDir, "node_modules", nativeName)
     const libDir = join(rootDir, "src", "zig", "lib", getZigTarget(platform, arch))
@@ -136,11 +147,19 @@ if (buildNative) {
       continue
     }
 
-    const indexTsContent = `const module = await import("./${libraryFileName}", { with: { type: "file" } })
-const path = module.default
-export default path;
+    const indexJsContent = `import { fileURLToPath } from "node:url"
+
+export default fileURLToPath(new URL("./${libraryFileName}", import.meta.url))
 `
-    writeFileSync(join(nativeDir, "index.ts"), indexTsContent)
+    writeFileSync(join(nativeDir, "index.js"), indexJsContent)
+
+    const indexBunJsContent = `const module = await import("./${libraryFileName}", { with: { type: "file" } })
+
+export default module.default
+`
+    writeFileSync(join(nativeDir, "index.bun.js"), indexBunJsContent)
+
+    writeFileSync(join(nativeDir, "index.d.ts"), "declare const path: string\nexport default path\n")
 
     writeFileSync(
       join(nativeDir, "package.json"),
@@ -149,14 +168,23 @@ export default path;
           name: nativeName,
           version: packageJson.version,
           description: `Prebuilt ${platform}-${arch} binaries for ${packageJson.name}`,
-          main: "index.ts",
-          types: "index.ts",
+          type: "module",
+          main: "index.js",
+          module: "index.js",
+          types: "index.d.ts",
           license: packageJson.license,
           author: packageJson.author,
           homepage: packageJson.homepage,
           repository: packageJson.repository,
           bugs: packageJson.bugs,
           keywords: [...(packageJson.keywords ?? []), "prebuild", "prebuilt"],
+          exports: {
+            ".": {
+              bun: "./index.bun.js",
+              import: "./index.js",
+              types: "./index.d.ts",
+            },
+          },
           os: [platform],
           cpu: [arch],
         },
@@ -195,10 +223,10 @@ if (buildLib) {
 
   const entryPoints: string[] = [
     packageJson.module,
-    "src/3d.ts",
     "src/testing.ts",
     "src/runtime-plugin.ts",
     "src/runtime-plugin-support.ts",
+    "src/runtime-plugin-support-configure.ts",
   ]
 
   // Build main entry points with code splitting
@@ -223,6 +251,23 @@ if (buildLib) {
       "--sourcemap",
       ...externalPatterns.flatMap((dep) => ["--external", dep]),
       ...entryPoints,
+    ],
+    {
+      cwd: rootDir,
+      stdio: "inherit",
+    },
+  )
+
+  // Build updater as a separate entry so generator code stays out of the core runtime bundle.
+  spawnSync(
+    "bun",
+    [
+      "build",
+      "--target=bun",
+      "--outdir=dist/lib/tree-sitter",
+      "--sourcemap",
+      ...externalDeps.flatMap((dep) => ["--external", dep]),
+      "src/lib/tree-sitter/update-assets.ts",
     ],
     {
       cwd: rootDir,
@@ -256,10 +301,11 @@ if (buildLib) {
   console.log("Post-processing bundled files to fix duplicate exports...")
   const bundledFiles = [
     "dist/index.js",
-    "dist/3d.js",
     "dist/testing.js",
     "dist/runtime-plugin.js",
     "dist/runtime-plugin-support.js",
+    "dist/runtime-plugin-support-configure.js",
+    "dist/lib/tree-sitter/update-assets.js",
     "dist/lib/tree-sitter/parser.worker.js",
   ]
   for (const filePath of bundledFiles) {
@@ -331,11 +377,6 @@ if (buildLib) {
       require: "./index.js",
       types: "./index.d.ts",
     },
-    "./3d": {
-      import: "./3d.js",
-      require: "./3d.js",
-      types: "./3d.d.ts",
-    },
     "./testing": {
       import: "./testing.js",
       require: "./testing.js",
@@ -350,6 +391,16 @@ if (buildLib) {
       import: "./runtime-plugin-support.js",
       require: "./runtime-plugin-support.js",
       types: "./runtime-plugin-support.d.ts",
+    },
+    "./runtime-plugin-support/configure": {
+      import: "./runtime-plugin-support-configure.js",
+      require: "./runtime-plugin-support-configure.js",
+      types: "./runtime-plugin-support-configure.d.ts",
+    },
+    "./tree-sitter/update-assets": {
+      import: "./lib/tree-sitter/update-assets.js",
+      require: "./lib/tree-sitter/update-assets.js",
+      types: "./lib/tree-sitter/update-assets.d.ts",
     },
     "./parser.worker": {
       import: "./lib/tree-sitter/parser.worker.js",
