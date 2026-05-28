@@ -473,6 +473,9 @@ class ScrollbackSnapshotRenderContext extends EventEmitter implements RenderCont
 
 const DEFAULT_FORWARDED_ENV_KEYS = [
   "TMUX",
+  "ZELLIJ",
+  "ZELLIJ_SESSION_NAME",
+  "ZELLIJ_PANE_ID",
   "TERM",
   "OPENTUI_GRAPHICS",
   "TERM_PROGRAM",
@@ -487,6 +490,8 @@ const DEFAULT_FORWARDED_ENV_KEYS = [
   "OPENTUI_FORCE_UNICODE",
   "OPENTUI_FORCE_NOZWJ",
   "OPENTUI_FORCE_EXPLICIT_WIDTH",
+  "OPENTUI_NOTIFICATION_PROTOCOL",
+  "OPENTUI_NOTIFICATIONS",
   "WT_SESSION",
   "STY",
   "WSL_DISTRO_NAME",
@@ -4334,7 +4339,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private ensurePaletteDetector(): TerminalPaletteDetector {
     if (!this._paletteDetector) {
       const isTmux = Boolean(
-        this.capabilities?.in_tmux || this.capabilities?.terminal?.name?.toLowerCase()?.includes("tmux"),
+        this.capabilities?.multiplexer === "tmux" || this.capabilities?.terminal?.name?.toLowerCase()?.includes("tmux"),
       )
       const isLegacyTmux =
         this.capabilities?.terminal?.name?.toLowerCase()?.includes("tmux") &&
@@ -4448,7 +4453,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     // TERM_PROGRAM=tmux/TERM_PROGRAM_VERSION; otherwise wait for XTVERSION.
     const terminal = this._capabilities?.terminal
     const hasTmuxVersion = terminal?.name?.toLowerCase() === "tmux" && Boolean(terminal.version)
-    if (this._capabilities?.in_tmux && !hasTmuxVersion) {
+    if (this._capabilities?.multiplexer === "tmux" && !hasTmuxVersion) {
       await this.waitForXtVersion()
 
       // Another caller may have populated the cache while this call waited.
