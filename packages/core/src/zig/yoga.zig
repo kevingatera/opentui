@@ -217,6 +217,13 @@ const Style = struct {
     position: [9]StyleValue = [_]StyleValue{StyleValue.undef()} ** 9,
     border: [9]f32 = [_]f32{nan} ** 9,
     gap: [3]StyleValue = [_]StyleValue{StyleValue.undef()} ** 3,
+
+    has_min_max_values: bool = false,
+    has_margin_values: bool = false,
+    has_padding_values: bool = false,
+    has_position_values: bool = false,
+    has_border_values: bool = false,
+    has_gap_values: bool = false,
 };
 
 const Layout = struct {
@@ -323,8 +330,11 @@ const JustifyLayout = struct {
 };
 
 const STACK_FLEX_ITEMS = 128;
+const TLS_FLEX_ITEMS = 512;
 const F32x4 = @Vector(4, f32);
 
+threadlocal var tls_flex_items: [TLS_FLEX_ITEMS]LineItem = undefined;
+threadlocal var tls_flex_lines: [TLS_FLEX_ITEMS]FlexLine = undefined;
 threadlocal var tls_measure_width: f32 = 0;
 threadlocal var tls_measure_height: f32 = 0;
 
@@ -500,6 +510,22 @@ fn gapValuesAllUndefined(values: *const [3]StyleValue) bool {
     return true;
 }
 
+fn refreshStyleValueFlags(style: *Style, value_kind: YogaValueKind) void {
+    switch (value_kind) {
+        .min_width, .min_height, .max_width, .max_height => {
+            style.has_min_max_values = isDefined(style.min_width) or
+                isDefined(style.min_height) or
+                isDefined(style.max_width) or
+                isDefined(style.max_height);
+        },
+        .margin => style.has_margin_values = !styleValuesAllUndefined(&style.margin),
+        .padding => style.has_padding_values = !styleValuesAllUndefined(&style.padding),
+        .position => style.has_position_values = !styleValuesAllUndefined(&style.position),
+        .gap => style.has_gap_values = !gapValuesAllUndefined(&style.gap),
+        .width, .height, .flex_basis => {},
+    }
+}
+
 fn resolveRect(values: *const [9]StyleValue, width_owner: ?f32, height_owner: ?f32, direction: Direction) Rect {
     if (styleValuesAllUndefined(values)) return .{};
     return .{
@@ -552,7 +578,7 @@ fn updateContainingBlock(node: *Node, width: f32, height: f32) void {
 }
 
 fn resolveGap(style: *const Style, gutter: Gutter, owner_size: ?f32) f32 {
-    if (gapValuesAllUndefined(&style.gap)) return 0;
+    if (!style.has_gap_values) return 0;
     const specific = style.gap[gutterIndex(gutter)];
     if (isDefined(specific)) return resolveValueOrZero(specific, owner_size);
     const all = style.gap[gutterIndex(.all)];
@@ -570,7 +596,15 @@ fn clampDimension(value: f32, min_value: StyleValue, max_value: StyleValue, owne
     return result;
 }
 
+fn styleMinMaxAllUndefined(style: *const Style) bool {
+    return !style.has_min_max_values;
+}
+
 fn clampNodeSize(node: *const Node, size: Size, owner_width: ?f32, owner_height: ?f32, direction: Direction) Size {
+    if (styleMinMaxAllUndefined(&node.style)) {
+        return .{ .width = @max(0, nonNan(size.width, 0)), .height = @max(0, nonNan(size.height, 0)) };
+    }
+
     const min_width = if (outerDimensionFromStyle(node, node.style.min_width, owner_width, owner_width, owner_height, direction, true)) |value| StyleValue.point(value) else StyleValue.undef();
     const min_height = if (outerDimensionFromStyle(node, node.style.min_height, owner_height, owner_width, owner_height, direction, false)) |value| StyleValue.point(value) else StyleValue.undef();
     const max_width = if (outerDimensionFromStyle(node, node.style.max_width, owner_width, owner_width, owner_height, direction, true)) |value| StyleValue.point(value) else StyleValue.undef();
@@ -804,6 +838,9 @@ fn hasStyleHeight(node: *const Node) bool {
 
 fn outerDimensionFromStyle(node: *const Node, value: StyleValue, owner_size: ?f32, owner_width: ?f32, _: ?f32, direction: Direction, is_width: bool) ?f32 {
     const resolved = resolveValue(value, owner_size) orelse return null;
+    if (!node.style.has_padding_values and !node.style.has_border_values) {
+        return if (node.style.box_sizing == .content_box) resolved else @max(resolved, 0);
+    }
     const padding = resolveSpacingRect(&node.style.padding, owner_width orelse resolved, direction);
     const border = resolveBorderRect(&node.style.border, direction);
     const chrome = if (is_width) rectHorizontal(padding) + rectHorizontal(border) else rectVertical(padding) + rectVertical(border);
@@ -842,8 +879,8 @@ fn baseSize(node: *Node, owner_width: ?f32, owner_height: ?f32, direction: Direc
     }
 
     if (node.children.items.len == 0) {
-        const padding = resolveSpacingRect(&node.style.padding, owner_width orelse width, direction);
-        const border = resolveBorderRect(&node.style.border, direction);
+        const padding = if (node.style.has_padding_values) resolveSpacingRect(&node.style.padding, owner_width orelse width, direction) else Rect{};
+        const border = if (node.style.has_border_values) resolveBorderRect(&node.style.border, direction) else Rect{};
         return cacheBaseSize(node, owner_width_value, owner_height_value, direction, clampNodeSize(node, .{
             .width = @max(width orelse 0, rectHorizontal(padding) + rectHorizontal(border)),
             .height = @max(height orelse 0, rectVertical(padding) + rectVertical(border)),
@@ -861,8 +898,8 @@ fn makeLineItem(node: *Node, container_width: ?f32, container_height: ?f32, is_r
     if (isConcrete(node.style.flex_basis)) {
         const owner_main = if (is_row) container_width else container_height;
         if (resolveValue(node.style.flex_basis, owner_main)) |resolved_basis| {
-            const padding = resolveSpacingRect(&node.style.padding, container_width, direction);
-            const border = resolveBorderRect(&node.style.border, direction);
+            const padding = if (node.style.has_padding_values) resolveSpacingRect(&node.style.padding, container_width, direction) else Rect{};
+            const border = if (node.style.has_border_values) resolveBorderRect(&node.style.border, direction) else Rect{};
             const chrome_main = if (is_row) rectHorizontal(padding) + rectHorizontal(border) else rectVertical(padding) + rectVertical(border);
             const outer_basis = if (node.style.box_sizing == .content_box) resolved_basis + chrome_main else @max(resolved_basis, chrome_main);
             if (is_row) basis.width = outer_basis else basis.height = outer_basis;
@@ -870,7 +907,7 @@ fn makeLineItem(node: *Node, container_width: ?f32, container_height: ?f32, is_r
     }
     const flex_base_main = if (is_row) basis.width else basis.height;
     basis = clampNodeSize(node, basis, container_width, container_height, direction);
-    const margin = resolveSpacingRect(&node.style.margin, container_width, direction);
+    const margin = if (node.style.has_margin_values) resolveSpacingRect(&node.style.margin, container_width, direction) else Rect{};
     const has_explicit_width = hasStyleWidth(node);
     const has_explicit_height = hasStyleHeight(node);
 
@@ -887,10 +924,10 @@ fn makeLineItem(node: *Node, container_width: ?f32, container_height: ?f32, is_r
         .target_width = basis.width,
         .target_height = basis.height,
         .margin = margin,
-        .margin_left_auto = edgeValue(&node.style.margin, .left, direction).unit == .auto,
-        .margin_right_auto = edgeValue(&node.style.margin, .right, direction).unit == .auto,
-        .margin_top_auto = edgeValue(&node.style.margin, .top, direction).unit == .auto,
-        .margin_bottom_auto = edgeValue(&node.style.margin, .bottom, direction).unit == .auto,
+        .margin_left_auto = node.style.has_margin_values and edgeValue(&node.style.margin, .left, direction).unit == .auto,
+        .margin_right_auto = node.style.has_margin_values and edgeValue(&node.style.margin, .right, direction).unit == .auto,
+        .margin_top_auto = node.style.has_margin_values and edgeValue(&node.style.margin, .top, direction).unit == .auto,
+        .margin_bottom_auto = node.style.has_margin_values and edgeValue(&node.style.margin, .bottom, direction).unit == .auto,
         .outer_main = base_main + margin_main,
         .outer_cross = base_cross + margin_cross,
         .flex_grow = nonNan(node.style.flex_grow, 0),
@@ -933,6 +970,16 @@ fn collectFlexItems(node: *Node, items: []LineItem, container_width: ?f32, conta
     return count;
 }
 
+fn canUseFlatFlexScratch(node: *const Node) bool {
+    for (node.children.items) |child| {
+        if (child.style.display == .contents) return false;
+        if (child.style.display == .none or child.style.position_type == .absolute) continue;
+        if (child.children.items.len != 0) return false;
+        if (child.measure_callback != null or child.has_measure_subtree) return false;
+    }
+    return true;
+}
+
 fn buildFlexLines(items: []LineItem, lines: []FlexLine, main_limit: ?f32, gap: f32, wrap: Wrap) usize {
     if (items.len == 0) return 0;
 
@@ -968,6 +1015,14 @@ fn buildFlexLines(items: []LineItem, lines: []FlexLine, main_limit: ?f32, gap: f
 }
 
 fn clampFlexMainSize(node: *const Node, value: f32, is_row: bool, content_main: f32, direction: Direction) f32 {
+    if (if (is_row)
+        !isDefined(node.style.min_width) and !isDefined(node.style.max_width)
+    else
+        !isDefined(node.style.min_height) and !isDefined(node.style.max_height))
+    {
+        return @max(0, value);
+    }
+
     const min_value = if (is_row)
         outerDimensionFromStyle(node, node.style.min_width, content_main, content_main, null, direction, true)
     else
@@ -1203,6 +1258,7 @@ fn childAlign(parent: *const Node, child: *const Node) Align {
 
 fn applyRelativePosition(node: *const Node, x: *f32, y: *f32, owner_width: f32, owner_height: f32, direction: Direction) void {
     if (node.style.position_type == .static) return;
+    if (!node.style.has_position_values) return;
 
     const left = resolveValue(edgeValue(&node.style.position, .left, direction), owner_width);
     const right = resolveValue(edgeValue(&node.style.position, .right, direction), owner_width);
@@ -1231,8 +1287,8 @@ fn layoutAbsoluteChild(containing_node: *Node, parent: *Node, child: *Node, cont
     const containing_width = if (containing_node.containing_width > 0) containing_node.containing_width else content_width;
     const containing_height = if (containing_node.containing_height > 0) containing_node.containing_height else content_height;
     var size = baseSize(child, containing_width, containing_height, direction);
-    const margin = resolveSpacingRect(&child.style.margin, containing_width, absolute_direction);
-    const position = resolveRect(&child.style.position, containing_width, containing_height, absolute_direction);
+    const margin = if (child.style.has_margin_values) resolveSpacingRect(&child.style.margin, containing_width, absolute_direction) else Rect{};
+    const position = if (child.style.has_position_values) resolveRect(&child.style.position, containing_width, containing_height, absolute_direction) else Rect{};
     const left_value = resolveValue(edgeValue(&child.style.position, .left, absolute_direction), containing_width);
     const right_value = resolveValue(edgeValue(&child.style.position, .right, absolute_direction), containing_width);
     const top_value = resolveValue(edgeValue(&child.style.position, .top, absolute_direction), containing_height);
@@ -1305,10 +1361,12 @@ fn layoutAbsoluteChild(containing_node: *Node, parent: *Node, child: *Node, cont
 }
 
 fn hasHorizontalInsets(node: *const Node, direction: Direction) bool {
+    if (!node.style.has_position_values) return false;
     return isDefined(edgeValue(&node.style.position, .left, direction)) or isDefined(edgeValue(&node.style.position, .right, direction));
 }
 
 fn hasVerticalInsets(node: *const Node, direction: Direction) bool {
+    if (!node.style.has_position_values) return false;
     return isDefined(edgeValue(&node.style.position, .top, direction)) or isDefined(edgeValue(&node.style.position, .bottom, direction));
 }
 
@@ -1354,8 +1412,8 @@ fn canUseKnownSingleLineFastPath(node: *const Node, direction: Direction) bool {
         if (isConcrete(child.style.flex_basis)) return false;
         if ((nonNan(child.style.flex_grow, 0) > 0 or nonNan(child.style.flex_shrink, 0) > 0) and
             (isDefined(child.style.min_width) or isDefined(child.style.min_height) or isDefined(child.style.max_width) or isDefined(child.style.max_height))) return false;
-        if (!styleValuesAllUndefined(&child.style.margin)) return false;
-        if (!styleValuesAllUndefined(&child.style.position)) return false;
+        if (child.style.has_margin_values) return false;
+        if (child.style.has_position_values) return false;
     }
 
     return true;
@@ -1390,6 +1448,7 @@ fn layoutKnownSingleLineFastPath(node: *Node, content_width: f32, content_height
     const gap = resolveGap(&node.style, if (is_row) .column else .row, content_main);
     const child_count = node.children.items.len;
     if (child_count > STACK_FLEX_ITEMS) return false;
+
     const total_gap = if (child_count > 1) gap * @as(f32, @floatFromInt(child_count - 1)) else 0;
 
     var base_sizes: [STACK_FLEX_ITEMS]Size = undefined;
@@ -1485,8 +1544,8 @@ fn layoutFlexChildren(node: *Node, width: *f32, height: *f32, owner_width: ?f32,
     var main_reversed = node.style.flex_direction == .row_reverse or node.style.flex_direction == .column_reverse;
     if (is_row and direction == .rtl) main_reversed = !main_reversed;
 
-    node.layout.padding = resolveSpacingRect(&node.style.padding, owner_width orelse width.*, direction);
-    node.layout.border = resolveBorderRect(&node.style.border, direction);
+    node.layout.padding = if (node.style.has_padding_values) resolveSpacingRect(&node.style.padding, owner_width orelse width.*, direction) else Rect{};
+    node.layout.border = if (node.style.has_border_values) resolveBorderRect(&node.style.border, direction) else Rect{};
     const chrome_width = rectHorizontal(node.layout.padding) + rectHorizontal(node.layout.border);
     const chrome_height = rectVertical(node.layout.padding) + rectVertical(node.layout.border);
 
@@ -1533,7 +1592,9 @@ fn layoutFlexChildren(node: *Node, width: *f32, height: *f32, owner_width: ?f32,
 
     var stack_items: [STACK_FLEX_ITEMS]LineItem = undefined;
     var heap_items: ?[]LineItem = null;
+    const use_tls_scratch = child_count > stack_items.len and child_count <= TLS_FLEX_ITEMS and canUseFlatFlexScratch(node);
     const items = if (child_count <= stack_items.len) stack_items[0..child_count] else blk: {
+        if (use_tls_scratch) break :blk tls_flex_items[0..child_count];
         const allocated = allocator.alloc(LineItem, child_count) catch @panic("failed to allocate Zig Yoga flex items");
         heap_items = allocated;
         break :blk allocated;
@@ -1547,6 +1608,7 @@ fn layoutFlexChildren(node: *Node, width: *f32, height: *f32, owner_width: ?f32,
     var stack_lines: [STACK_FLEX_ITEMS]FlexLine = undefined;
     var heap_lines: ?[]FlexLine = null;
     const line_storage = if (line_storage_count <= stack_lines.len) stack_lines[0..line_storage_count] else blk: {
+        if (use_tls_scratch) break :blk tls_flex_lines[0..line_storage_count];
         const allocated = allocator.alloc(FlexLine, line_storage_count) catch @panic("failed to allocate Zig Yoga flex lines");
         heap_lines = allocated;
         break :blk allocated;
@@ -1715,8 +1777,8 @@ fn layoutFlexChildren(node: *Node, width: *f32, height: *f32, owner_width: ?f32,
                 // Natural sizing already laid this subtree out with the final size.
             } else if (item.node.measure_callback != null and item.node.children.items.len == 0) {
                 item.node.layout.margin = item.margin;
-                item.node.layout.padding = resolveSpacingRect(&item.node.style.padding, content_width, direction);
-                item.node.layout.border = resolveBorderRect(&item.node.style.border, direction);
+                item.node.layout.padding = if (item.node.style.has_padding_values) resolveSpacingRect(&item.node.style.padding, content_width, direction) else Rect{};
+                item.node.layout.border = if (item.node.style.has_border_values) resolveBorderRect(&item.node.style.border, direction) else Rect{};
                 item.node.layout.width = child_width;
                 item.node.layout.height = child_height;
             } else {
@@ -1910,9 +1972,9 @@ fn layoutNode(node: *Node, assigned_width: ?f32, assigned_height: ?f32, owner_wi
         }
     }
 
-    node.layout.margin = resolveSpacingRect(&node.style.margin, owner_width, direction);
-    node.layout.padding = resolveSpacingRect(&node.style.padding, owner_width orelse assigned_width, direction);
-    node.layout.border = resolveBorderRect(&node.style.border, direction);
+    node.layout.margin = if (node.style.has_margin_values) resolveSpacingRect(&node.style.margin, owner_width, direction) else Rect{};
+    node.layout.padding = if (node.style.has_padding_values) resolveSpacingRect(&node.style.padding, owner_width orelse assigned_width, direction) else Rect{};
+    node.layout.border = if (node.style.has_border_values) resolveBorderRect(&node.style.border, direction) else Rect{};
 
     var width = assigned_width orelse nodeOuterWidthFromStyle(node, owner_width, owner_height, direction) orelse nan;
     var height = assigned_height orelse nodeOuterHeightFromStyle(node, owner_width, owner_height, direction) orelse nan;
@@ -2409,6 +2471,7 @@ export fn yogaNodeStyleGetFloat(node: *const Node, kind: u32) f32 {
 export fn yogaNodeStyleSetBorder(node: *Node, edge: u32, border: f32) void {
     if (styleFloatEqual(node.style.border[edge], border)) return;
     node.style.border[edge] = border;
+    node.style.has_border_values = !borderValuesAllUndefined(&node.style.border);
     markDirty(node);
 }
 
@@ -2424,7 +2487,8 @@ pub export fn yogaNodeStyleSetValue(node: *Node, kind: u32, edge_or_gutter: u32,
         .auto => StyleValue.auto(),
     };
 
-    var current: *StyleValue = switch (@as(YogaValueKind, @enumFromInt(kind))) {
+    const value_kind: YogaValueKind = @enumFromInt(kind);
+    var current: *StyleValue = switch (value_kind) {
         .width => &node.style.width,
         .height => &node.style.height,
         .min_width => &node.style.min_width,
@@ -2441,6 +2505,7 @@ pub export fn yogaNodeStyleSetValue(node: *Node, kind: u32, edge_or_gutter: u32,
         return;
     }
     current.* = style_value;
+    refreshStyleValueFlags(&node.style, value_kind);
     markDirty(node);
 }
 
