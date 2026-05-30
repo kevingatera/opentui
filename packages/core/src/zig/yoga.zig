@@ -242,6 +242,7 @@ const JsMeasureCallback = *const fn (?*anyopaque, f32, u32, f32, u32) callconv(.
 const JsDirtiedCallback = *const fn () callconv(.c) void;
 
 threadlocal var current_layout_generation: u64 = 0;
+threadlocal var current_root_direction: Direction = .ltr;
 
 const Node = struct {
     config: ?*const Config = null,
@@ -603,6 +604,15 @@ fn markCleanRecursive(node: *Node) void {
     }
 }
 
+fn markDirtyRecursiveNoCallback(node: *Node) void {
+    node.dirty = true;
+    node.self_dirty = true;
+    node.style_dirty = true;
+    node.dirty_child_count = 0;
+    node.dirty_child = null;
+    for (node.children.items) |child| markDirtyRecursiveNoCallback(child);
+}
+
 fn zeroLayoutRecursive(node: *Node) void {
     node.layout = .{};
     for (node.children.items) |child| {
@@ -633,10 +643,14 @@ fn callMeasure(node: *const Node, width: f32, width_mode: MeasureMode, height: f
 }
 
 fn measureLeaf(node: *const Node, width: ?f32, height: ?f32, owner_width: ?f32, owner_height: ?f32) Size {
-    const width_mode: MeasureMode = if (width) |_| .exactly else if (owner_width) |_| .at_most else .undefined;
-    const height_mode: MeasureMode = if (height) |_| .exactly else if (owner_height) |_| .at_most else .undefined;
-    const measure_width = width orelse owner_width orelse nan;
-    const measure_height = height orelse owner_height orelse nan;
+    const max_width = resolveValue(node.style.max_width, owner_width);
+    const max_height = resolveValue(node.style.max_height, owner_height);
+    const width_constraint = width orelse max_width orelse owner_width;
+    const height_constraint = height orelse max_height orelse owner_height;
+    const width_mode: MeasureMode = if (width) |_| .exactly else if (width_constraint) |_| .at_most else .undefined;
+    const height_mode: MeasureMode = if (height) |_| .exactly else if (height_constraint) |_| .at_most else .undefined;
+    const measure_width = width_constraint orelse nan;
+    const measure_height = height_constraint orelse nan;
     const measured = callMeasure(node, measure_width, width_mode, measure_height, height_mode);
 
     var result = Size{
@@ -676,6 +690,7 @@ fn baseSize(node: *Node, owner_width: ?f32, owner_height: ?f32, direction: Direc
 
     var width = nodeOuterWidthFromStyle(node, owner_width, owner_height, direction);
     var height = nodeOuterHeightFromStyle(node, owner_width, owner_height, direction);
+
 
     if (node.measure_callback != null) {
         if (nonNan(node.style.flex_grow, 0) > 0 and nonNan(node.style.flex_shrink, 0) > 0 and width == null and height == null) {
@@ -974,6 +989,12 @@ fn alignStaticOffset(alignment: Align, available: f32, reversed: bool) f32 {
 fn nodeBaseline(node: *const Node) f32 {
     for (node.children.items) |child| {
         if (child.style.display == .none or child.style.position_type == .absolute) continue;
+        if (child.is_reference_baseline) {
+            return child.layout.top + nodeBaseline(child);
+        }
+    }
+    for (node.children.items) |child| {
+        if (child.style.display == .none or child.style.position_type == .absolute) continue;
         if (child.style.align_self == .baseline and child.layout.top == 0) {
             return child.layout.top + nodeBaseline(child);
         }
@@ -1013,15 +1034,18 @@ fn setChildLayout(parent: *Node, child: *Node, x: f32, y: f32, width: f32, heigh
 }
 
 fn layoutAbsoluteChild(containing_node: *Node, parent: *Node, child: *Node, content_width: f32, content_height: f32, origin_x: f32, origin_y: f32, direction: Direction) void {
+    const absolute_direction = current_root_direction;
     const containing_width = if (containing_node.containing_width > 0) containing_node.containing_width else content_width;
     const containing_height = if (containing_node.containing_height > 0) containing_node.containing_height else content_height;
     var size = baseSize(child, containing_width, containing_height, direction);
-    const margin = resolveSpacingRect(&child.style.margin, containing_width, direction);
-    const position = resolveRect(&child.style.position, containing_width, containing_height, direction);
-    const left_value = resolveValue(edgeValue(&child.style.position, .left, direction), containing_width);
-    const right_value = resolveValue(edgeValue(&child.style.position, .right, direction), containing_width);
-    const top_value = resolveValue(edgeValue(&child.style.position, .top, direction), containing_height);
-    const bottom_value = resolveValue(edgeValue(&child.style.position, .bottom, direction), containing_height);
+    const margin = resolveSpacingRect(&child.style.margin, containing_width, absolute_direction);
+    const position = resolveRect(&child.style.position, containing_width, containing_height, absolute_direction);
+    const left_value = resolveValue(edgeValue(&child.style.position, .left, absolute_direction), containing_width);
+    const right_value = resolveValue(edgeValue(&child.style.position, .right, absolute_direction), containing_width);
+    const top_value = resolveValue(edgeValue(&child.style.position, .top, absolute_direction), containing_height);
+    const bottom_value = resolveValue(edgeValue(&child.style.position, .bottom, absolute_direction), containing_height);
+    const physical_left_value = resolveValue(child.style.position[edgeIndex(.left)], containing_width);
+    const physical_right_value = resolveValue(child.style.position[edgeIndex(.right)], containing_width);
 
     if (left_value != null and right_value != null and !hasStyleWidth(child)) {
         size.width = @max(0, containing_width - left_value.? - right_value.? - margin.left - margin.right);
@@ -1034,14 +1058,25 @@ fn layoutAbsoluteChild(containing_node: *Node, parent: *Node, child: *Node, cont
     var y = origin_y + margin.top + position.top;
     const parent_is_row = parent.style.flex_direction == .row or parent.style.flex_direction == .row_reverse;
     var parent_main_reversed = parent.style.flex_direction == .row_reverse or parent.style.flex_direction == .column_reverse;
-    if (parent_is_row and direction == .rtl) parent_main_reversed = !parent_main_reversed;
+    if (parent_is_row and absolute_direction == .rtl) parent_main_reversed = !parent_main_reversed;
     const child_alignment = childAlign(parent, child);
     const static_origin_x = origin_x + parent.layout.padding.left;
     const static_origin_y = origin_y + parent.layout.padding.top;
-    const cross_static_reversed = if (parent_is_row) parent.style.flex_wrap == .wrap_reverse else (direction == .rtl) != (parent.style.flex_wrap == .wrap_reverse);
+    const cross_static_reversed = if (parent_is_row) parent.style.flex_wrap == .wrap_reverse else (absolute_direction == .rtl) != (parent.style.flex_wrap == .wrap_reverse);
 
-    if (left_value != null and right_value != null and hasStyleWidth(child) and direction == .rtl) {
+    if (physical_left_value != null and physical_right_value != null and absolute_direction == .rtl) {
+        x = origin_x + containing_width - size.width - margin.right - physical_right_value.?;
+    } else if (left_value != null and right_value != null and direction == .rtl) {
         x = origin_x + containing_width - size.width - margin.right - right_value.?;
+    } else if (left_value == null and right_value == null and parent.style.position_type == .static) {
+        const parent_content_origin_x = parent.layout.border.left + parent.layout.padding.left;
+        const parent_content_width = @max(0, parent.layout.width - rectHorizontal(parent.layout.border) - rectHorizontal(parent.layout.padding));
+        const available = parent_content_width - size.width - margin.left - margin.right;
+        if (parent_is_row) {
+            x = parent_content_origin_x + margin.left + justifyStaticOffset(parent.style.justify_content, available, parent_main_reversed);
+        } else {
+            x = parent_content_origin_x + margin.left + alignStaticOffset(child_alignment, available, absolute_direction == .rtl);
+        }
     } else if (left_value == null and right_value == null) {
         const available = content_width - size.width - margin.left - margin.right;
         if (parent_is_row) {
@@ -1052,7 +1087,16 @@ fn layoutAbsoluteChild(containing_node: *Node, parent: *Node, child: *Node, cont
     } else if (left_value == null and right_value != null) {
         x = origin_x + containing_width - size.width - margin.right - right_value.?;
     }
-    if (top_value == null and bottom_value == null) {
+    if (top_value == null and bottom_value == null and parent.style.position_type == .static) {
+        const parent_content_origin_y = parent.layout.border.top + parent.layout.padding.top;
+        const parent_content_height = @max(0, parent.layout.height - rectVertical(parent.layout.border) - rectVertical(parent.layout.padding));
+        const available = parent_content_height - size.height - margin.top - margin.bottom;
+        if (parent_is_row) {
+            y = parent_content_origin_y + margin.top + alignStaticOffset(child_alignment, available, false);
+        } else {
+            y = parent_content_origin_y + margin.top + justifyStaticOffset(parent.style.justify_content, available, parent_main_reversed);
+        }
+    } else if (top_value == null and bottom_value == null) {
         const available = content_height - size.height - margin.top - margin.bottom;
         if (parent_is_row) {
             y = static_origin_y + margin.top + alignStaticOffset(child_alignment, available, cross_static_reversed);
@@ -1063,7 +1107,7 @@ fn layoutAbsoluteChild(containing_node: *Node, parent: *Node, child: *Node, cont
         y = origin_y + containing_height - size.height - margin.bottom - bottom_value.?;
     }
 
-    _ = layoutNode(child, size.width, size.height, containing_width, containing_height, direction);
+    _ = layoutNode(child, size.width, size.height, containing_width, containing_height, absolute_direction);
     setChildLayout(parent, child, x, y, child.layout.width, child.layout.height, containing_width, containing_height);
 }
 
@@ -1087,8 +1131,15 @@ fn layoutAbsoluteDescendants(containing_node: *Node, current_node: *Node, offset
         }
         if (child.style.position_type == .absolute) {
             layoutAbsoluteChild(containing_node, current_node, child, content_width, content_height, origin_x, origin_y, direction);
-            if (hasHorizontalInsets(child, direction)) child.layout.left -= offset_x;
-            if (hasVerticalInsets(child, direction)) child.layout.top -= offset_y;
+            const raw_left = resolveValue(child.style.position[edgeIndex(.left)], content_width);
+            const raw_right = resolveValue(child.style.position[edgeIndex(.right)], content_width);
+            const handled_rtl_both_horizontal = current_root_direction == .rtl and raw_left != null and raw_right != null;
+            if (handled_rtl_both_horizontal) {
+                const containing_width = if (containing_node.containing_width > 0) containing_node.containing_width else content_width;
+                child.layout.left = containing_node.layout.border.left + containing_width - child.layout.width - child.layout.margin.right - raw_right.? - offset_x;
+            }
+            if (!handled_rtl_both_horizontal and hasHorizontalInsets(child, current_root_direction)) child.layout.left -= offset_x;
+            if (hasVerticalInsets(child, current_root_direction)) child.layout.top -= offset_y;
         } else if (child.style.position_type == .static and !child.always_forms_containing_block) {
             layoutAbsoluteDescendants(containing_node, child, offset_x + child.layout.left, offset_y + child.layout.top, content_width, content_height, direction);
         }
@@ -1111,6 +1162,8 @@ fn layoutFlexChildren(node: *Node, width: *f32, height: *f32, owner_width: ?f32,
     const content_height_known = height.* > 0;
     var content_width: ?f32 = if (content_width_known) @max(0, known_content_width) else null;
     var content_height: ?f32 = if (content_height_known) @max(0, known_content_height) else null;
+    const content_width_was_auto = content_width == null;
+    const content_height_was_auto = content_height == null;
 
     if (node.style.flex_wrap != .no_wrap) {
         if (is_row and content_width == null) {
@@ -1388,6 +1441,67 @@ fn layoutFlexChildren(node: *Node, width: *f32, height: *f32, owner_width: ?f32,
         cross_cursor += line_cross + distributed_cross_gap;
     }
 
+    if ((is_row and content_height_was_auto) or (!is_row and content_width_was_auto)) {
+        var final_cross: f32 = 0;
+        for (active_items) |item| {
+            if (is_row) {
+                final_cross = @max(final_cross, item.node.layout.height + item.margin.top + item.margin.bottom);
+            } else {
+                final_cross = @max(final_cross, item.node.layout.width + item.margin.left + item.margin.right);
+            }
+        }
+
+        if (is_row) {
+            if (final_cross > content_height.?) {
+                content_height = final_cross;
+                height.* = clampDimension(content_height.? + chrome_height, node.style.min_height, node.style.max_height, owner_height);
+            }
+            for (active_items) |item| {
+                if (item.node.style.height.unit != .percent) continue;
+                if (nodeOuterHeightFromStyle(item.node, content_width, content_height, direction)) |resolved_height| {
+                    item.node.has_cached_layout = false;
+                    _ = layoutNode(item.node, item.node.layout.width, resolved_height, content_width, content_height, direction);
+                    const available_cross = content_height.? - item.node.layout.height - item.margin.top - item.margin.bottom;
+                    const alignment = childAlign(node, item.node);
+                    const offset = if (alignment == .center)
+                        available_cross / 2
+                    else if (alignment == .flex_end)
+                        available_cross
+                    else
+                        @as(f32, 0);
+                    const next_y = origin_y + item.margin.top + offset;
+                    setChildLayout(node, item.node, item.node.layout.left, next_y, item.node.layout.width, item.node.layout.height, content_width.?, content_height.?);
+                }
+            }
+        } else {
+            if (final_cross > content_width.?) {
+                content_width = final_cross;
+                width.* = clampDimension(content_width.? + chrome_width, node.style.min_width, node.style.max_width, owner_width);
+            }
+            for (active_items) |item| {
+                if (item.node.style.width.unit != .percent) continue;
+                if (nodeOuterWidthFromStyle(item.node, content_width, content_height, direction)) |resolved_width| {
+                    item.node.has_cached_layout = false;
+                    _ = layoutNode(item.node, resolved_width, item.node.layout.height, content_width, content_height, direction);
+                    const available_cross = content_width.? - item.node.layout.width - item.margin.left - item.margin.right;
+                    const alignment = childAlign(node, item.node);
+                    const cross_reversed = direction == .rtl;
+                    const offset = if (alignment == .center)
+                        available_cross / 2
+                    else if (alignment == .flex_end)
+                        if (cross_reversed) @as(f32, 0) else available_cross
+                    else if (cross_reversed)
+                        available_cross
+                    else
+                        @as(f32, 0);
+                    const next_x = origin_x + item.margin.left + offset;
+                    setChildLayout(node, item.node, next_x, item.node.layout.top, item.node.layout.width, item.node.layout.height, content_width.?, content_height.?);
+                }
+            }
+        }
+        updateContainingBlock(node, width.*, height.*);
+    }
+
     if (node.style.position_type != .static or node.parent == null) {
         layoutAbsoluteDescendants(node, node, 0, 0, content_width.?, content_height.?, direction);
     }
@@ -1442,6 +1556,7 @@ fn layoutNode(node: *Node, assigned_width: ?f32, assigned_height: ?f32, owner_wi
 
     var width = assigned_width orelse nodeOuterWidthFromStyle(node, owner_width, owner_height, direction) orelse nan;
     var height = assigned_height orelse nodeOuterHeightFromStyle(node, owner_width, owner_height, direction) orelse nan;
+
 
     if (std.math.isNan(width)) {
         const min_width = outerDimensionFromStyle(node, node.style.min_width, owner_width, owner_width, owner_height, direction, true);
@@ -1501,28 +1616,40 @@ fn setRootLayout(node: *Node, width: ?f32, height: ?f32, direction: Direction) v
 
 fn roundToPixelGrid(value: f32, point_scale_factor: f32) f32 {
     if (point_scale_factor == 0 or std.math.isNan(value)) return value;
-    const rounded = @round(value * point_scale_factor) / point_scale_factor;
+    var scaled = value * point_scale_factor;
+    var fractial = scaled - @floor(scaled);
+    if (fractial < 0) fractial += 1;
+    if (@abs(fractial) < 0.0001) {
+        scaled -= fractial;
+    } else if (@abs(fractial - 1) < 0.0001) {
+        scaled = scaled - fractial + 1;
+    } else {
+        scaled = scaled - fractial + if (fractial >= 0.5) @as(f32, 1) else @as(f32, 0);
+    }
+    const rounded = scaled / point_scale_factor;
     return if (rounded == 0) 0 else rounded;
 }
 
-fn roundLayoutRecursive(node: *Node, parent_abs_left: f32, parent_abs_top: f32, parent_round_left: f32, parent_round_top: f32, point_scale_factor: f32) void {
-    const abs_left = parent_abs_left + node.layout.left;
-    const abs_top = parent_abs_top + node.layout.top;
+fn roundLayoutRecursive(node: *Node, parent_abs_left: f32, parent_abs_top: f32, point_scale_factor: f32) void {
+    const node_left = node.layout.left;
+    const node_top = node.layout.top;
+    const abs_left = parent_abs_left + node_left;
+    const abs_top = parent_abs_top + node_top;
     const abs_right = abs_left + node.layout.width;
     const abs_bottom = abs_top + node.layout.height;
 
-    const round_left = roundToPixelGrid(abs_left, point_scale_factor);
-    const round_top = roundToPixelGrid(abs_top, point_scale_factor);
     const round_right = roundToPixelGrid(abs_right, point_scale_factor);
     const round_bottom = roundToPixelGrid(abs_bottom, point_scale_factor);
+    const round_abs_left = roundToPixelGrid(abs_left, point_scale_factor);
+    const round_abs_top = roundToPixelGrid(abs_top, point_scale_factor);
 
-    node.layout.left = round_left - parent_round_left;
-    node.layout.top = round_top - parent_round_top;
-    node.layout.width = round_right - round_left;
-    node.layout.height = round_bottom - round_top;
+    node.layout.left = roundToPixelGrid(node_left, point_scale_factor);
+    node.layout.top = roundToPixelGrid(node_top, point_scale_factor);
+    node.layout.width = round_right - round_abs_left;
+    node.layout.height = round_bottom - round_abs_top;
 
     for (node.children.items) |child| {
-        roundLayoutRecursive(child, abs_left, abs_top, round_left, round_top, point_scale_factor);
+        roundLayoutRecursive(child, abs_left, abs_top, point_scale_factor);
     }
 }
 
@@ -1667,11 +1794,16 @@ export fn yogaNodeCalculateLayout(node: *Node, width: f32, height: f32, directio
         .inherit => .ltr,
         else => |value| value,
     };
+    current_root_direction = layout_direction;
+
+    if (node.has_cached_layout and node.cached_direction != layout_direction) {
+        markDirtyRecursiveNoCallback(node);
+    }
     const resolved_width = nodeOuterWidthFromStyle(node, null, null, layout_direction) orelse optionalSize(width);
     const resolved_height = nodeOuterHeightFromStyle(node, null, null, layout_direction) orelse optionalSize(height);
     setRootLayout(node, resolved_width, resolved_height, layout_direction);
     const point_scale_factor = if (node.config) |config| config.point_scale_factor else 1;
-    roundLayoutRecursive(node, 0, 0, 0, 0, point_scale_factor);
+    roundLayoutRecursive(node, 0, 0, point_scale_factor);
     markCleanRecursive(node);
 }
 
