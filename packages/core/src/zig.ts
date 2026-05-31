@@ -74,7 +74,7 @@ registerEnvVar({
 function validateLinuxLibcOverride(): void {
   const libc = process.env.OPENTUI_LIBC
   if (libc === undefined || libc === "" || libc === "glibc" || libc === "musl") return
-  throw new Error(`OPENTUI_LIBC must be "glibc" or "musl", got "${libc}"`)
+  throw new Error(`On Linux, OPENTUI_LIBC must be unset, empty, "glibc", or "musl", got "${libc}"`)
 }
 
 async function resolveNativePackage() {
