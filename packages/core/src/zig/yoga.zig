@@ -1954,30 +1954,66 @@ fn layoutFlexChildren(node: *Node, width: *f32, height: *f32, owner_width: ?f32,
     }
 }
 
+fn canUseIncrementalColumnFlow(node: *const Node) bool {
+    if (node.style.flex_direction != .column and node.style.flex_direction != .column_reverse) return false;
+    if (node.style.flex_wrap != .no_wrap) return false;
+    if (!gapIsOwnerIndependent(&node.style, .row)) return false;
+    if (node.has_absolute_subtree) return false;
+    return true;
+}
+
+fn canReuseChildForIncrementalColumn(parent: *const Node, child: *const Node) bool {
+    if (child.style.display != .flex) return false;
+    if (child.style.position_type == .absolute) return false;
+    if (child.style.has_position_values) return false;
+    if (childAlign(parent, child) == .baseline) return false;
+    if (!child.has_cached_layout) return false;
+    if (nonNan(child.style.flex_grow, 0) != 0) return false;
+    if (nonNan(child.style.flex_shrink, 0) != 0) return false;
+    if (isConcrete(child.style.flex_basis)) return false;
+    if (child.style.height.unit == .percent) return false;
+    return true;
+}
+
+fn repositionIncrementalColumnChildren(node: *Node, content_width: f32, content_height: f32, direction: Direction) void {
+    _ = direction;
+    const child_count = node.children.items.len;
+    const base_gap = resolveGap(&node.style, .row, content_height);
+    const total_gap = if (child_count > 1) base_gap * @as(f32, @floatFromInt(child_count - 1)) else 0;
+    var occupied = total_gap;
+
+    for (node.children.items) |child| {
+        occupied += child.layout.height + child.layout.margin.top + child.layout.margin.bottom;
+    }
+
+    const justify = justifyOffsetAndGap(node.style.justify_content, content_height - occupied, child_count, base_gap);
+    const origin_y = node.layout.border.top + node.layout.padding.top;
+    const reversed = node.style.flex_direction == .column_reverse;
+    var main_cursor = justify.offset;
+
+    for (node.children.items) |child| {
+        const next_y = if (reversed)
+            origin_y + content_height - main_cursor - child.layout.margin.bottom - child.layout.height
+        else
+            origin_y + main_cursor + child.layout.margin.top;
+        setChildLayout(node, child, child.layout.left, next_y, child.layout.width, child.layout.height, content_width, content_height);
+        main_cursor += child.layout.height + child.layout.margin.top + child.layout.margin.bottom + justify.gap;
+    }
+}
+
 fn tryLayoutSimpleColumnDirtyChild(node: *Node, child: *Node, assigned_height: ?f32, owner_width: ?f32, owner_height: ?f32, direction: Direction) ?Size {
-    if (node.style.flex_direction != .column) return null;
-    if (node.style.flex_wrap != .no_wrap) return null;
-    if (node.style.justify_content != .flex_start) return null;
-    if (!gapIsOwnerIndependent(&node.style, .row)) return null;
-    if (node.has_absolute_subtree) return null;
-    if (!child.has_cached_layout) return null;
+    if (!canUseIncrementalColumnFlow(node)) return null;
+    if (!canReuseChildForIncrementalColumn(node, child)) return null;
 
     var child_index: ?usize = null;
     for (node.children.items, 0..) |candidate, index| {
-        if (candidate.style.display != .flex) return null;
-        if (candidate.style.position_type == .absolute) return null;
-        if (nonNan(candidate.style.flex_grow, 0) != 0) return null;
-        if (nonNan(candidate.style.flex_shrink, 0) != 0) return null;
-        if (isConcrete(candidate.style.flex_basis)) return null;
-        if (candidate.style.height.unit == .percent) return null;
+        if (!canReuseChildForIncrementalColumn(node, candidate)) return null;
         if (candidate == child) child_index = index;
     }
-    const index = child_index orelse return null;
+    _ = child_index orelse return null;
 
     const old_width = node.layout.width;
     const old_height = node.layout.height;
-    const old_child_left = child.layout.left;
-    const old_child_top = child.layout.top;
     const old_child_width = child.layout.width;
     const old_child_height = child.layout.height;
     const old_child_margin = child.layout.margin;
@@ -1999,7 +2035,6 @@ fn tryLayoutSimpleColumnDirtyChild(node: *Node, child: *Node, assigned_height: ?
 
     const new_outer_height = child.layout.height + child.layout.margin.top + child.layout.margin.bottom;
     const delta = new_outer_height - old_outer_height;
-    const child_top_delta = child.layout.margin.top - old_child_margin.top;
 
     var next_height = old_height;
     if (assigned_height) |height| {
@@ -2022,20 +2057,7 @@ fn tryLayoutSimpleColumnDirtyChild(node: *Node, child: *Node, assigned_height: ?
 
     const content_width = @max(0, node.layout.width - rectHorizontal(node.layout.padding) - rectHorizontal(node.layout.border));
     const content_height = @max(0, node.layout.height - rectVertical(node.layout.padding) - rectVertical(node.layout.border));
-    for (node.children.items, 0..) |sibling, sibling_index| {
-        const y_delta = if (sibling == child)
-            child_top_delta
-        else if (sibling_index > index)
-            delta
-        else
-            @as(f32, 0);
-        if (y_delta == 0 and sibling != child) {
-            if (next_height == old_height) continue;
-        }
-        const next_y = if (sibling == child) old_child_top + child_top_delta else sibling.layout.top + y_delta;
-        const next_x = if (sibling == child) old_child_left else sibling.layout.left;
-        setChildLayout(node, sibling, next_x, next_y, sibling.layout.width, sibling.layout.height, content_width, content_height);
-    }
+    repositionIncrementalColumnChildren(node, content_width, content_height, direction);
 
     node.cached_generation = current_layout_generation;
     node.has_cached_layout = true;
@@ -2044,21 +2066,11 @@ fn tryLayoutSimpleColumnDirtyChild(node: *Node, child: *Node, assigned_height: ?
 
 fn canReuseChildrenForSimpleColumn(node: *const Node, direction: Direction) bool {
     _ = direction;
-    if (node.style.flex_direction != .column) return false;
-    if (node.style.flex_wrap != .no_wrap) return false;
-    if (node.style.justify_content != .flex_start) return false;
-    if (!gapIsOwnerIndependent(&node.style, .row)) return false;
-    if (node.has_absolute_subtree) return false;
+    if (!canUseIncrementalColumnFlow(node)) return false;
 
     for (node.children.items) |child| {
-        if (child.style.display != .flex) return false;
-        if (child.style.position_type == .absolute) return false;
-        if (!child.has_cached_layout) return false;
+        if (!canReuseChildForIncrementalColumn(node, child)) return false;
         if (child.dirty and (child.self_dirty or child.dirty_child_count != 0)) return false;
-        if (nonNan(child.style.flex_grow, 0) != 0) return false;
-        if (nonNan(child.style.flex_shrink, 0) != 0) return false;
-        if (isConcrete(child.style.flex_basis)) return false;
-        if (child.style.height.unit == .percent) return false;
     }
     return true;
 }
@@ -2077,9 +2089,8 @@ fn tryLayoutSimpleVerticalPaddingChange(node: *Node, assigned_width: ?f32, assig
     if (!rectEqual(node.layout.border, next_border)) return null;
     if (node.layout.padding.left != next_padding.left or node.layout.padding.right != next_padding.right) return null;
 
-    const top_delta = next_padding.top - node.layout.padding.top;
     const bottom_delta = next_padding.bottom - node.layout.padding.bottom;
-    const height_delta = top_delta + bottom_delta;
+    const height_delta = next_padding.top - node.layout.padding.top + bottom_delta;
     if (height_delta == 0) return null;
 
     const explicit_width = assigned_width orelse nodeOuterWidthFromStyle(node, owner_width, owner_height, direction);
@@ -2111,9 +2122,7 @@ fn tryLayoutSimpleVerticalPaddingChange(node: *Node, assigned_width: ?f32, assig
 
     const content_width = @max(0, node.layout.width - rectHorizontal(node.layout.padding) - rectHorizontal(node.layout.border));
     const content_height = @max(0, node.layout.height - rectVertical(node.layout.padding) - rectVertical(node.layout.border));
-    for (node.children.items) |child| {
-        setChildLayout(node, child, child.layout.left, child.layout.top + top_delta, child.layout.width, child.layout.height, content_width, content_height);
-    }
+    repositionIncrementalColumnChildren(node, content_width, content_height, direction);
 
     const assigned_width_value = optionalToFloat(assigned_width);
     const assigned_height_value = optionalToFloat(assigned_height);
