@@ -222,6 +222,10 @@ export class ScrollBoxRenderable extends BoxRenderable {
   }
 
   private syncManualScrollState(): void {
+    if (this._isApplyingStickyScroll) {
+      return
+    }
+
     if (!this._stickyScroll) {
       this._hasManualScroll = false
       return
