@@ -222,10 +222,6 @@ export class ScrollBoxRenderable extends BoxRenderable {
   }
 
   private syncManualScrollState(): void {
-    if (this._isApplyingStickyScroll) {
-      return
-    }
-
     if (!this._stickyScroll) {
       this._hasManualScroll = false
       return
@@ -234,6 +230,13 @@ export class ScrollBoxRenderable extends BoxRenderable {
     const maxScrollTop = Math.max(0, this.scrollHeight - this.viewport.height)
     const maxScrollLeft = Math.max(0, this.scrollWidth - this.viewport.width)
     const hasScrollableContent = maxScrollTop > 1 || maxScrollLeft > 1
+
+    if (this._isApplyingStickyScroll) {
+      if (this._hasManualScroll && hasScrollableContent && this.isAtStickyPosition()) {
+        this._hasManualScroll = false
+      }
+      return
+    }
 
     this._hasManualScroll = hasScrollableContent && !this.isAtStickyPosition()
   }
