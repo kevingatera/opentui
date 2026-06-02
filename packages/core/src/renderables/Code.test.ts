@@ -1946,6 +1946,78 @@ test("CodeRenderable - lineInfo is accessible with drawUnstyledText=false before
   expect(codeRenderable.lineInfo.lineSources.length).toBe(3)
 })
 
+test("CodeRenderable - lineInfo source lines account for concealed whole lines", async () => {
+  const syntaxStyle = SyntaxStyle.fromStyles({
+    default: { fg: RGBA.fromValues(1, 1, 1, 1) },
+  })
+
+  const content = "```ts\nfirst\n```\n```ts\nsecond\n```\ntail"
+  const mockClient = new MockTreeSitterClient()
+  mockClient.setMockResult({
+    highlights: [
+      [0, 5, "markup.raw.block", { conceal: "", concealLines: "" }],
+      [content.indexOf("```", 5), content.indexOf("```", 5) + 3, "markup.raw.block", { conceal: "", concealLines: "" }],
+      [
+        content.indexOf("```", 14),
+        content.indexOf("```", 14) + 5,
+        "markup.raw.block",
+        { conceal: "", concealLines: "" },
+      ],
+      [
+        content.lastIndexOf("```"),
+        content.lastIndexOf("```") + 3,
+        "markup.raw.block",
+        { conceal: "", concealLines: "" },
+      ],
+    ],
+  })
+
+  const codeRenderable = new CodeRenderable(currentRenderer, {
+    id: "test-code",
+    content,
+    filetype: "markdown",
+    syntaxStyle,
+    treeSitterClient: mockClient,
+    conceal: true,
+  })
+
+  currentRenderer.root.add(codeRenderable)
+  await resolveMockHighlights(mockClient)
+
+  expect(codeRenderable.plainText).toBe("first\nsecond\ntail")
+  expect(codeRenderable.lineInfo.lineSources).toEqual([1, 4, 6])
+})
+
+test("CodeRenderable - skipped concealed lines preserve pending empty rendered line source", async () => {
+  const syntaxStyle = SyntaxStyle.fromStyles({
+    default: { fg: RGBA.fromValues(1, 1, 1, 1) },
+  })
+
+  const content = "visible\n```\n```ts"
+  const mockClient = new MockTreeSitterClient()
+  mockClient.setMockResult({
+    highlights: [
+      [8, 11, "markup.raw.block", { conceal: "", concealLines: "" }],
+      [12, 17, "markup.raw.block", { conceal: "", concealLines: "" }],
+    ],
+  })
+
+  const codeRenderable = new CodeRenderable(currentRenderer, {
+    id: "test-code",
+    content,
+    filetype: "markdown",
+    syntaxStyle,
+    treeSitterClient: mockClient,
+    conceal: true,
+  })
+
+  currentRenderer.root.add(codeRenderable)
+  await resolveMockHighlights(mockClient)
+
+  expect(codeRenderable.plainText).toBe("visible\n")
+  expect(codeRenderable.lineInfo.lineSources).toEqual([0, 1])
+})
+
 test("CodeRenderable - plainText reflects content immediately with drawUnstyledText=false", async () => {
   const syntaxStyle = SyntaxStyle.fromStyles({
     default: { fg: RGBA.fromValues(1, 1, 1, 1) },

@@ -1,7 +1,7 @@
-import { type RenderContext } from "../types.js"
+import { type LineInfo, type RenderContext } from "../types.js"
 import { StyledText } from "../lib/styled-text.js"
 import { SyntaxStyle } from "../syntax-style.js"
-import { getTreeSitterClient, treeSitterToStyledText, TreeSitterClient } from "../lib/tree-sitter/index.js"
+import { getTreeSitterClient, TreeSitterClient } from "../lib/tree-sitter/index.js"
 import { TextBufferRenderable, type TextBufferOptions } from "./TextBufferRenderable.js"
 import type { OptimizedBuffer } from "../buffer.js"
 import type { SimpleHighlight } from "../lib/tree-sitter/types.js"
@@ -59,6 +59,8 @@ export class CodeRenderable extends TextBufferRenderable {
   private _onHighlight?: OnHighlightCallback
   private _onChunks?: OnChunksCallback
   private _highlightingPromise: Promise<void> = Promise.resolve()
+  private _renderedLineSources: number[] = []
+  private _renderedLineSourcesAreIdentity: boolean = true
 
   protected _contentDefaultOptions = {
     content: "",
@@ -83,6 +85,7 @@ export class CodeRenderable extends TextBufferRenderable {
 
     if (this._content.length > 0) {
       this.textBuffer.setText(this._content)
+      this.setIdentityRenderedLineSources(this._content)
       this.updateTextInfo()
       this._shouldRenderTextBuffer = this._drawUnstyledText || !this._filetype
     }
@@ -106,7 +109,18 @@ export class CodeRenderable extends TextBufferRenderable {
       }
 
       this.textBuffer.setText(value)
+      this.setIdentityRenderedLineSources(value)
       this.updateTextInfo()
+    }
+  }
+
+  public override get lineInfo(): LineInfo {
+    const lineInfo = super.lineInfo
+    if (this._renderedLineSourcesAreIdentity) return lineInfo
+
+    return {
+      ...lineInfo,
+      lineSources: lineInfo.lineSources.map((line) => this._renderedLineSources[line] ?? line),
     }
   }
 
@@ -243,6 +257,7 @@ export class CodeRenderable extends TextBufferRenderable {
       this._shouldRenderTextBuffer = true
     } else if (shouldDrawUnstyledNow) {
       this.textBuffer.setText(content)
+      this.setIdentityRenderedLineSources(content)
       this._shouldRenderTextBuffer = true
     } else {
       this._shouldRenderTextBuffer = false
@@ -312,8 +327,12 @@ export class CodeRenderable extends TextBufferRenderable {
           enabled: this._conceal,
           baseHighlight: this._baseHighlight,
         })
+        let renderedLineSources = this.getConcealedLineSources(content, highlights)
 
         chunks = await this.transformChunks(chunks, context)
+        if (this._onChunks) {
+          renderedLineSources = CodeRenderable.getIdentityLineSources(chunks.map((chunk) => chunk.text).join(""))
+        }
 
         if (snapshotId !== this._highlightSnapshotId) {
           this.requestRender()
@@ -324,8 +343,10 @@ export class CodeRenderable extends TextBufferRenderable {
 
         const styledText = new StyledText(chunks)
         this.textBuffer.setStyledText(styledText)
+        this.setRenderedLineSources(renderedLineSources)
       } else {
         this.textBuffer.setText(content)
+        this.setIdentityRenderedLineSources(content)
       }
 
       this._shouldRenderTextBuffer = true
@@ -342,12 +363,118 @@ export class CodeRenderable extends TextBufferRenderable {
       console.warn("Code highlighting failed, falling back to plain text:", error)
       if (this.isDestroyed) return
       this.textBuffer.setText(content)
+      this.setIdentityRenderedLineSources(content)
       this._shouldRenderTextBuffer = true
       this._isHighlighting = false
       this._highlightsDirty = false
       this.updateTextInfo()
       this.requestRender()
     }
+  }
+
+  private static getIdentityLineSources(content: string): number[] {
+    if (content.length === 0) return []
+
+    const lineSources = [0]
+    for (let i = 0; i < content.length; i++) {
+      if (content[i] === "\n") {
+        lineSources.push(lineSources.length)
+      }
+    }
+    return lineSources
+  }
+
+  private static lineSourcesAreIdentity(lineSources: number[]): boolean {
+    for (let i = 0; i < lineSources.length; i++) {
+      if (lineSources[i] !== i) return false
+    }
+    return true
+  }
+
+  private setIdentityRenderedLineSources(content: string): void {
+    this._renderedLineSources = CodeRenderable.getIdentityLineSources(content)
+    this._renderedLineSourcesAreIdentity = true
+  }
+
+  private getConcealedLineSources(content: string, highlights: SimpleHighlight[]): number[] {
+    if (!this._conceal) return CodeRenderable.getIdentityLineSources(content)
+    if (content.length === 0) return []
+
+    const lineConcealHighlights = highlights
+      .filter((highlight) => highlight[3]?.concealLines !== undefined)
+      .sort((a, b) => a[0] - b[0])
+
+    if (lineConcealHighlights.length === 0) return CodeRenderable.getIdentityLineSources(content)
+
+    const lineSources: number[] = []
+    let line = 0
+    let lineStart = 0
+    let nextHighlightIndex = 0
+    let currentRenderedLineHasText = false
+
+    const setCurrentRenderedLineSource = (sourceLine: number, hasText: boolean): void => {
+      if (lineSources.length === 0) {
+        lineSources.push(sourceLine)
+      } else if (!currentRenderedLineHasText) {
+        lineSources[lineSources.length - 1] = sourceLine
+      }
+
+      if (hasText) {
+        currentRenderedLineHasText = true
+      }
+    }
+
+    while (lineStart <= content.length) {
+      const newlineOffset = content.indexOf("\n", lineStart)
+      const lineEnd = newlineOffset === -1 ? content.length : newlineOffset
+
+      while (
+        nextHighlightIndex < lineConcealHighlights.length &&
+        lineConcealHighlights[nextHighlightIndex][1] <= lineStart
+      ) {
+        nextHighlightIndex++
+      }
+
+      let coveredUntil = lineStart
+      let concealedLineBreak = false
+      for (let i = nextHighlightIndex; i < lineConcealHighlights.length; i++) {
+        const highlight = lineConcealHighlights[i]
+        if (highlight[0] > lineEnd) break
+        if (highlight[0] < lineStart || highlight[1] > lineEnd) continue
+        if (highlight[3]?.conceal === "" && highlight[0] <= coveredUntil) {
+          coveredUntil = Math.max(coveredUntil, highlight[1])
+        }
+        if (highlight[1] < content.length && content[highlight[1]] === "\n") {
+          concealedLineBreak = true
+        }
+      }
+
+      const fullyConcealed = lineEnd > lineStart && coveredUntil >= lineEnd
+      const concealedWholeLineWithBreak = concealedLineBreak && fullyConcealed
+
+      if (!concealedWholeLineWithBreak) {
+        const hasText = lineEnd > lineStart && !fullyConcealed
+        if (hasText || newlineOffset !== -1 || !fullyConcealed) {
+          setCurrentRenderedLineSource(line, hasText)
+        }
+
+        if (newlineOffset !== -1 && !concealedLineBreak) {
+          lineSources.push(line + 1)
+          currentRenderedLineHasText = false
+        }
+      }
+
+      line++
+      if (newlineOffset === -1) break
+      lineStart = newlineOffset + 1
+    }
+
+    return lineSources.length > 0 ? lineSources : [0]
+  }
+
+  private setRenderedLineSources(lineSources: number[]): void {
+    this._renderedLineSources = lineSources
+    this._renderedLineSourcesAreIdentity = CodeRenderable.lineSourcesAreIdentity(lineSources)
   }
 
   public getLineHighlights(lineIdx: number) {

@@ -59,6 +59,7 @@ export class DiffRenderable extends Renderable {
   private _parsedDiff: StructuredPatch | null = null
   private _parseError: Error | null = null
   private _hunkStartLines: number[] = []
+  private _hunkRowOffsets: number[] | null = null
 
   // CodeRenderable options
   private _fg?: RGBA
@@ -174,6 +175,7 @@ export class DiffRenderable extends Renderable {
 
   private buildView(): void {
     this._hunkStartLines = []
+    this.invalidateHunkRowOffsets()
 
     if (this._parseError) {
       this.buildErrorView()
@@ -241,6 +243,10 @@ export class DiffRenderable extends Renderable {
     })
   }
 
+  private invalidateHunkRowOffsets(): void {
+    this._hunkRowOffsets = null
+  }
+
   private rebuildView(): void {
     if (this._view === "split") {
       this.requestRebuild()
@@ -250,6 +256,8 @@ export class DiffRenderable extends Renderable {
   }
 
   private handleLineInfoChange = (): void => {
+    this.invalidateHunkRowOffsets()
+
     if (!this._waitingForHighlight) return
     if (!this.leftCodeRenderable || !this.rightCodeRenderable) return
 
@@ -263,12 +271,17 @@ export class DiffRenderable extends Renderable {
   }
 
   private attachLineInfoListeners(): void {
-    if (this._lineInfoChangeHandler) return
-    if (!this.leftCodeRenderable || !this.rightCodeRenderable) return
+    if (!this.leftCodeRenderable && !this.rightCodeRenderable) return
 
-    this._lineInfoChangeHandler = this.handleLineInfoChange
-    this.leftCodeRenderable.on("line-info-change", this._lineInfoChangeHandler)
-    this.rightCodeRenderable.on("line-info-change", this._lineInfoChangeHandler)
+    this._lineInfoChangeHandler ??= this.handleLineInfoChange
+    if (this.leftCodeRenderable) {
+      this.leftCodeRenderable.off("line-info-change", this._lineInfoChangeHandler)
+      this.leftCodeRenderable.on("line-info-change", this._lineInfoChangeHandler)
+    }
+    if (this.rightCodeRenderable) {
+      this.rightCodeRenderable.off("line-info-change", this._lineInfoChangeHandler)
+      this.rightCodeRenderable.on("line-info-change", this._lineInfoChangeHandler)
+    }
   }
 
   private detachLineInfoListeners(): void {
@@ -557,6 +570,7 @@ export class DiffRenderable extends Renderable {
     const content = contentLines.join("\n")
 
     const codeRenderable = this.createOrUpdateCodeRenderable("left", content, this._wrapMode)
+    this.attachLineInfoListeners()
 
     this.createOrUpdateSide("left", codeRenderable, lineColors, lineSigns, lineNumbers, new Set<number>(), "100%")
 
@@ -712,6 +726,7 @@ export class DiffRenderable extends Renderable {
       this._wrapMode,
       drawUnstyledText,
     )
+    this.attachLineInfoListeners()
 
     let finalLeftLines: LogicalLine[]
     let finalRightLines: LogicalLine[]
@@ -754,8 +769,8 @@ export class DiffRenderable extends Renderable {
         const leftLine = leftLogicalLines[i]
         const rightLine = rightLogicalLines[i]
 
-        const leftVisualCount = leftVisualCounts.get(i) || 1
-        const rightVisualCount = rightVisualCounts.get(i) || 1
+        const leftVisualCount = leftVisualCounts.get(i) ?? 0
+        const rightVisualCount = rightVisualCounts.get(i) ?? 0
 
         if (leftVisualPos < rightVisualPos) {
           const pad = rightVisualPos - leftVisualPos
@@ -918,9 +933,6 @@ export class DiffRenderable extends Renderable {
   public set syncScroll(value: boolean) {
     if (this._syncScroll !== value) {
       this._syncScroll = value
-      if (!value) {
-        this.detachLineInfoListeners()
-      }
     }
   }
 
@@ -965,6 +977,7 @@ export class DiffRenderable extends Renderable {
   public set wrapMode(value: "word" | "char" | "none" | undefined) {
     if (this._wrapMode !== value) {
       this._wrapMode = value
+      this.invalidateHunkRowOffsets()
 
       if (this._view === "unified" && this.leftCodeRenderable) {
         this.leftCodeRenderable.wrapMode = value ?? "none"
@@ -1227,16 +1240,40 @@ export class DiffRenderable extends Renderable {
   }
 
   public getHunkRowOffsets(): number[] {
+    if (this._hunkRowOffsets) return [...this._hunkRowOffsets]
+
+    this._hunkRowOffsets = this.computeHunkRowOffsets()
+    return [...this._hunkRowOffsets]
+  }
+
+  private computeHunkRowOffsets(): number[] {
     if (this._hunkStartLines.length === 0) return []
 
     const sources = this.leftCodeRenderable?.lineInfo.lineSources
     if (!sources || sources.length === 0) return [...this._hunkStartLines]
 
     const firstRowByLogicalLine: number[] = []
+    let maxLogicalLine = 0
+
+    for (const logicalLine of this._hunkStartLines) {
+      if (logicalLine > maxLogicalLine) maxLogicalLine = logicalLine
+    }
+
     for (let visualRow = 0; visualRow < sources.length; visualRow++) {
       const logicalLine = sources[visualRow]
+      if (logicalLine > maxLogicalLine) maxLogicalLine = logicalLine
       if (firstRowByLogicalLine[logicalLine] === undefined) {
         firstRowByLogicalLine[logicalLine] = visualRow
+      }
+    }
+
+    let nextVisibleRow: number | undefined
+    for (let logicalLine = maxLogicalLine; logicalLine >= 0; logicalLine--) {
+      const firstRow = firstRowByLogicalLine[logicalLine]
+      if (firstRow !== undefined) {
+        nextVisibleRow = firstRow
+      } else if (nextVisibleRow !== undefined) {
+        firstRowByLogicalLine[logicalLine] = nextVisibleRow
       }
     }
 
