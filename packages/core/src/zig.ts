@@ -64,16 +64,51 @@ import type {
 } from "./zig-structs.js"
 import { isBunfsPath } from "./lib/bunfs.js"
 
+registerEnvVar({
+  name: "OPENTUI_LIBC",
+  description: "Select Linux native libc package. Supported values: glibc, musl.",
+  type: "string",
+  default: "",
+})
+
+function validateLinuxLibcOverride(): void {
+  const libc = process.env.OPENTUI_LIBC
+  if (libc === undefined || libc === "" || libc === "glibc" || libc === "musl") return
+  throw new Error(`OPENTUI_LIBC must be "glibc" or "musl", got "${libc}"`)
+}
+
 async function resolveNativePackage() {
+  if (process.platform === "darwin") {
+    if (process.arch === "x64") return await import("@opentui/core-darwin-x64")
+    if (process.arch === "arm64") return await import("@opentui/core-darwin-arm64")
+  }
+
   if (process.platform === "linux") {
-    const muslPkg = `@opentui/core-linux-${process.arch}-musl`
-    try {
-      return await import(muslPkg)
-    } catch {
-      // fall through to glibc variant
+    validateLinuxLibcOverride()
+
+    if (process.arch === "x64") {
+      if (process.env.OPENTUI_LIBC === "musl") {
+        return await import("@opentui/core-linux-x64-musl")
+      } else {
+        return await import("@opentui/core-linux-x64")
+      }
+    }
+
+    if (process.arch === "arm64") {
+      if (process.env.OPENTUI_LIBC === "musl") {
+        return await import("@opentui/core-linux-arm64-musl")
+      } else {
+        return await import("@opentui/core-linux-arm64")
+      }
     }
   }
-  return await import(`@opentui/core-${process.platform}-${process.arch}`)
+
+  if (process.platform === "win32") {
+    if (process.arch === "x64") return await import("@opentui/core-win32-x64")
+    if (process.arch === "arm64") return await import("@opentui/core-win32-arm64")
+  }
+
+  throw new Error(`opentui is not supported on the current platform: ${process.platform}-${process.arch}`)
 }
 const nativePackage = await resolveNativePackage()
 let targetLibPath = nativePackage.default
