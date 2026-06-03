@@ -2226,8 +2226,13 @@ class FFIRenderLib implements RenderLib {
 
   constructor(libPath?: string) {
     this.opentui = getOpenTUILib(libPath)
-    this.setupLogging()
-    this.setupEventBus()
+    try {
+      this.setupLogging()
+      this.setupEventBus()
+    } catch (error) {
+      this.dispose()
+      throw error
+    }
   }
 
   private setupLogging() {
@@ -2283,8 +2288,28 @@ class FFIRenderLib implements RenderLib {
     this.setLogCallback(logCallback.ptr)
   }
 
-  private setLogCallback(callbackPtr: Pointer) {
+  private setLogCallback(callbackPtr: Pointer | null) {
     this.opentui.symbols.setLogCallback(callbackPtr)
+  }
+
+  public dispose(): void {
+    try {
+      if (this.eventSinkPtr) {
+        this.opentui.symbols.destroyEventSink(this.eventSinkPtr)
+        this.eventSinkPtr = null
+      }
+
+      this.setLogCallback(null)
+    } finally {
+      try {
+        this.opentui.close()
+      } finally {
+        this.eventCallbackWrapper = null
+        this.logCallbackWrapper = null
+        this.nativeSpanFeedCallbackWrapper = null
+        this.nativeSpanFeedHandlers.clear()
+      }
+    }
   }
 
   private setupEventBus() {
@@ -4549,9 +4574,16 @@ class FFIRenderLib implements RenderLib {
 
 let opentuiLibPath: string | undefined
 let opentuiLib: RenderLib | undefined
+let renderLibResolved = false
 
 export function setRenderLibPath(libPath: string) {
   if (opentuiLibPath !== libPath) {
+    if (renderLibResolved) {
+      throw new Error("setRenderLibPath() must be called before resolveRenderLib()")
+    }
+    if (opentuiLib instanceof FFIRenderLib) {
+      opentuiLib.dispose()
+    }
     opentuiLibPath = libPath
     opentuiLib = undefined
   }
@@ -4567,6 +4599,7 @@ export function resolveRenderLib(): RenderLib {
       )
     }
   }
+  renderLibResolved = true
   return opentuiLib
 }
 
