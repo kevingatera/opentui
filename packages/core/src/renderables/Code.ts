@@ -61,6 +61,7 @@ export class CodeRenderable extends TextBufferRenderable {
   private _onHighlight?: OnHighlightCallback
   private _onChunks?: OnChunksCallback
   private _highlightingPromise: Promise<void> = Promise.resolve()
+  // Temporary rendered-line -> source-line map for concealment; native extmarks should replace this.
   private _renderedLineSources?: number[]
   private _mappedLineInfo?: LineInfo
 
@@ -122,6 +123,7 @@ export class CodeRenderable extends TextBufferRenderable {
     const lineInfo = super.lineInfo
     const renderedLineSources = this._renderedLineSources
 
+    // Native reports visual rows for the rendered buffer; remap those rows back to source lines.
     this._mappedLineInfo = {
       ...lineInfo,
       lineSources: lineInfo.lineSources.map((line) => renderedLineSources[line] ?? line),
@@ -353,6 +355,7 @@ export class CodeRenderable extends TextBufferRenderable {
           enabled: this._conceal,
           baseHighlight: this._baseHighlight,
         })
+        // onChunks may rewrite text arbitrarily, so the conceal-only source map would be invalid.
         const renderedLineSources = this._onChunks ? undefined : this.getConcealLinesSourceMap(content, highlights)
 
         chunks = await this.transformChunks(chunks, context)
@@ -424,6 +427,7 @@ export class CodeRenderable extends TextBufferRenderable {
 
     if (ranges.length <= 1) return ranges
 
+    // Overlapping conceal ranges must collapse before line-by-line source mapping.
     ranges.sort((a, b) => a[0] - b[0])
     let writeIndex = 0
 
@@ -446,6 +450,8 @@ export class CodeRenderable extends TextBufferRenderable {
   private getConcealLinesSourceMap(content: string, highlights: SimpleHighlight[]): number[] | undefined {
     if (!this._conceal || content.length === 0) return undefined
 
+    // setStyledText gives native only rendered text; rebuild enough source identity for concealed lines.
+    // Native view-resolved extmarks should make this a layout query instead of a parallel map.
     const concealLineRanges = CodeRenderable.getMergedConcealLineRanges(highlights)
     if (concealLineRanges.length === 0) return undefined
 
@@ -456,6 +462,7 @@ export class CodeRenderable extends TextBufferRenderable {
     let currentRenderedLineHasText = false
 
     const setCurrentRenderedLineSource = (line: number, hasText: boolean): void => {
+      // Until visible text is emitted, a rendered line can still map to a later collapsed source line.
       if (lineSources.length === 0) {
         lineSources.push(line)
       } else if (!currentRenderedLineHasText) {

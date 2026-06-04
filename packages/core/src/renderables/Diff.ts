@@ -58,6 +58,7 @@ export class DiffRenderable extends Renderable {
   private _view: "unified" | "split"
   private _parsedDiff: StructuredPatch | null = null
   private _parseError: Error | null = null
+  // Source-line anchors for hunk starts; native extmarks should eventually own these anchors.
   private _hunkStartLines: number[] = []
   private _hunkRowOffsets: number[] | null = null
 
@@ -256,6 +257,7 @@ export class DiffRenderable extends Renderable {
   }
 
   private handleLineInfoChange = (): void => {
+    // Wrapping or async concealment can change the visual row for an existing hunk anchor.
     this.invalidateHunkRowOffsets()
 
     if (!this._waitingForHighlight) return
@@ -273,6 +275,7 @@ export class DiffRenderable extends Renderable {
   private attachLineInfoListeners(): void {
     if (!this.leftCodeRenderable && !this.rightCodeRenderable) return
 
+    // Hunk offsets depend on lineInfo even when syncScroll is off.
     this._lineInfoChangeHandler ??= this.handleLineInfoChange
     if (this.leftCodeRenderable) {
       this.leftCodeRenderable.off("line-info-change", this._lineInfoChangeHandler)
@@ -503,6 +506,7 @@ export class DiffRenderable extends Renderable {
     let lineIndex = 0
 
     for (const hunk of this._parsedDiff.hunks) {
+      // Unified view flattens hunks directly into the left CodeRenderable line stream.
       this._hunkStartLines.push(lineIndex)
 
       let oldLineNum = hunk.oldStart
@@ -603,6 +607,7 @@ export class DiffRenderable extends Renderable {
     const hunkFirstLeftLine: number[] = []
 
     for (const hunk of this._parsedDiff.hunks) {
+      // Split view may insert padding later, so carry hunk starts through LogicalLine metadata.
       hunkFirstLeftLine.push(leftLogicalLines.length)
 
       let oldLineNum = hunk.oldStart
@@ -701,6 +706,7 @@ export class DiffRenderable extends Renderable {
       }
     }
 
+    // Mark before wrap-alignment so padding does not lose the hunk start.
     for (const startIndex of hunkFirstLeftLine) {
       const firstLine = leftLogicalLines[startIndex]
       if (firstLine) firstLine.hunkStart = true
@@ -769,6 +775,7 @@ export class DiffRenderable extends Renderable {
         const leftLine = leftLogicalLines[i]
         const rightLine = rightLogicalLines[i]
 
+        // Concealed logical lines have zero visual rows; counting them as one misaligns split panes.
         const leftVisualCount = leftVisualCounts.get(i) ?? 0
         const rightVisualCount = rightVisualCounts.get(i) ?? 0
 
@@ -820,6 +827,7 @@ export class DiffRenderable extends Renderable {
 
     finalLeftLines.forEach((line, index) => {
       if (line.hunkStart) {
+        // After padding, this is the line index CodeRenderable.lineInfo can resolve to a row.
         this._hunkStartLines.push(index)
       }
       if (line.lineNum !== undefined) {
@@ -1249,6 +1257,8 @@ export class DiffRenderable extends Renderable {
   private computeHunkRowOffsets(): number[] {
     if (this._hunkStartLines.length === 0) return []
 
+    // lineInfo composes native wrapping with CodeRenderable's temporary conceal source map.
+    // Native extmark row resolution should replace this scan with direct anchor queries.
     const sources = this.leftCodeRenderable?.lineInfo.lineSources
     if (!sources || sources.length === 0) return [...this._hunkStartLines]
 
@@ -1256,6 +1266,7 @@ export class DiffRenderable extends Renderable {
     let visualRow = 0
 
     for (const hunkStartLine of this._hunkStartLines) {
+      // If the exact hunk line is concealed, navigate to the next visible row.
       while (visualRow < sources.length && sources[visualRow] < hunkStartLine) {
         visualRow++
       }
