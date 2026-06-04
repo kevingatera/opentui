@@ -41,6 +41,8 @@ export interface CodeOptions extends TextBufferOptions {
   onChunks?: OnChunksCallback
 }
 
+type ConcealLineRange = [start: number, end: number]
+
 export class CodeRenderable extends TextBufferRenderable {
   private _content: string
   private _filetype?: string
@@ -325,7 +327,7 @@ export class CodeRenderable extends TextBufferRenderable {
           enabled: this._conceal,
           baseHighlight: this._baseHighlight,
         })
-        const renderedLineSources = this._onChunks ? undefined : this.getConcealedLineSources(content, highlights)
+        const renderedLineSources = this._onChunks ? undefined : this.getConcealLinesSourceMap(content, highlights)
 
         chunks = await this.transformChunks(chunks, context)
 
@@ -374,74 +376,90 @@ export class CodeRenderable extends TextBufferRenderable {
     return true
   }
 
-  private getConcealedLineSources(content: string, highlights: SimpleHighlight[]): number[] | undefined {
+  private static getMergedConcealLineRanges(highlights: SimpleHighlight[]): ConcealLineRange[] {
+    const ranges: ConcealLineRange[] = []
+
+    for (const highlight of highlights) {
+      const meta = highlight[3]
+      if (meta?.concealLines === undefined) continue
+
+      const group = highlight[2]
+      const isEmptyConceal =
+        meta.conceal === "" || (meta.conceal === undefined && (group === "conceal" || group.startsWith("conceal.")))
+      if (isEmptyConceal) {
+        ranges.push([highlight[0], highlight[1]])
+      }
+    }
+
+    if (ranges.length <= 1) return ranges
+
+    ranges.sort((a, b) => a[0] - b[0])
+    let writeIndex = 0
+
+    for (let i = 1; i < ranges.length; i++) {
+      const current = ranges[writeIndex]
+      const next = ranges[i]
+
+      if (next[0] <= current[1]) {
+        current[1] = Math.max(current[1], next[1])
+      } else {
+        writeIndex++
+        ranges[writeIndex] = next
+      }
+    }
+
+    ranges.length = writeIndex + 1
+    return ranges
+  }
+
+  private getConcealLinesSourceMap(content: string, highlights: SimpleHighlight[]): number[] | undefined {
     if (!this._conceal || content.length === 0) return undefined
 
-    const lineConcealHighlights = highlights
-      .filter((highlight) => highlight[3]?.concealLines !== undefined)
-      .sort((a, b) => a[0] - b[0])
-
-    if (lineConcealHighlights.length === 0) return undefined
+    const concealLineRanges = CodeRenderable.getMergedConcealLineRanges(highlights)
+    if (concealLineRanges.length === 0) return undefined
 
     const lineSources: number[] = []
-    let line = 0
+    let sourceLine = 0
     let lineStart = 0
-    let nextHighlightIndex = 0
+    let rangeIndex = 0
     let currentRenderedLineHasText = false
 
-    const setCurrentRenderedLineSource = (sourceLine: number, hasText: boolean): void => {
+    const setCurrentRenderedLineSource = (line: number, hasText: boolean): void => {
       if (lineSources.length === 0) {
-        lineSources.push(sourceLine)
+        lineSources.push(line)
       } else if (!currentRenderedLineHasText) {
-        lineSources[lineSources.length - 1] = sourceLine
+        lineSources[lineSources.length - 1] = line
       }
 
-      if (hasText) {
-        currentRenderedLineHasText = true
-      }
+      if (hasText) currentRenderedLineHasText = true
     }
 
     while (lineStart <= content.length) {
       const newlineOffset = content.indexOf("\n", lineStart)
       const lineEnd = newlineOffset === -1 ? content.length : newlineOffset
 
-      while (
-        nextHighlightIndex < lineConcealHighlights.length &&
-        lineConcealHighlights[nextHighlightIndex][1] <= lineStart
-      ) {
-        nextHighlightIndex++
+      while (rangeIndex < concealLineRanges.length && concealLineRanges[rangeIndex][1] <= lineStart) {
+        rangeIndex++
       }
 
-      let coveredUntil = lineStart
-      let concealedLineBreak = false
-      for (let i = nextHighlightIndex; i < lineConcealHighlights.length; i++) {
-        const highlight = lineConcealHighlights[i]
-        if (highlight[0] > lineEnd) break
-        if (highlight[0] < lineStart || highlight[1] > lineEnd) continue
-        if (highlight[3]?.conceal === "" && highlight[0] <= coveredUntil) {
-          coveredUntil = Math.max(coveredUntil, highlight[1])
-        }
-        if (highlight[1] < content.length && content[highlight[1]] === "\n") {
-          concealedLineBreak = true
-        }
-      }
+      const range = concealLineRanges[rangeIndex]
+      const fullyConcealed = !!range && lineEnd > lineStart && range[0] <= lineStart && range[1] >= lineEnd
+      const lineBreakConcealed =
+        newlineOffset !== -1 && !!range && range[0] <= newlineOffset && range[1] >= newlineOffset
 
-      const fullyConcealed = lineEnd > lineStart && coveredUntil >= lineEnd
-      const concealedWholeLineWithBreak = concealedLineBreak && fullyConcealed
-
-      if (!concealedWholeLineWithBreak) {
+      if (!fullyConcealed || !lineBreakConcealed) {
         const hasText = lineEnd > lineStart && !fullyConcealed
         if (hasText || newlineOffset !== -1 || !fullyConcealed) {
-          setCurrentRenderedLineSource(line, hasText)
+          setCurrentRenderedLineSource(sourceLine, hasText)
         }
 
-        if (newlineOffset !== -1 && !concealedLineBreak) {
-          lineSources.push(line + 1)
+        if (newlineOffset !== -1 && !lineBreakConcealed) {
+          lineSources.push(sourceLine + 1)
           currentRenderedLineHasText = false
         }
       }
 
-      line++
+      sourceLine++
       if (newlineOffset === -1) break
       lineStart = newlineOffset + 1
     }

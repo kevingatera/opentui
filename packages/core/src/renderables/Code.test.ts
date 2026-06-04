@@ -1988,6 +1988,32 @@ test("CodeRenderable - lineInfo source lines account for concealed whole lines",
   expect(codeRenderable.lineInfo.lineSources).toEqual([1, 4, 6])
 })
 
+test("CodeRenderable - lineInfo source lines account for multiline concealed ranges", async () => {
+  const syntaxStyle = SyntaxStyle.fromStyles({
+    default: { fg: RGBA.fromValues(1, 1, 1, 1) },
+  })
+
+  const mockClient = new MockTreeSitterClient()
+  mockClient.setMockResult({
+    highlights: [[0, 3, "conceal", { conceal: "", concealLines: "" }]],
+  })
+
+  const codeRenderable = new CodeRenderable(currentRenderer, {
+    id: "test-code",
+    content: "a\nb\nc",
+    filetype: "text",
+    syntaxStyle,
+    treeSitterClient: mockClient,
+    conceal: true,
+  })
+
+  currentRenderer.root.add(codeRenderable)
+  await resolveMockHighlights(mockClient)
+
+  expect(codeRenderable.plainText).toBe("c")
+  expect(codeRenderable.lineInfo.lineSources).toEqual([2])
+})
+
 test("CodeRenderable - skipped concealed lines preserve pending empty rendered line source", async () => {
   const syntaxStyle = SyntaxStyle.fromStyles({
     default: { fg: RGBA.fromValues(1, 1, 1, 1) },

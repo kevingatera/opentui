@@ -342,3 +342,36 @@ test("DiffRenderable - hunk row offsets map concealed hunk starts to the next vi
 
   expect(diffRenderable.getHunkRowOffsets()).toEqual([0, 1])
 })
+
+test("DiffRenderable - hunk row offsets account for multiline concealed ranges", async () => {
+  const syntaxStyle = SyntaxStyle.fromStyles({
+    default: { fg: RGBA.fromValues(1, 1, 1, 1) },
+  })
+
+  const diff = `--- a/test.txt
++++ b/test.txt
+@@ -1,2 +1,2 @@
+ a
+-b
++c
+@@ -10,1 +10,1 @@
+ d`
+
+  mockClient.setMockResult({
+    highlights: [[0, 3, "conceal", { conceal: "", concealLines: "" }]],
+  })
+
+  const diffRenderable = new DiffRenderable(currentRenderer, {
+    id: "test-diff",
+    diff,
+    syntaxStyle,
+    filetype: "text",
+    conceal: true,
+    treeSitterClient: mockClient,
+  })
+
+  currentRenderer.root.add(diffRenderable)
+  await settleDiffHighlighting(diffRenderable, mockClient, renderOnce)
+
+  expect(diffRenderable.getHunkRowOffsets()).toEqual([0, 1])
+})
