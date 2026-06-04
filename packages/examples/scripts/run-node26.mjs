@@ -50,6 +50,8 @@ function buildNodeExamples() {
       "[name].[ext]",
       "--define",
       "OPENTUI_BUN_ONLY_EXAMPLES=false",
+      "--external",
+      "@opentui/core",
     ],
     packageRoot,
   )
