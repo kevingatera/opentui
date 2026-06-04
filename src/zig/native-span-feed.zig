@@ -439,18 +439,23 @@ pub const Stream = struct {
             .chunk_index = @intCast(self.pending_chunk_index),
             .reserved = 0,
         };
+
         try self.span_ring.push(self, info, notify);
-        if (self.pending_chunk_index < self.state_capacity) {
-            self.state_buffer[self.pending_chunk_index] +|= 1;
-            // Avoid refcount saturation, which can corrupt data.
-            if (self.state_buffer[self.pending_chunk_index] == 255) {
-                self.write_offset = self.options.chunk_size;
-            }
-        }
+        self.markSpanPending(info.chunk_index);
         self.stats.spans_committed += 1;
         self.pending_len = 0;
         self.pending_offset = self.write_offset;
         self.pending_chunk_index = self.current_chunk_index;
+    }
+
+    fn markSpanPending(self: *Stream, chunk_index: u32) void {
+        if (chunk_index < self.state_capacity) {
+            self.state_buffer[chunk_index] +|= 1;
+            // Avoid refcount saturation, which can corrupt data.
+            if (self.state_buffer[chunk_index] == 255) {
+                self.write_offset = self.options.chunk_size;
+            }
+        }
     }
 
     pub fn reserveLocked(self: *Stream, min_len: u32) StreamError!ReserveInfo {

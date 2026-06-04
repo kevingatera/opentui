@@ -14,10 +14,15 @@ import {
   type WidthMethod,
 } from "./types.js"
 import { RGBA, parseColor, type ColorInput } from "./lib/RGBA.js"
-import type { Pointer } from "./platform/ffi.js"
 import { sleep } from "./platform/runtime.js"
 import { OptimizedBuffer } from "./buffer.js"
-import { resolveRenderLib, type NativeBufferedOutput, type NativeRenderStats, type RenderLib } from "./zig.js"
+import {
+  resolveRenderLib,
+  type NativeBufferedOutput,
+  type NativeRenderStats,
+  type RenderLib,
+  type RendererHandle,
+} from "./zig.js"
 import { NativeSpanFeed } from "./NativeSpanFeed.js"
 import { TerminalConsole, type ConsoleOptions, capture } from "./console.js"
 import { type MouseEventType, type RawMouseEvent, type ScrollInfo } from "./lib/parse.mouse.js"
@@ -714,7 +719,7 @@ export enum RendererControlState {
 export class CliRenderer extends EventEmitter implements RenderContext {
   private static animationFrameId = 0
   private lib: RenderLib
-  public rendererPtr: Pointer
+  public rendererPtr: RendererHandle
   public stdin: NodeJS.ReadStream
   private stdout: NodeJS.WriteStream
   private exitOnCtrlC: boolean
@@ -1025,7 +1030,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     // so Zig skips local-TTY capability-query timing assumptions; process
     // stdout and memory output preserve native auto detection.
     //
-    let rendererPtr: Pointer | null
+    let rendererPtr: RendererHandle | null
     try {
       rendererPtr = lib.createRenderer(initialGeometry.renderWidth, initialGeometry.renderHeight, {
         remote: remoteMode,
@@ -3084,7 +3089,9 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     // Feed-backed startup writes are async relative to the JS Writable. Wait
     // until they drain so callers can safely destroy immediately after
     // createCliRenderer() resolves.
-    await this._feed?.idle()
+    if (this._feed?.isBackpressured()) {
+      await this._feed.idle()
+    }
   }
 
   private stdinListener: (chunk: Buffer | string) => void = ((chunk: Buffer | string) => {

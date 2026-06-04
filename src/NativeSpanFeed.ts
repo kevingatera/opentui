@@ -1,5 +1,5 @@
 import { toArrayBuffer, type Pointer } from "./platform/ffi.js"
-import { resolveRenderLib, type NativeSpanFeedEventHandler } from "./zig.js"
+import { resolveRenderLib } from "./zig.js"
 import { SpanInfoStruct } from "./zig-structs.js"
 import type { NativeSpanFeedOptions } from "./zig-structs.js"
 
@@ -17,10 +17,13 @@ function toNumber(value: number | bigint): number {
   return typeof value === "bigint" ? Number(value) : value
 }
 
+type StreamEventHandler = (eventId: number, arg0: Pointer, arg1: number | bigint) => void
+
 export type DataHandler = (data: Uint8Array) => void | Promise<void>
 
 /**
  * Zero-copy wrapper over Zig memory; not a full stream interface.
+ * Chunk and state typed-array views are borrowed and invalid after destroy.
  */
 export class NativeSpanFeed {
   static create(options?: NativeSpanFeedOptions): NativeSpanFeed {
@@ -57,7 +60,7 @@ export class NativeSpanFeed {
 
   readonly streamPtr: Pointer
   private readonly lib = resolveRenderLib()
-  private readonly eventHandler: NativeSpanFeedEventHandler
+  private readonly eventHandler: StreamEventHandler
   private chunkMap = new Map<Pointer, ArrayBuffer>()
   private chunkSizes = new Map<Pointer, number>()
   private dataHandlers = new Set<DataHandler>()
