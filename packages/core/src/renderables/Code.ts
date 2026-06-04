@@ -62,6 +62,7 @@ export class CodeRenderable extends TextBufferRenderable {
   private _onChunks?: OnChunksCallback
   private _highlightingPromise: Promise<void> = Promise.resolve()
   private _renderedLineSources?: number[]
+  private _mappedLineInfo?: LineInfo
 
   protected _contentDefaultOptions = {
     content: "",
@@ -109,19 +110,44 @@ export class CodeRenderable extends TextBufferRenderable {
       }
 
       this.textBuffer.setText(value)
-      this._renderedLineSources = undefined
+      this.setRenderedLineSources(undefined)
       this.updateTextInfo()
     }
   }
 
   public override get lineInfo(): LineInfo {
-    const lineInfo = super.lineInfo
-    if (!this._renderedLineSources) return lineInfo
+    if (!this._renderedLineSources) return super.lineInfo
+    if (this._mappedLineInfo) return this._mappedLineInfo
 
-    return {
+    const lineInfo = super.lineInfo
+    const renderedLineSources = this._renderedLineSources
+
+    this._mappedLineInfo = {
       ...lineInfo,
-      lineSources: lineInfo.lineSources.map((line) => this._renderedLineSources?.[line] ?? line),
+      lineSources: lineInfo.lineSources.map((line) => renderedLineSources[line] ?? line),
     }
+    return this._mappedLineInfo
+  }
+
+  public override get wrapMode(): "none" | "char" | "word" {
+    return super.wrapMode
+  }
+
+  public override set wrapMode(value: "none" | "char" | "word") {
+    if (super.wrapMode !== value) {
+      this._mappedLineInfo = undefined
+      super.wrapMode = value
+    }
+  }
+
+  protected override onResize(width: number, height: number): void {
+    this._mappedLineInfo = undefined
+    super.onResize(width, height)
+  }
+
+  protected override updateTextInfo(): void {
+    this._mappedLineInfo = undefined
+    super.updateTextInfo()
   }
 
   get filetype(): string | undefined {
@@ -257,7 +283,7 @@ export class CodeRenderable extends TextBufferRenderable {
       this._shouldRenderTextBuffer = true
     } else if (shouldDrawUnstyledNow) {
       this.textBuffer.setText(content)
-      this._renderedLineSources = undefined
+      this.setRenderedLineSources(undefined)
       this._shouldRenderTextBuffer = true
     } else {
       this._shouldRenderTextBuffer = false
@@ -340,10 +366,10 @@ export class CodeRenderable extends TextBufferRenderable {
 
         const styledText = new StyledText(chunks)
         this.textBuffer.setStyledText(styledText)
-        this._renderedLineSources = renderedLineSources
+        this.setRenderedLineSources(renderedLineSources)
       } else {
         this.textBuffer.setText(content)
-        this._renderedLineSources = undefined
+        this.setRenderedLineSources(undefined)
       }
 
       this._shouldRenderTextBuffer = true
@@ -360,13 +386,18 @@ export class CodeRenderable extends TextBufferRenderable {
       console.warn("Code highlighting failed, falling back to plain text:", error)
       if (this.isDestroyed) return
       this.textBuffer.setText(content)
-      this._renderedLineSources = undefined
+      this.setRenderedLineSources(undefined)
       this._shouldRenderTextBuffer = true
       this._isHighlighting = false
       this._highlightsDirty = false
       this.updateTextInfo()
       this.requestRender()
     }
+  }
+
+  private setRenderedLineSources(lineSources: number[] | undefined): void {
+    this._renderedLineSources = lineSources
+    this._mappedLineInfo = undefined
   }
 
   private static isIdentityLineSources(lineSources: number[]): boolean {

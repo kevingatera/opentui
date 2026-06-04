@@ -2044,6 +2044,42 @@ test("CodeRenderable - skipped concealed lines preserve pending empty rendered l
   expect(codeRenderable.lineInfo.lineSources).toEqual([0, 1])
 })
 
+test("CodeRenderable - concealed lineInfo source cache invalidates when wrap mode changes", async () => {
+  const syntaxStyle = SyntaxStyle.fromStyles({
+    default: { fg: RGBA.fromValues(1, 1, 1, 1) },
+  })
+
+  const content = "```ts\nabcdefghijklmnopqrst\n```\ntail"
+  const mockClient = new MockTreeSitterClient()
+  mockClient.setMockResult({
+    highlights: [
+      [0, 5, "markup.raw.block", { conceal: "", concealLines: "" }],
+      [content.indexOf("```", 5), content.indexOf("```", 5) + 3, "markup.raw.block", { conceal: "", concealLines: "" }],
+    ],
+  })
+
+  const codeRenderable = new CodeRenderable(currentRenderer, {
+    id: "test-code",
+    content,
+    filetype: "markdown",
+    syntaxStyle,
+    treeSitterClient: mockClient,
+    conceal: true,
+    wrapMode: "none",
+    width: 10,
+  })
+
+  currentRenderer.root.add(codeRenderable)
+  await resolveMockHighlights(mockClient)
+
+  expect(codeRenderable.lineInfo.lineSources).toEqual([1, 3])
+  expect(codeRenderable.lineInfo.lineSources).toEqual([1, 3])
+
+  codeRenderable.wrapMode = "char"
+
+  expect(codeRenderable.lineInfo.lineSources).toEqual([1, 1, 3])
+})
+
 test("CodeRenderable - plainText reflects content immediately with drawUnstyledText=false", async () => {
   const syntaxStyle = SyntaxStyle.fromStyles({
     default: { fg: RGBA.fromValues(1, 1, 1, 1) },
