@@ -417,7 +417,10 @@ if (buildLib) {
   }
 
   const optionalDeps: Record<string, string> = Object.fromEntries(
-    variants.map(({ platform, arch }) => [`${packageJson.name}-${platform}-${arch}`, packageJson.version]),
+    variants.map(({ platform, arch, abi }) => [
+      `${packageJson.name}-${platform}-${arch}${abi ? `-${abi}` : ""}`,
+      packageJson.version,
+    ]),
   )
 
   writeFileSync(
