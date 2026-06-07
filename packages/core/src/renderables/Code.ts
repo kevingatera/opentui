@@ -112,7 +112,7 @@ export class CodeRenderable extends TextBufferRenderable {
       this._highlightsDirty = true
       this._highlightSnapshotId++
 
-      if (this._streaming && this._filetype && (this._hadInitialContent || !this._drawUnstyledText)) {
+      if (this._streaming && this._filetype && !this._drawUnstyledText) {
         this.requestRender()
         return
       }
