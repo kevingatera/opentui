@@ -320,7 +320,7 @@ pub const ANSI = struct {
     pub const decrqmUnicode = "\x1b[?2027$p";
     pub const decrqmColorScheme = "\x1b[?2031$p";
     pub const csiUQuery = "\x1b[?u";
-    pub const kittyGraphicsQuery = "\x1b_Gi=31337,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\\x1b[c";
+    pub const kittyGraphicsQuery = "\x1b_Gi=31337,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\";
     pub const notificationQueries = "\x1b]99;i=opentui-notifications:p=?;\x1b\\\x1b]1337;Capabilities\x1b\\";
 
     pub const capabilityQueriesBase = decrqmSgrPixels ++
@@ -356,6 +356,7 @@ pub const ANSI = struct {
     }
 
     pub const kittyGraphicsQueryTmux = wrapForTmux(kittyGraphicsQuery);
+    pub const primaryDeviceAttrsTmux = wrapForTmux(primaryDeviceAttrs);
     pub const capabilityQueriesTmux = wrapForTmux(capabilityQueriesBase) ++ csiUQuery ++ notificationQueries;
     pub const capabilityQueriesFootIsBrokenTmux = wrapForTmux(capabilityQueriesBase) ++ csiUQuery;
     pub const sixelGeometryQuery = "\x1b[?2;1;0S";

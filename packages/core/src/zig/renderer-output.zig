@@ -169,6 +169,7 @@ pub const BufferedBackend = struct {
     const BufferId = enum { A, B };
 
     output: BufferedOutput,
+    allocator: Allocator,
     ownedStdoutOutput: ?*StdoutOutput = null,
     ownedMemoryOutput: ?*MemoryOutput = null,
 
@@ -193,6 +194,7 @@ pub const BufferedBackend = struct {
     currentOutputLen: usize = 0,
 
     lastWriteTimeUs: ?f64 = null,
+    frameWriteFailed: bool = false,
 
     pub fn create(allocator: Allocator, output: BufferedOutput) !BufferedBackend {
         const a_buf = try allocator.alloc(u8, OUTPUT_BUFFER_SIZE);
@@ -202,6 +204,7 @@ pub const BufferedBackend = struct {
 
         return BufferedBackend{
             .output = output,
+            .allocator = allocator,
             .outputA = a_buf,
             .outputB = b_buf,
         };
@@ -325,13 +328,18 @@ pub const BufferedBackend = struct {
             &self.outputLenA
         else
             &self.outputLenB;
-        const buffer = if (self.activeBuffer == .A)
-            self.outputA
-        else
-            self.outputB;
+        var buffer = if (self.activeBuffer == .A) self.outputA else self.outputB;
 
         if (bufferLen.* + data.len > buffer.len) {
-            return error.BufferFull;
+            const required = bufferLen.* + data.len;
+            var capacity = buffer.len;
+            while (capacity < required) capacity = std.math.mul(usize, capacity, 2) catch required;
+            const grown = self.allocator.realloc(buffer, capacity) catch {
+                self.frameWriteFailed = true;
+                return error.BufferFull;
+            };
+            if (self.activeBuffer == .A) self.outputA = grown else self.outputB = grown;
+            buffer = grown;
         }
 
         @memcpy(buffer[bufferLen.*..][0..data.len], data);
@@ -346,6 +354,7 @@ pub const BufferedBackend = struct {
     }
 
     pub fn beginFrame(self: *BufferedBackend) void {
+        self.frameWriteFailed = false;
         if (self.activeBuffer == .A) {
             self.outputLenA = 0;
         } else {
@@ -354,6 +363,7 @@ pub const BufferedBackend = struct {
     }
 
     pub fn endFrame(self: *BufferedBackend) WriteStatus {
+        if (self.frameWriteFailed) return .failed;
         const writeStart = std.time.microTimestamp();
         const committed_buffer = self.activeBuffer;
 
