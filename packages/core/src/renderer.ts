@@ -4297,6 +4297,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.frameCount = 0
     this.lastFpsTime = this.lastTime
     this.currentFps = 0
+    this.renderStats.fps = 0
 
     this.loop()
   }
@@ -4320,15 +4321,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       const deltaTime = elapsed
       this.lastTime = now
 
-      this.frameCount++
-      if (this.getElapsedMs(now, this.lastFpsTime) >= 1000) {
-        this.currentFps = this.frameCount
-        this.frameCount = 0
-        this.lastFpsTime = now
-      }
-
       this.renderStats.frameCount++
-      this.renderStats.fps = this.currentFps
       const overallStart = performance.now()
 
       const frameRequests = Array.from(this.animationRequest.values())
@@ -4363,6 +4356,13 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       // If destroy() was requested during this frame, skip native work and scheduling.
       if (!this._isDestroyed) {
         const nativeStatus = this.renderNative() ?? "rendered"
+        if (nativeStatus === "rendered") this.frameCount++
+        if (this.getElapsedMs(now, this.lastFpsTime) >= 1000) {
+          this.currentFps = this.frameCount
+          this.frameCount = 0
+          this.lastFpsTime = now
+        }
+        this.renderStats.fps = this.currentFps
 
         if (nativeStatus === "rendered") {
           // Check if hit grid changed and recheck hover state if needed
