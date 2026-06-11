@@ -57,6 +57,7 @@ export enum TargetChannel {
 
 export type WidthMethod = "wcwidth" | "unicode"
 export type TerminalMultiplexer = "none" | "tmux" | "zellij" | "screen" | "unknown"
+export type ImageRenderProtocol = "auto" | "kitty" | "sixel" | "blocks"
 
 export interface TerminalInfo {
   name: string
@@ -84,6 +85,7 @@ export interface TerminalCapabilities {
   explicit_cursor_positioning: boolean
   remote: boolean
   multiplexer: TerminalMultiplexer
+  image_protocol: ImageRenderProtocol
   terminal: TerminalInfo
 }
 
