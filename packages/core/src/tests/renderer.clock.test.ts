@@ -151,6 +151,27 @@ test("maxFps setter updates requestRender throttle timing", async () => {
   expect(renderCalled).toBe(true)
 })
 
+test("threaded output backpressure retries a skipped native frame", async () => {
+  const internals = renderer as unknown as {
+    lib: { render: (...args: unknown[]) => number }
+  }
+  const originalRender = internals.lib.render
+  let calls = 0
+  internals.lib.render = () => (calls++ === 0 ? 1 : 0)
+  try {
+    renderer.requestRender()
+    clock.advance(20)
+    await Promise.resolve()
+    expect(calls).toBe(1)
+
+    clock.advance(20)
+    await Promise.resolve()
+    expect(calls).toBe(2)
+  } finally {
+    internals.lib.render = originalRender
+  }
+})
+
 test("start() does not double-schedule frames when a render was already queued", async () => {
   let renderCalls = 0
 

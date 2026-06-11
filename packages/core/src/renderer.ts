@@ -4468,7 +4468,15 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
       const force = this.forceFullRepaintRequested
       const nativeStatus = this.lib.render(this.rendererPtr, force)
-      if (nativeStatus === NATIVE_RENDER_STATUS_SKIPPED || nativeStatus === NATIVE_RENDER_STATUS_FAILED) {
+      if (nativeStatus === NATIVE_RENDER_STATUS_SKIPPED) {
+        if (this._feed) {
+          this.scheduleRenderAfterFeedIdle()
+          return "backpressured"
+        }
+        this.immediateRerenderRequested = true
+        return "skipped"
+      }
+      if (nativeStatus === NATIVE_RENDER_STATUS_FAILED) {
         this.scheduleRenderAfterFeedIdle()
         return "backpressured"
       }

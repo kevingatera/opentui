@@ -265,7 +265,11 @@ pub const BufferedBackend = struct {
         return false;
     }
 
-    pub fn prepareFrame(_: *BufferedBackend) WriteStatus {
+    pub fn prepareFrame(self: *BufferedBackend) WriteStatus {
+        if (!self.useThread) return .ok;
+        if (!self.renderMutex.tryLock()) return .skipped;
+        defer self.renderMutex.unlock();
+        if (self.renderInProgress) return .skipped;
         return .ok;
     }
 
@@ -364,6 +368,12 @@ pub const BufferedBackend = struct {
 
     pub fn endFrame(self: *BufferedBackend) WriteStatus {
         if (self.frameWriteFailed) return .failed;
+        const frame_len = if (self.activeBuffer == .A) self.outputLenA else self.outputLenB;
+        if (self.useThread and frame_len == 0) {
+            self.lastCommittedBuffer = self.activeBuffer;
+            self.hasCommittedFrame = true;
+            return .ok;
+        }
         const writeStart = std.time.microTimestamp();
         const committed_buffer = self.activeBuffer;
 

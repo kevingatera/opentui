@@ -19,6 +19,22 @@ const RGBA = text_buffer.RGBA;
 const TestMemoryOutput = test_renderer_mod.TestMemoryOutput;
 const TestRenderer = test_renderer_mod.TestRenderer;
 
+const SlowThreadSafeOutput = struct {
+    delay_ns: u64,
+    writes: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+
+    fn bufferedOutput(self: *SlowThreadSafeOutput) @import("../renderer-output.zig").BufferedOutput {
+        return .{ .ctx = self, .write_fn = write, .thread_safe = true };
+    }
+
+    fn write(ctx: *anyopaque, data: []const u8) void {
+        _ = data;
+        const self: *SlowThreadSafeOutput = @ptrCast(@alignCast(ctx));
+        _ = self.writes.fetchAdd(1, .monotonic);
+        std.Thread.sleep(self.delay_ns);
+    }
+};
+
 test "renderer emits Kitty image once and leaves unchanged frame empty" {
     const pool = gp.initGlobalPool(std.testing.allocator);
     defer gp.deinitGlobalPool();
@@ -181,6 +197,30 @@ test "buffered backend grows and commits a complete large frame" {
     try std.testing.expectEqual(@import("../renderer-output.zig").WriteStatus.ok, backend.endFrame());
     try std.testing.expectEqual(oversized.len, memory.bytes.items.len);
     try std.testing.expectEqualSlices(u8, oversized, memory.bytes.items);
+}
+
+test "threaded buffered backend does not block empty frames behind output" {
+    var output = SlowThreadSafeOutput{ .delay_ns = 200 * std.time.ns_per_ms };
+    var backend = try renderer.BufferedBackend.create(std.testing.allocator, output.bufferedOutput());
+    defer backend.deinit(std.testing.allocator);
+    backend.setUseThread(true);
+
+    backend.beginFrame();
+    try backend.writer().writeAll("large graphics frame");
+    try std.testing.expectEqual(@import("../renderer-output.zig").WriteStatus.ok, backend.endFrame());
+    var prepare_timer = try std.time.Timer.start();
+    try std.testing.expectEqual(@import("../renderer-output.zig").WriteStatus.skipped, backend.prepareFrame());
+    try std.testing.expect(prepare_timer.read() < 50 * std.time.ns_per_ms);
+    backend.beginFrame();
+    var timer = try std.time.Timer.start();
+    try std.testing.expectEqual(@import("../renderer-output.zig").WriteStatus.ok, backend.endFrame());
+    try std.testing.expect(timer.read() < 50 * std.time.ns_per_ms);
+
+    backend.beginFrame();
+    try backend.writer().writeAll("next graphics frame");
+    try std.testing.expectEqual(@import("../renderer-output.zig").WriteStatus.ok, backend.endFrame());
+    backend.setUseThread(false);
+    try std.testing.expectEqual(@as(u32, 2), output.writes.load(.monotonic));
 }
 
 fn createWithOptionsOnce(allocator: std.mem.Allocator, width: u32, height: u32) !void {
