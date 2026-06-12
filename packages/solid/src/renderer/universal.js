@@ -1,6 +1,11 @@
 import { createRoot, createRenderEffect, createMemo, createComponent, untrack, mergeProps } from "solid-js"
+import { cullingDebug, isCullingDebugEnabled } from "@opentui/core"
 
 const memo = (fn) => createMemo(() => fn())
+const debugNode = (node) => (node ? { num: node.num, id: node.id, parentNum: node.parent?.num } : undefined)
+const debugReconcile = (event, data) => {
+  if (isCullingDebugEnabled()) cullingDebug(event, data)
+}
 
 export function createRenderer({
   createElement,
@@ -105,6 +110,11 @@ export function createRenderer({
     return dynamic
   }
   function reconcileArrays(parentNode, a, b) {
+    debugReconcile("solid-reconcile-start", {
+      parent: debugNode(parentNode),
+      old: a.map(debugNode),
+      next: b.map(debugNode),
+    })
     let bLength = b.length,
       aEnd = a.length,
       bEnd = bLength,
@@ -124,14 +134,31 @@ export function createRenderer({
       }
       if (aEnd === aStart) {
         const node = bEnd < bLength ? (bStart ? getNextSibling(b[bStart - 1]) : b[bEnd - bStart]) : after
-        while (bStart < bEnd) insertNode(parentNode, b[bStart++], node)
+        while (bStart < bEnd) {
+          debugReconcile("solid-reconcile-insert-tail", {
+            parent: debugNode(parentNode),
+            node: debugNode(b[bStart]),
+            anchor: debugNode(node),
+          })
+          insertNode(parentNode, b[bStart++], node)
+        }
       } else if (bEnd === bStart) {
         while (aStart < aEnd) {
-          if (!map || !map.has(a[aStart])) removeNode(parentNode, a[aStart])
+          if (!map || !map.has(a[aStart])) {
+            debugReconcile("solid-reconcile-remove-tail", { parent: debugNode(parentNode), node: debugNode(a[aStart]) })
+            removeNode(parentNode, a[aStart])
+          }
           aStart++
         }
       } else if (a[aStart] === b[bEnd - 1] && b[bStart] === a[aEnd - 1]) {
         const node = getNextSibling(a[--aEnd])
+        debugReconcile("solid-reconcile-swap", {
+          parent: debugNode(parentNode),
+          first: debugNode(b[bStart]),
+          firstAnchor: debugNode(getNextSibling(a[aStart])),
+          second: debugNode(b[bEnd - 1]),
+          secondAnchor: debugNode(node),
+        })
         insertNode(parentNode, b[bStart++], getNextSibling(a[aStart++]))
         insertNode(parentNode, b[--bEnd], node)
         a[aEnd] = b[bEnd]
@@ -153,14 +180,39 @@ export function createRenderer({
             }
             if (sequence > index - bStart) {
               const node = a[aStart]
-              while (bStart < index) insertNode(parentNode, b[bStart++], node)
-            } else replaceNode(parentNode, b[bStart++], a[aStart++])
+              while (bStart < index) {
+                debugReconcile("solid-reconcile-insert-before-run", {
+                  parent: debugNode(parentNode),
+                  node: debugNode(b[bStart]),
+                  anchor: debugNode(node),
+                })
+                insertNode(parentNode, b[bStart++], node)
+              }
+            } else {
+              debugReconcile("solid-reconcile-replace", {
+                parent: debugNode(parentNode),
+                next: debugNode(b[bStart]),
+                old: debugNode(a[aStart]),
+              })
+              replaceNode(parentNode, b[bStart++], a[aStart++])
+            }
           } else aStart++
-        } else removeNode(parentNode, a[aStart++])
+        } else {
+          debugReconcile("solid-reconcile-remove", { parent: debugNode(parentNode), node: debugNode(a[aStart]) })
+          removeNode(parentNode, a[aStart++])
+        }
       }
     }
+    debugReconcile("solid-reconcile-end", { parent: debugNode(parentNode) })
   }
   function cleanChildren(parent, current, marker, replacement) {
+    debugReconcile("solid-clean-children", {
+      parent: debugNode(parent),
+      current: Array.isArray(current) ? current.map(debugNode) : debugNode(current),
+      marker: debugNode(marker),
+      replacement: debugNode(replacement),
+      marked: marker !== undefined,
+    })
     if (marker === undefined) {
       let removed
       while ((removed = getFirstChild(parent))) removeNode(parent, removed)
@@ -185,6 +237,13 @@ export function createRenderer({
     for (let i = 0, len = array.length; i < len; i++) insertNode(parent, array[i], marker)
   }
   function replaceNode(parent, newNode, oldNode) {
+    debugReconcile("solid-replace-node", {
+      parent: debugNode(parent),
+      next: debugNode(newNode),
+      old: debugNode(oldNode),
+      sameObject: newNode === oldNode,
+      sameId: newNode?.id === oldNode?.id,
+    })
     insertNode(parent, newNode, oldNode)
     removeNode(parent, oldNode)
   }

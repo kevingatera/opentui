@@ -1,5 +1,5 @@
 import { EventEmitter } from "events"
-import { cullingDebug, isCullingDebugEnabled } from "./lib/culling-debug.js"
+import { cullingDebug, cullingDebugCritical, isCullingDebugEnabled } from "./lib/culling-debug.js"
 import Yoga, { Direction, Display, Edge, FlexDirection, type Node as YogaNode } from "./yoga.js"
 import { OptimizedBuffer } from "./buffer.js"
 import type { KeyEvent, PasteEvent } from "./lib/KeyHandler.js"
@@ -277,6 +277,10 @@ export abstract class Renderable extends BaseRenderable {
 
   private childrenPrimarySortDirty: boolean = true
   private childrenSortedByPrimaryAxis: Renderable[] = []
+  private childrenPrimarySortEpoch: number = 0
+  private childrenPrimarySortFrame: number = -1
+  private childrenPrimarySortKeys = new Map<number, number>()
+  private childrenPrimaryInvalidReportedEpoch: number = -1
   private _shouldUpdateBefore: Set<Renderable> = new Set()
 
   // Frame id of the last updateFromLayout(); -1 ensures the first call runs.
@@ -331,6 +335,19 @@ export abstract class Renderable extends BaseRenderable {
   }
 
   public override set id(value: string) {
+    if (isCullingDebugEnabled()) {
+      cullingDebug("core-id-change", {
+        frameId: this._ctx.frameId,
+        num: this.num,
+        oldId: this._id,
+        newId: value,
+        parentNum: this.parent?.num,
+        existingMapNum: this.parent?.renderableMapById.get(value)?.num,
+        sameIdNums: this.parent?._childrenInLayoutOrder
+          .filter((child) => child.id === value && child !== this)
+          .map((child) => child.num),
+      })
+    }
     if (this.parent) {
       this.parent.renderableMapById.delete(this.id)
       this.parent.renderableMapById.set(value, this)
@@ -511,6 +528,23 @@ export abstract class Renderable extends BaseRenderable {
     this.parent?.propagateLiveCount(delta)
   }
 
+  private markChildrenPrimarySortDirty(reason: string, child?: Renderable): void {
+    if (isCullingDebugEnabled() && !this.childrenPrimarySortDirty) {
+      cullingDebug("primary-sort-dirty", {
+        frameId: this._ctx.frameId,
+        parentNum: this.num,
+        parentId: this.id,
+        reason,
+        childNum: child?.num,
+        childId: child?.id,
+        wasDirty: this.childrenPrimarySortDirty,
+        epoch: this.childrenPrimarySortEpoch,
+        sortedFrame: this.childrenPrimarySortFrame,
+      })
+    }
+    this.childrenPrimarySortDirty = true
+  }
+
   public handleKeyPress?(key: KeyEvent): boolean
   public handlePaste?(event: PasteEvent): void
 
@@ -541,7 +575,7 @@ export abstract class Renderable extends BaseRenderable {
     this._translateX = value
     const parentScreenX = this.parent ? this.parent._screenX : 0
     this._screenX = parentScreenX + this._x + this._translateX
-    if (this.parent) this.parent.childrenPrimarySortDirty = true
+    if (this.parent) this.parent.markChildrenPrimarySortDirty("translate-x", this)
     bumpRenderListRevision(this._ctx)
     this.requestRender()
   }
@@ -555,7 +589,7 @@ export abstract class Renderable extends BaseRenderable {
     this._translateY = value
     const parentScreenY = this.parent ? this.parent._screenY : 0
     this._screenY = parentScreenY + this._y + this._translateY
-    if (this.parent) this.parent.childrenPrimarySortDirty = true
+    if (this.parent) this.parent.markChildrenPrimarySortDirty("translate-y", this)
     bumpRenderListRevision(this._ctx)
     this.requestRender()
   }
@@ -699,15 +733,100 @@ export abstract class Renderable extends BaseRenderable {
   }
 
   public getChildrenSortedByPrimaryAxis(): Renderable[] {
+    const debugEnabled = isCullingDebugEnabled()
+    const dir = this.yogaNode.getFlexDirection()
+    const axis: "x" | "y" = dir === 2 || dir === 3 ? "x" : "y"
+    const primary = (child: Renderable): number => (axis === "y" ? child.screenY : child.screenX)
+    if (debugEnabled && !this.childrenPrimarySortDirty && this.childrenSortedByPrimaryAxis.length > 1) {
+      let inversion = -1
+      for (let index = 1; index < this.childrenSortedByPrimaryAxis.length; index++) {
+        if (primary(this.childrenSortedByPrimaryAxis[index - 1]) > primary(this.childrenSortedByPrimaryAxis[index])) {
+          inversion = index
+          break
+        }
+      }
+      if (inversion !== -1 && this.childrenPrimaryInvalidReportedEpoch !== this.childrenPrimarySortEpoch) {
+        this.childrenPrimaryInvalidReportedEpoch = this.childrenPrimarySortEpoch
+        const changedKeys = this.childrenSortedByPrimaryAxis.flatMap((child, sortedIndex) => {
+          const previousKey = this.childrenPrimarySortKeys.get(child.num)
+          const currentKey = primary(child)
+          if (previousKey === currentKey) return []
+          return [
+            {
+              num: child.num,
+              id: child.id,
+              sortedIndex,
+              previousKey,
+              currentKey,
+              parentNum: child.parent?.num,
+              layoutIndex: this._childrenInLayoutOrder.indexOf(child),
+              zIndexIndex: this._childrenInZIndexOrder.indexOf(child),
+              sameIdCount: this._childrenInLayoutOrder.filter((candidate) => candidate.id === child.id).length,
+              mapNum: this.renderableMapById.get(child.id)?.num,
+            },
+          ]
+        })
+        const invalidData = {
+          frameId: this._ctx.frameId,
+          parentNum: this.num,
+          parentId: this.id,
+          axis,
+          epoch: this.childrenPrimarySortEpoch,
+          sortedFrame: this.childrenPrimarySortFrame,
+          childCount: this.childrenSortedByPrimaryAxis.length,
+          parentState: this.debugParentState(),
+          inversion,
+          previous: {
+            num: this.childrenSortedByPrimaryAxis[inversion - 1].num,
+            id: this.childrenSortedByPrimaryAxis[inversion - 1].id,
+            key: primary(this.childrenSortedByPrimaryAxis[inversion - 1]),
+          },
+          next: {
+            num: this.childrenSortedByPrimaryAxis[inversion].num,
+            id: this.childrenSortedByPrimaryAxis[inversion].id,
+            key: primary(this.childrenSortedByPrimaryAxis[inversion]),
+          },
+          changedKeys,
+          cachedAroundInversion: this.childrenSortedByPrimaryAxis
+            .slice(Math.max(0, inversion - 4), Math.min(this.childrenSortedByPrimaryAxis.length, inversion + 4))
+            .map((child, offset) => ({
+              sortedIndex: Math.max(0, inversion - 4) + offset,
+              num: child.num,
+              id: child.id,
+              key: primary(child),
+              previousKey: this.childrenPrimarySortKeys.get(child.num),
+            })),
+          layoutOrderChangedKeys: this._childrenInLayoutOrder.flatMap((child, layoutIndex) =>
+            this.childrenPrimarySortKeys.get(child.num) !== primary(child)
+              ? [
+                  {
+                    layoutIndex,
+                    num: child.num,
+                    id: child.id,
+                    previousKey: this.childrenPrimarySortKeys.get(child.num),
+                    currentKey: primary(child),
+                  },
+                ]
+              : [],
+          ),
+          duplicateIds: [...new Set(this._childrenInLayoutOrder.map((child) => child.id))]
+            .map((id) => ({
+              id,
+              nums: this._childrenInLayoutOrder.filter((child) => child.id === id).map((child) => child.num),
+              mapNum: this.renderableMapById.get(id)?.num,
+            }))
+            .filter((entry) => entry.nums.length > 1),
+        }
+        cullingDebug("primary-sort-invalid", invalidData)
+        cullingDebugCritical("primary-sort-invalid", invalidData)
+      }
+    }
     if (
       !this.childrenPrimarySortDirty &&
       this.childrenSortedByPrimaryAxis.length === this._childrenInLayoutOrder.length
     ) {
       return this.childrenSortedByPrimaryAxis
     }
-
-    const dir = this.yogaNode.getFlexDirection()
-    const axis: "x" | "y" = dir === 2 || dir === 3 ? "x" : "y"
 
     const sorted = [...this._childrenInLayoutOrder]
     sorted.sort((a, b) => {
@@ -720,6 +839,22 @@ export abstract class Renderable extends BaseRenderable {
 
     this.childrenSortedByPrimaryAxis = sorted
     this.childrenPrimarySortDirty = false
+    this.childrenPrimarySortEpoch++
+    this.childrenPrimarySortFrame = this._ctx.frameId
+    if (debugEnabled) {
+      this.childrenPrimarySortKeys.clear()
+      for (const child of sorted) this.childrenPrimarySortKeys.set(child.num, primary(child))
+      cullingDebug("primary-sort", {
+        frameId: this._ctx.frameId,
+        parentNum: this.num,
+        parentId: this.id,
+        axis,
+        epoch: this.childrenPrimarySortEpoch,
+        childCount: sorted.length,
+        first: sorted.slice(0, 3).map((child) => ({ num: child.num, id: child.id, key: primary(child) })),
+        last: sorted.slice(-3).map((child) => ({ num: child.num, id: child.id, key: primary(child) })),
+      })
+    }
     return this.childrenSortedByPrimaryAxis
   }
 
@@ -1115,6 +1250,8 @@ export abstract class Renderable extends BaseRenderable {
     const oldY = this._y
     const oldWidth = this._widthValue
     const oldHeight = this._heightValue
+    const parentSortDirtyBefore = this.parent?.childrenPrimarySortDirty
+    const parentSortEpoch = this.parent?.childrenPrimarySortEpoch
 
     this._x = layout.left
     this._y = layout.top
@@ -1138,7 +1275,7 @@ export abstract class Renderable extends BaseRenderable {
 
     const positionChanged = oldX !== this._x || oldY !== this._y
     if (positionChanged) {
-      if (this.parent) this.parent.childrenPrimarySortDirty = true
+      if (this.parent) this.parent.markChildrenPrimarySortDirty("layout-position", this)
     }
     if (isCullingDebugEnabled() && (positionChanged || sizeChanged)) {
       cullingDebug("layout-change", {
@@ -1150,6 +1287,9 @@ export abstract class Renderable extends BaseRenderable {
         next: { x: this._x, y: this._y, width: this._widthValue, height: this._heightValue },
         screen: { x: this._screenX, y: this._screenY },
         translate: { x: this._translateX, y: this._translateY },
+        parentSortDirtyBefore,
+        parentSortDirtyAfter: this.parent?.childrenPrimarySortDirty,
+        parentSortEpoch,
       })
     }
   }
@@ -1215,6 +1355,40 @@ export abstract class Renderable extends BaseRenderable {
     obj.parent = this
   }
 
+  private debugChildState(child: Renderable): Record<string, unknown> {
+    return {
+      num: child.num,
+      id: child.id,
+      parentNum: child.parent?.num,
+      layoutIndex: this._childrenInLayoutOrder.indexOf(child),
+      zIndexIndex: this._childrenInZIndexOrder.indexOf(child),
+      firstIdLayoutIndex: this._childrenInLayoutOrder.findIndex((candidate) => candidate.id === child.id),
+      firstIdZIndexIndex: this._childrenInZIndexOrder.findIndex((candidate) => candidate.id === child.id),
+      sameIdNums: this._childrenInLayoutOrder
+        .filter((candidate) => candidate.id === child.id)
+        .map((candidate) => candidate.num),
+      mapNum: this.renderableMapById.get(child.id)?.num,
+      screenX: child.screenX,
+      screenY: child.screenY,
+    }
+  }
+
+  private debugParentState(): Record<string, unknown> {
+    const identityCounts = new Map<number, number>()
+    for (const child of this._childrenInLayoutOrder) {
+      identityCounts.set(child.num, (identityCounts.get(child.num) ?? 0) + 1)
+    }
+    return {
+      layoutCount: this._childrenInLayoutOrder.length,
+      zIndexCount: this._childrenInZIndexOrder.length,
+      yogaCount: this.yogaNode.getChildCount(),
+      mapSize: this.renderableMapById.size,
+      duplicateRefs: [...identityCounts.entries()]
+        .filter(([, count]) => count > 1)
+        .map(([num, count]) => ({ num, count })),
+    }
+  }
+
   public add(obj: Renderable | VNode<any, any[]> | unknown, index?: number): number {
     if (!obj) {
       return -1
@@ -1233,6 +1407,27 @@ export abstract class Renderable extends BaseRenderable {
     }
 
     const anchorRenderable = index !== undefined ? this._childrenInLayoutOrder[index] : undefined
+
+    if (isCullingDebugEnabled()) {
+      const addData = {
+        frameId: this._ctx.frameId,
+        parentNum: this.num,
+        parentId: this.id,
+        requestedIndex: index,
+        anchorNum: anchorRenderable?.num,
+        child: this.debugChildState(renderable),
+        parentState: this.debugParentState(),
+        sortDirty: this.childrenPrimarySortDirty,
+        sortEpoch: this.childrenPrimarySortEpoch,
+      }
+      cullingDebug("core-add-before", addData)
+      const collidingNums = this._childrenInLayoutOrder
+        .filter((child) => child !== renderable && child.id === renderable.id)
+        .map((child) => child.num)
+      if (collidingNums.length > 0) {
+        cullingDebugCritical("core-duplicate-id-add", { ...addData, collidingNums })
+      }
+    }
 
     if (anchorRenderable) {
       return this.insertBefore(renderable, anchorRenderable)
@@ -1261,11 +1456,24 @@ export abstract class Renderable extends BaseRenderable {
     this._childrenInLayoutOrder.push(renderable)
     this.yogaNode.insertChild(childLayoutNode, insertedIndex)
 
-    this.childrenPrimarySortDirty = true
+    this.markChildrenPrimarySortDirty("add", renderable)
     this._shouldUpdateBefore.add(renderable)
     bumpRenderListRevision(this._ctx)
 
     this.requestRender()
+
+    if (isCullingDebugEnabled()) {
+      cullingDebug("core-add-after", {
+        frameId: this._ctx.frameId,
+        parentNum: this.num,
+        parentId: this.id,
+        insertedIndex,
+        child: this.debugChildState(renderable),
+        parentState: this.debugParentState(),
+        sortDirty: this.childrenPrimarySortDirty,
+        sortEpoch: this.childrenPrimarySortEpoch,
+      })
+    }
 
     return insertedIndex
   }
@@ -1293,6 +1501,21 @@ export abstract class Renderable extends BaseRenderable {
 
     if (!isRenderable(anchor)) {
       throw new Error("Anchor must be a Renderable")
+    }
+
+    if (isCullingDebugEnabled()) {
+      cullingDebug("core-insert-before", {
+        frameId: this._ctx.frameId,
+        parentNum: this.num,
+        parentId: this.id,
+        child: this.debugChildState(renderable),
+        anchor: this.debugChildState(anchor),
+        parentState: this.debugParentState(),
+        sameObject: renderable === anchor,
+        sameId: renderable.id === anchor.id,
+        sortDirty: this.childrenPrimarySortDirty,
+        sortEpoch: this.childrenPrimarySortEpoch,
+      })
     }
 
     if (anchor.isDestroyed) {
@@ -1334,7 +1557,7 @@ export abstract class Renderable extends BaseRenderable {
       }
     }
 
-    this.childrenPrimarySortDirty = true
+    this.markChildrenPrimarySortDirty("insert-before", renderable)
 
     const anchorIndex = this._childrenInLayoutOrder.indexOf(anchor)
     const insertedIndex = Math.max(0, Math.min(anchorIndex, this._childrenInLayoutOrder.length))
@@ -1346,6 +1569,20 @@ export abstract class Renderable extends BaseRenderable {
     bumpRenderListRevision(this._ctx)
 
     this.requestRender()
+
+    if (isCullingDebugEnabled()) {
+      cullingDebug("core-insert-after", {
+        frameId: this._ctx.frameId,
+        parentNum: this.num,
+        parentId: this.id,
+        insertedIndex,
+        child: this.debugChildState(renderable),
+        anchor: this.debugChildState(anchor),
+        parentState: this.debugParentState(),
+        sortDirty: this.childrenPrimarySortDirty,
+        sortEpoch: this.childrenPrimarySortEpoch,
+      })
+    }
 
     return insertedIndex
   }
@@ -1363,6 +1600,24 @@ export abstract class Renderable extends BaseRenderable {
     if (this.renderableMapById.has(id)) {
       const obj = this.renderableMapById.get(id)
       if (obj) {
+        if (isCullingDebugEnabled()) {
+          const firstIdChild = this._childrenInLayoutOrder.find((child) => child.id === id)
+          const removeData = {
+            frameId: this._ctx.frameId,
+            parentNum: this.num,
+            parentId: this.id,
+            requestedId: id,
+            mappedChild: this.debugChildState(obj),
+            parentState: this.debugParentState(),
+            sortDirty: this.childrenPrimarySortDirty,
+            sortEpoch: this.childrenPrimarySortEpoch,
+            firstIdNum: firstIdChild?.num,
+          }
+          cullingDebug("core-remove-before", removeData)
+          if (firstIdChild && firstIdChild !== obj) {
+            cullingDebugCritical("core-remove-identity-mismatch", removeData)
+          }
+        }
         if (obj._liveCount > 0) {
           this.propagateLiveCount(-obj._liveCount)
         }
@@ -1386,8 +1641,24 @@ export abstract class Renderable extends BaseRenderable {
           this._childrenInZIndexOrder.splice(zIndexIndex, 1)
         }
 
-        this.childrenPrimarySortDirty = true
+        this.markChildrenPrimarySortDirty("remove", obj)
         bumpRenderListRevision(this._ctx)
+        if (isCullingDebugEnabled()) {
+          cullingDebug("core-remove-after", {
+            frameId: this._ctx.frameId,
+            parentNum: this.num,
+            parentId: this.id,
+            requestedId: id,
+            removedNum: obj.num,
+            remainingSameIdNums: this._childrenInLayoutOrder
+              .filter((child) => child.id === id)
+              .map((child) => child.num),
+            mapNum: this.renderableMapById.get(id)?.num,
+            parentState: this.debugParentState(),
+            sortDirty: this.childrenPrimarySortDirty,
+            sortEpoch: this.childrenPrimarySortEpoch,
+          })
+        }
       }
     }
   }

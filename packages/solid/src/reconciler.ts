@@ -1,10 +1,13 @@
 /* @refresh skip */
 import {
   BaseRenderable,
+  cullingDebug,
+  cullingDebugCritical,
   createTextAttributes,
   InputRenderable,
   InputRenderableEvents,
   isTextNodeRenderable,
+  isCullingDebugEnabled,
   parseColor,
   Renderable,
   RootTextNodeRenderable,
@@ -55,6 +58,18 @@ const getNodeChildren = (node: DomNode) => {
   return children
 }
 
+const debugNodeState = (parent: DomNode, node: DomNode): Record<string, unknown> => {
+  const children = getNodeChildren(parent)
+  return {
+    num: node.num,
+    id: node.id,
+    parentNum: node.parent?.num,
+    identityIndex: children.indexOf(node),
+    firstIdIndex: children.findIndex((child) => child.id === node.id),
+    sameIdNums: children.filter((child) => child.id === node.id).map((child) => child.num),
+  }
+}
+
 function _insertNode(parent: DomNode, node: DomNode, anchor?: DomNode): void {
   log(
     "Inserting node:",
@@ -66,6 +81,19 @@ function _insertNode(parent: DomNode, node: DomNode, anchor?: DomNode): void {
     node instanceof TextNode,
   )
 
+  const virtualNode = node
+  const virtualAnchor = anchor
+  if (isCullingDebugEnabled()) {
+    cullingDebug("solid-insert-request", {
+      parentNum: parent.num,
+      parentId: parent.id,
+      node: debugNodeState(parent, node),
+      anchor: anchor ? debugNodeState(parent, anchor) : undefined,
+      nodeIsSlot: node instanceof SlotRenderable,
+      anchorIsSlot: anchor instanceof SlotRenderable,
+    })
+  }
+
   if (node instanceof SlotRenderable) {
     node.parent = parent
     node = node.getSlotChild(parent)
@@ -73,6 +101,17 @@ function _insertNode(parent: DomNode, node: DomNode, anchor?: DomNode): void {
 
   if (anchor && anchor instanceof SlotRenderable) {
     anchor = anchor.getSlotChild(parent)
+  }
+
+  if (isCullingDebugEnabled() && (virtualNode !== node || virtualAnchor !== anchor)) {
+    cullingDebug("solid-slot-normalized", {
+      parentNum: parent.num,
+      parentId: parent.id,
+      virtualNodeNum: virtualNode.num,
+      physicalNode: debugNodeState(parent, node),
+      virtualAnchorNum: virtualAnchor?.num,
+      physicalAnchor: anchor ? debugNodeState(parent, anchor) : undefined,
+    })
   }
 
   if (isTextNodeRenderable(node)) {
@@ -95,21 +134,63 @@ function _insertNode(parent: DomNode, node: DomNode, anchor?: DomNode): void {
 
   if (!anchor) {
     parent.add(node)
+    if (isCullingDebugEnabled()) {
+      cullingDebug("solid-insert-result", {
+        parentNum: parent.num,
+        parentId: parent.id,
+        requestedAnchorNum: undefined,
+        node: debugNodeState(parent, node),
+      })
+    }
     return
   }
 
   const children = getNodeChildren(parent)
 
+  const anchorIdentityIndex = children.indexOf(anchor)
   const anchorIndex = children.findIndex((el) => el.id === anchor.id)
+  if (isCullingDebugEnabled()) {
+    const anchorData = {
+      parentNum: parent.num,
+      parentId: parent.id,
+      node: debugNodeState(parent, node),
+      anchor: debugNodeState(parent, anchor),
+      anchorIdentityIndex,
+      anchorIdIndex: anchorIndex,
+      anchorMismatch: anchorIdentityIndex !== anchorIndex,
+    }
+    cullingDebug("solid-anchor-resolution", anchorData)
+    if (anchorIdentityIndex !== anchorIndex) cullingDebugCritical("solid-anchor-mismatch", anchorData)
+  }
   if (anchorIndex === -1) {
     log("[INSERT]", "Could not find anchor", logId(parent), logId(anchor), "[children]", ...children.map((c) => c.id))
   }
 
   parent.add(node, anchorIndex)
+  if (isCullingDebugEnabled()) {
+    cullingDebug("solid-insert-result", {
+      parentNum: parent.num,
+      parentId: parent.id,
+      requestedAnchorNum: anchor.num,
+      anchorIdentityIndex,
+      anchorIdIndex: anchorIndex,
+      node: debugNodeState(parent, node),
+    })
+  }
 }
 
 function _removeNode(parent: DomNode, node: DomNode): void {
   log("Removing node:", logId(node), "from parent:", logId(parent))
+
+  const virtualNode = node
+  if (isCullingDebugEnabled()) {
+    cullingDebug("solid-remove-request", {
+      parentNum: parent.num,
+      parentId: parent.id,
+      node: debugNodeState(parent, node),
+      nodeIsSlot: node instanceof SlotRenderable,
+    })
+  }
 
   let slotParent: SlotRenderable | undefined
 
@@ -124,9 +205,26 @@ function _removeNode(parent: DomNode, node: DomNode): void {
     }
 
     node = slotChild
+    if (isCullingDebugEnabled()) {
+      cullingDebug("solid-remove-slot-normalized", {
+        parentNum: parent.num,
+        parentId: parent.id,
+        virtualNodeNum: virtualNode.num,
+        physicalNode: debugNodeState(parent, node),
+      })
+    }
   }
 
   parent.remove(node.id)
+  if (isCullingDebugEnabled()) {
+    cullingDebug("solid-remove-result", {
+      parentNum: parent.num,
+      parentId: parent.id,
+      requestedNum: node.num,
+      requestedId: node.id,
+      node: debugNodeState(parent, node),
+    })
+  }
 
   slotParent?.didRemoveSlotChild(parent, node)
 
@@ -249,6 +347,14 @@ export const {
     switch (name) {
       case "id":
         log("Id mapped", node.id, "=", value)
+        if (isCullingDebugEnabled()) {
+          cullingDebug("solid-id-prop", {
+            num: node.num,
+            oldId: node.id,
+            newId: value,
+            parentNum: node.parent?.num,
+          })
+        }
         node[name] = value
         break
       case "focused":

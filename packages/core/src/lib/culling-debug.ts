@@ -10,6 +10,7 @@ const maxBytes = Number.isFinite(parsedMaxBytes) && parsedMaxBytes > 0 ? parsedM
 let sequence = 0
 let limitReported = false
 let outputErrorReported = false
+let criticalOutputErrorReported = false
 let outputBytes = outputFile
   ? (() => {
       try {
@@ -73,4 +74,27 @@ export function cullingDebug(event: string, data: Record<string, unknown>): void
       ...data,
     })}`,
   )
+}
+
+export function cullingDebugCritical(event: string, data: Record<string, unknown>): void {
+  if (!enabled) return
+  const record = `[opentui:culling-critical] ${JSON.stringify({
+    seq: sequence,
+    time: Number(performance.now().toFixed(3)),
+    event,
+    mode: baseline ? "baseline" : "fixed",
+    ...data,
+  })}`
+  if (!outputFile) {
+    console.error(record)
+    return
+  }
+  try {
+    appendFileSync(`${outputFile}.critical`, `${record}\n`)
+  } catch (error) {
+    if (!criticalOutputErrorReported) {
+      criticalOutputErrorReported = true
+      console.error(`[opentui:culling] failed to write ${outputFile}.critical:`, error)
+    }
+  }
 }
