@@ -772,6 +772,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private minTargetFrameTime: number = 1000 / this._maxFps
   private immediateRerenderRequested: boolean = false
   private updateScheduled: boolean = false
+  private activatingFrame: boolean = false
 
   private liveRequestCounter: number = 0
   private _controlState: RendererControlState = RendererControlState.IDLE
@@ -1529,10 +1530,12 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       return
     }
 
+    this.updateScheduled = false
+    this.activatingFrame = true
     try {
       await this.loop()
     } finally {
-      this.updateScheduled = false
+      this.activatingFrame = false
       this.resolveIdleIfNeeded()
     }
   }
@@ -1560,6 +1563,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     return (
       !this._isRunning &&
       !this.rendering &&
+      !this.activatingFrame &&
       !this.renderTimeout &&
       !this.updateScheduled &&
       !this.feedIdleRenderScheduled &&
@@ -1587,7 +1591,9 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     return {
       isRunning: this._isRunning,
       isRendering: this.rendering,
-      hasScheduledRender: Boolean(this.renderTimeout || this.updateScheduled || this.immediateRerenderRequested),
+      hasScheduledRender: Boolean(
+        this.activatingFrame || this.renderTimeout || this.updateScheduled || this.immediateRerenderRequested,
+      ),
     }
   }
 
