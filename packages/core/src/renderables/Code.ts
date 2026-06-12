@@ -8,6 +8,7 @@ import type { OptimizedBuffer } from "../buffer.js"
 import type { SimpleHighlight } from "../lib/tree-sitter/types.js"
 import type { TextChunk } from "../text-buffer.js"
 import { treeSitterToTextChunks } from "../lib/tree-sitter-styled-text.js"
+import { cullingDebug, isCullingDebugEnabled } from "../lib/culling-debug.js"
 
 export interface HighlightContext {
   content: string
@@ -122,6 +123,17 @@ export class CodeRenderable extends TextBufferRenderable {
       this._sourceMeasureCache = undefined
       this._highlightsDirty = true
       this._highlightSnapshotId++
+      if (isCullingDebugEnabled()) {
+        cullingDebug("code-content", {
+          id: this.id,
+          contentLength: value.length,
+          contentRevision: this._contentRevision,
+          bufferContentRevision: this._bufferContentRevision,
+          streaming: this._streaming,
+          drawUnstyledText: this._drawUnstyledText,
+          filetype: this._filetype,
+        })
+      }
 
       if (this._streaming && this._filetype && !this._drawUnstyledText) {
         this.yogaNode.markDirty()
@@ -180,7 +192,18 @@ export class CodeRenderable extends TextBufferRenderable {
     if (this._bufferContentRevision === this._contentRevision) return super.measureContent(width, height)
 
     const key = `${this._contentRevision}:${width}:${height}:${this._wrapMode}:${this._firstLineOffset}:${this._ctx.widthMethod}`
-    if (this._sourceMeasureCache?.key === key) return this._sourceMeasureCache.result
+    if (this._sourceMeasureCache?.key === key) {
+      if (isCullingDebugEnabled()) {
+        cullingDebug("code-source-measure-cache", {
+          id: this.id,
+          contentRevision: this._contentRevision,
+          width,
+          height,
+          result: this._sourceMeasureCache.result,
+        })
+      }
+      return this._sourceMeasureCache.result
+    }
 
     const measured = resolveRenderLib().measureTextForDimensions(
       this._content,
@@ -190,6 +213,19 @@ export class CodeRenderable extends TextBufferRenderable {
       this._ctx.widthMethod,
       this._firstLineOffset,
     )
+    if (isCullingDebugEnabled()) {
+      cullingDebug("code-source-measure", {
+        id: this.id,
+        contentLength: this._content.length,
+        contentRevision: this._contentRevision,
+        bufferContentRevision: this._bufferContentRevision,
+        width,
+        height,
+        wrapMode: this._wrapMode,
+        firstLineOffset: this._firstLineOffset,
+        result: measured,
+      })
+    }
     if (measured) this._sourceMeasureCache = { key, result: measured }
     return measured
   }
@@ -359,12 +395,39 @@ export class CodeRenderable extends TextBufferRenderable {
     }
 
     this._isHighlighting = true
+    if (isCullingDebugEnabled()) {
+      cullingDebug("code-highlight-start", {
+        id: this.id,
+        snapshotId,
+        contentLength: content.length,
+        filetype,
+        screen: { x: this.screenX, y: this.screenY, width: this.width, height: this.height },
+      })
+    }
 
     try {
       const result = await this._treeSitterClient.highlightOnce(content, filetype)
+      if (isCullingDebugEnabled()) {
+        cullingDebug("code-highlight-resolve", {
+          id: this.id,
+          snapshotId,
+          currentSnapshotId: this._highlightSnapshotId,
+          highlightCount: result.highlights?.length ?? 0,
+          warning: result.warning,
+          error: result.error,
+        })
+      }
 
       if (snapshotId !== this._highlightSnapshotId) {
         this.requestRender()
+        if (isCullingDebugEnabled()) {
+          cullingDebug("code-highlight-stale", {
+            id: this.id,
+            snapshotId,
+            currentSnapshotId: this._highlightSnapshotId,
+            stage: "highlight",
+          })
+        }
         return
       }
 
@@ -386,6 +449,14 @@ export class CodeRenderable extends TextBufferRenderable {
 
       if (snapshotId !== this._highlightSnapshotId) {
         this.requestRender()
+        if (isCullingDebugEnabled()) {
+          cullingDebug("code-highlight-stale", {
+            id: this.id,
+            snapshotId,
+            currentSnapshotId: this._highlightSnapshotId,
+            stage: "onHighlight",
+          })
+        }
         return
       }
 
@@ -416,6 +487,14 @@ export class CodeRenderable extends TextBufferRenderable {
 
         if (snapshotId !== this._highlightSnapshotId) {
           this.requestRender()
+          if (isCullingDebugEnabled()) {
+            cullingDebug("code-highlight-stale", {
+              id: this.id,
+              snapshotId,
+              currentSnapshotId: this._highlightSnapshotId,
+              stage: "onChunks",
+            })
+          }
           return
         }
 
@@ -435,14 +514,34 @@ export class CodeRenderable extends TextBufferRenderable {
       this._isHighlighting = false
       this._highlightsDirty = false
       this.updateTextInfo()
+      if (isCullingDebugEnabled()) {
+        cullingDebug("code-highlight-apply", {
+          id: this.id,
+          snapshotId,
+          contentLength: content.length,
+          bufferContentRevision: this._bufferContentRevision,
+          lineCount: this.lineCount,
+        })
+      }
       this.requestRender()
     } catch (error) {
       if (snapshotId !== this._highlightSnapshotId) {
         this.requestRender()
+        if (isCullingDebugEnabled()) {
+          cullingDebug("code-highlight-stale", {
+            id: this.id,
+            snapshotId,
+            currentSnapshotId: this._highlightSnapshotId,
+            stage: "error",
+          })
+        }
         return
       }
 
       console.warn("Code highlighting failed, falling back to plain text:", error)
+      if (isCullingDebugEnabled()) {
+        cullingDebug("code-highlight-fail", { id: this.id, snapshotId, error: String(error) })
+      }
       if (this.isDestroyed) return
       this.textBuffer.setText(content)
       this._bufferContentRevision = this._contentRevision
@@ -568,6 +667,18 @@ export class CodeRenderable extends TextBufferRenderable {
   }
 
   protected renderSelf(buffer: OptimizedBuffer): void {
+    if (isCullingDebugEnabled()) {
+      cullingDebug("code-render", {
+        id: this.id,
+        screen: { x: this.screenX, y: this.screenY, width: this.width, height: this.height },
+        highlightsDirty: this._highlightsDirty,
+        isHighlighting: this._isHighlighting,
+        shouldRenderTextBuffer: this._shouldRenderTextBuffer,
+        contentLength: this._content.length,
+        contentRevision: this._contentRevision,
+        bufferContentRevision: this._bufferContentRevision,
+      })
+    }
     if (this._highlightsDirty) {
       if (this.isDestroyed) return
 

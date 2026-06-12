@@ -10,6 +10,7 @@ import {
 import { writeFile } from "./platform/runtime.js"
 import { existsSync, writeFileSync } from "fs"
 import { EventEmitter } from "events"
+import { cullingDebug, isCullingDebugEnabled } from "./lib/culling-debug.js"
 import {
   type CursorStyle,
   type CursorStyleOptions,
@@ -4091,6 +4092,7 @@ class FFIRenderLib implements RenderLib {
     firstLineOffset: number = 0,
     tabWidth: number = 2,
   ): { lineCount: number; widthColsMax: number } | null {
+    const startedAt = isCullingDebugEnabled() ? performance.now() : 0
     const bytes = this.encoder.encode(text)
     const resultBuffer = new ArrayBuffer(MeasureResultStruct.size)
     const success = this.opentui.symbols.measureTextForDimensions(
@@ -4104,7 +4106,22 @@ class FFIRenderLib implements RenderLib {
       tabWidth,
       ptr(new Uint8Array(resultBuffer)),
     )
-    return success ? MeasureResultStruct.unpack(resultBuffer) : null
+    const result = success ? MeasureResultStruct.unpack(resultBuffer) : null
+    if (isCullingDebugEnabled()) {
+      cullingDebug("native-source-measure", {
+        textLength: text.length,
+        byteLength: bytes.length,
+        width,
+        height,
+        wrapMode,
+        widthMethod,
+        firstLineOffset,
+        tabWidth,
+        result,
+        durationMs: Number((performance.now() - startedAt).toFixed(3)),
+      })
+    }
+    return result
   }
 
   public textBufferAddHighlightByCharRange(buffer: Pointer, highlight: Highlight): void {

@@ -1,4 +1,5 @@
 import { EventEmitter } from "events"
+import { cullingDebug, isCullingDebugEnabled } from "./lib/culling-debug.js"
 import Yoga, { Direction, Display, Edge, FlexDirection, type Node as YogaNode } from "./yoga.js"
 import { OptimizedBuffer } from "./buffer.js"
 import type { KeyEvent, PasteEvent } from "./lib/KeyHandler.js"
@@ -1139,6 +1140,18 @@ export abstract class Renderable extends BaseRenderable {
     if (positionChanged) {
       if (this.parent) this.parent.childrenPrimarySortDirty = true
     }
+    if (isCullingDebugEnabled() && (positionChanged || sizeChanged)) {
+      cullingDebug("layout-change", {
+        frameId,
+        id: this.id,
+        num: this.num,
+        parentId: this.parent?.id,
+        old: { x: oldX, y: oldY, width: oldWidth, height: oldHeight },
+        next: { x: this._x, y: this._y, width: this._widthValue, height: this._heightValue },
+        screen: { x: this._screenX, y: this._screenY },
+        translate: { x: this._translateX, y: this._translateY },
+      })
+    }
   }
 
   protected onLayoutResize(width: number, height: number): void {
@@ -1463,6 +1476,17 @@ export abstract class Renderable extends BaseRenderable {
       }
       const visibleChildren = this._getVisibleChildren()
       const visibleChildSet = new Set(visibleChildren)
+      if (isCullingDebugEnabled()) {
+        cullingDebug("render-list-filter", {
+          frameId: this._ctx.frameId,
+          parentId: this.id,
+          childCount: this._childrenInZIndexOrder.length,
+          included: this._childrenInZIndexOrder
+            .filter((child) => visibleChildSet.has(child.num))
+            .map((child) => ({ id: child.id, num: child.num })),
+          excludedCount: this._childrenInZIndexOrder.length - visibleChildSet.size,
+        })
+      }
       for (const child of this._childrenInZIndexOrder) {
         if (!visibleChildSet.has(child.num)) continue
         child.updateLayout(deltaTime, renderList)
@@ -1807,30 +1831,69 @@ export class RootRenderable extends Renderable {
       this.appliedLayoutGeneration === layoutGeneration &&
       this.appliedRenderListRevision === renderListRevision
 
+    if (isCullingDebugEnabled()) {
+      cullingDebug("root-frame", {
+        frameId: this._ctx.frameId,
+        layoutGeneration,
+        renderListRevision,
+        appliedLayoutGeneration: this.appliedLayoutGeneration,
+        appliedRenderListRevision: this.appliedRenderListRevision,
+        canReuseRenderList,
+        previousCommandCount: this.renderList.length,
+      })
+    }
+
     if (!canReuseRenderList) {
       this.renderList.length = 0
       super.updateLayout(deltaTime, this.renderList)
       this.appliedLayoutGeneration = layoutGeneration
       this.appliedRenderListRevision = getRenderListRevision(this._ctx)
       this.renderListReusable = this.canReuseCurrentRenderList()
+      if (isCullingDebugEnabled()) {
+        cullingDebug("root-render-list", {
+          frameId: this._ctx.frameId,
+          commandCount: this.renderList.length,
+          renderCount: this.renderList.filter((command) => command.action === "render").length,
+          reusable: this.renderListReusable,
+        })
+      }
     }
 
     // 3. Render all collected renderables
     this._ctx.clearHitGridScissorRects()
+    const debugEnabled = isCullingDebugEnabled()
+    const debugScissors: Array<{ x: number; y: number; width: number; height: number }> = []
     for (let i = 1; i < this.renderList.length; i++) {
       const command = this.renderList[i]
       switch (command.action) {
         case "render":
           // Skip if renderable was destroyed during a previous render callback
           if (!command.renderable.isDestroyed) {
+            if (debugEnabled && command.renderable.constructor.name === "CodeRenderable") {
+              cullingDebug("code-render-command", {
+                frameId: this._ctx.frameId,
+                id: command.renderable.id,
+                screen: {
+                  x: command.renderable.screenX,
+                  y: command.renderable.screenY,
+                  width: command.renderable.width,
+                  height: command.renderable.height,
+                },
+                scissors: debugScissors,
+              })
+            }
             command.renderable.render(buffer, deltaTime)
           }
           break
         case "pushScissorRect":
+          if (debugEnabled) {
+            debugScissors.push({ x: command.x, y: command.y, width: command.width, height: command.height })
+          }
           buffer.pushScissorRect(command.x, command.y, command.width, command.height)
           this._ctx.pushHitGridScissorRect(command.screenX, command.screenY, command.width, command.height)
           break
         case "popScissorRect":
+          if (debugEnabled) debugScissors.pop()
           buffer.popScissorRect()
           this._ctx.popHitGridScissorRect()
           break

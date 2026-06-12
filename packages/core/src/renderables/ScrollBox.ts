@@ -1,4 +1,5 @@
 import { type KeyEvent } from "../lib/index.js"
+import { cullingDebug, isCullingDebugEnabled } from "../lib/culling-debug.js"
 import { getObjectsInViewport } from "../lib/objects-in-viewport.js"
 import { LinearScrollAccel, MacOSScrollAccel, type ScrollAcceleration } from "../lib/scroll-acceleration.js"
 import type { Renderable, RenderableOptions } from "../Renderable.js"
@@ -39,17 +40,65 @@ class ContentRenderable extends BoxRenderable {
     if (this._viewportCulling) {
       // The viewport is in terminal coordinates, so culling has to compare it
       // against each child's absolute screen position rather than local x/y.
-      return getObjectsInViewport(
-        {
-          x: this.viewport.screenX,
-          y: this.viewport.screenY,
-          width: this.viewport.width,
-          height: this.viewport.height,
-        },
-        this.getChildrenSortedByPrimaryAxis(),
-        this.primaryAxis,
-        0,
-      ).map((child) => child.num)
+      const viewport = {
+        x: this.viewport.screenX,
+        y: this.viewport.screenY,
+        width: this.viewport.width,
+        height: this.viewport.height,
+      }
+      const children = this.getChildrenSortedByPrimaryAxis()
+      const selected = getObjectsInViewport(viewport, children, this.primaryAxis, 0)
+
+      if (isCullingDebugEnabled()) {
+        const isRow = this.primaryAxis === "row"
+        const viewportStart = isRow ? viewport.x : viewport.y
+        const viewportEnd = viewportStart + (isRow ? viewport.width : viewport.height)
+        const exact = children.filter((child) => {
+          const start = isRow ? child.screenX : child.screenY
+          const end = start + (isRow ? child.width : child.height)
+          const crossStart = isRow ? child.screenY : child.screenX
+          const crossEnd = crossStart + (isRow ? child.height : child.width)
+          const viewportCrossStart = isRow ? viewport.y : viewport.x
+          const viewportCrossEnd = viewportCrossStart + (isRow ? viewport.height : viewport.width)
+          return (
+            end > viewportStart &&
+            start < viewportEnd &&
+            crossEnd >= viewportCrossStart &&
+            crossStart <= viewportCrossEnd
+          )
+        })
+        const selectedNums = new Set(selected.map((child) => child.num))
+        const describe = (child: Renderable) => ({
+          id: child.id,
+          num: child.num,
+          start: isRow ? child.screenX : child.screenY,
+          end: isRow ? child.screenX + child.width : child.screenY + child.height,
+          crossStart: isRow ? child.screenY : child.screenX,
+          crossSize: isRow ? child.height : child.width,
+        })
+        const before = children
+          .filter((child) => (isRow ? child.screenX + child.width : child.screenY + child.height) <= viewportStart)
+          .slice(-3)
+        const after = children.filter((child) => (isRow ? child.screenX : child.screenY) >= viewportEnd).slice(0, 3)
+
+        cullingDebug("scrollbox-cull", {
+          contentId: this.id,
+          axis: this.primaryAxis,
+          viewport,
+          translateX: this.translateX,
+          translateY: this.translateY,
+          contentWidth: this.width,
+          contentHeight: this.height,
+          childCount: children.length,
+          selected: selected.map(describe),
+          exact: exact.map(describe),
+          missing: exact.filter((child) => !selectedNums.has(child.num)).map(describe),
+          before: before.map(describe),
+          after: after.map(describe),
+        })
+      }
+
+      return selected.map((child) => child.num)
     }
     return super._getVisibleChildren()
   }
@@ -360,6 +409,15 @@ export class ScrollBoxRenderable extends BoxRenderable {
       id: `scroll-box-vertical-scrollbar-${this.internalId}`,
       orientation: "vertical",
       onChange: (position) => {
+        if (isCullingDebugEnabled()) {
+          cullingDebug("scrollbox-scroll-y", {
+            scrollBoxId: this.id,
+            position,
+            previousTranslateY: this.content.translateY,
+            contentHeight: this.content.height,
+            viewportHeight: this.viewport.height,
+          })
+        }
         this.content.translateY = -position
         this.updateStickyState()
       },
@@ -740,6 +798,18 @@ export class ScrollBoxRenderable extends BoxRenderable {
     this._isApplyingStickyScroll = true
 
     try {
+      if (isCullingDebugEnabled()) {
+        cullingDebug("scrollbox-bars-before", {
+          scrollBoxId: this.id,
+          scrollTop: this.scrollTop,
+          contentWidth: this.content.width,
+          contentHeight: this.content.height,
+          viewportWidth: this.viewport.width,
+          viewportHeight: this.viewport.height,
+          scrollWidth: this.scrollWidth,
+          scrollHeight: this.scrollHeight,
+        })
+      }
       this.verticalScrollBar.scrollSize = this.content.height
       this.verticalScrollBar.viewportSize = this.viewport.height
       this.horizontalScrollBar.scrollSize = this.content.width
@@ -773,6 +843,15 @@ export class ScrollBoxRenderable extends BoxRenderable {
             this.scrollLeft = newMaxScrollLeft
           }
         }
+      }
+      if (isCullingDebugEnabled()) {
+        cullingDebug("scrollbox-bars-after", {
+          scrollBoxId: this.id,
+          scrollTop: this.scrollTop,
+          translateY: this.content.translateY,
+          scrollWidth: this.scrollWidth,
+          scrollHeight: this.scrollHeight,
+        })
       }
     } finally {
       this._isApplyingStickyScroll = wasApplyingStickyScroll

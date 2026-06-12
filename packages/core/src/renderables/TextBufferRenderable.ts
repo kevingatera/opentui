@@ -8,6 +8,7 @@ import type { OptimizedBuffer } from "../buffer.js"
 import { MeasureMode } from "../yoga.js"
 import type { LineInfo } from "../zig.js"
 import { SyntaxStyle } from "../syntax-style.js"
+import { cullingDebug, isCullingDebugEnabled } from "../lib/culling-debug.js"
 
 export interface TextBufferOptions extends RenderableOptions<TextBufferRenderable> {
   fg?: string | RGBA
@@ -497,8 +498,29 @@ export abstract class TextBufferRenderable extends Renderable implements LineInf
   }
 
   protected renderSelf(buffer: OptimizedBuffer): void {
+    const debugEnabled =
+      isCullingDebugEnabled() &&
+      this._screenX + this.width > 0 &&
+      this._screenX < this._ctx.width &&
+      this._screenY + this.height > 0 &&
+      this._screenY < this._ctx.height
+    if (debugEnabled) {
+      cullingDebug("text-buffer-draw", {
+        id: this.id,
+        type: this.constructor.name,
+        ptr: !!this.textBuffer.ptr,
+        screen: { x: this._screenX, y: this._screenY },
+        size: { width: this.width, height: this.height },
+        scroll: { x: this._scrollX, y: this._scrollY },
+        lineCount: this.lineCount,
+        virtualLineCount: this.virtualLineCount,
+        textLength: this.textLength,
+        buffered: this.buffered,
+      })
+    }
     if (this.textBuffer.ptr) {
       buffer.drawTextBuffer(this.textBufferView, this._screenX, this._screenY)
+      if (debugEnabled) cullingDebug("text-buffer-draw-done", { id: this.id, type: this.constructor.name })
     }
   }
 

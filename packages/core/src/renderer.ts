@@ -14,6 +14,7 @@ import {
   type WidthMethod,
 } from "./types.js"
 import { RGBA, parseColor, type ColorInput } from "./lib/RGBA.js"
+import { cullingDebug, isCullingDebugEnabled } from "./lib/culling-debug.js"
 import { sleep } from "./platform/runtime.js"
 import { OptimizedBuffer } from "./buffer.js"
 import {
@@ -773,6 +774,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private immediateRerenderRequested: boolean = false
   private updateScheduled: boolean = false
   private activatingFrame: boolean = false
+  private debugCoalescedRequestCount: number = 0
 
   private liveRequestCounter: number = 0
   private _controlState: RendererControlState = RendererControlState.IDLE
@@ -1480,7 +1482,30 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   }
 
   public requestRender() {
+    const debugEnabled = isCullingDebugEnabled()
+    const debugState = debugEnabled
+      ? {
+          frameId: this._frameId,
+          running: this._isRunning,
+          rendering: this.rendering,
+          activatingFrame: this.activatingFrame,
+          updateScheduled: this.updateScheduled,
+          hasRenderTimeout: !!this.renderTimeout,
+          feedIdleRenderScheduled: this.feedIdleRenderScheduled,
+          ordinaryFrameWaitingForFeed: this.ordinaryFrameWaitingForFeed,
+          immediateRerenderRequested: this.immediateRerenderRequested,
+          controlState: this._controlState,
+        }
+      : undefined
+    const debugCoalesced = (outcome: string): void => {
+      if (!debugState) return
+      this.debugCoalescedRequestCount++
+      if (this.debugCoalescedRequestCount === 1) {
+        cullingDebug("renderer-request-coalesced", { ...debugState, outcome })
+      }
+    }
     if (this._controlState === RendererControlState.EXPLICIT_SUSPENDED) {
+      if (debugState) cullingDebug("renderer-request", { ...debugState, outcome: "explicit-suspended" })
       return
     }
 
@@ -1488,17 +1513,22 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     // feed.idle(). Coalesce normal invalidations into that retry so split-footer
     // output and UI updates cannot start competing render passes while the feed is busy.
     if (this.feedIdleRenderScheduled) {
+      debugCoalesced("feed-idle")
       return
     }
 
     if (this._isRunning) {
       if (!this.rendering && !this.renderTimeout && !this.ordinaryFrameWaitingForFeed) {
         this.scheduleRenderTimer()
+        if (debugState) cullingDebug("renderer-request", { ...debugState, outcome: "continuous-timer" })
+      } else if (debugState) {
+        debugCoalesced("continuous")
       }
       return
     }
 
     if (this.ordinaryFrameWaitingForFeed) {
+      debugCoalesced("feed-wait")
       return
     }
 
@@ -1506,6 +1536,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     // leads to a continuous loop of renders.
     if (this.rendering) {
       this.immediateRerenderRequested = true
+      if (debugState) cullingDebug("renderer-request", { ...debugState, outcome: "immediate-rerender" })
       return
     }
 
@@ -1516,16 +1547,29 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       const delay = Math.max(this.minTargetFrameTime - elapsed, 0)
 
       if (delay === 0) {
+        if (debugState) cullingDebug("renderer-request", { ...debugState, outcome: "next-tick", delay })
         process.nextTick(() => this.activateFrame())
         return
       }
 
+      if (debugState) cullingDebug("renderer-request", { ...debugState, outcome: "timer", delay })
       this.clock.setTimeout(() => this.activateFrame(), delay)
+    } else if (debugState) {
+      debugCoalesced("already-scheduled")
     }
   }
 
   private async activateFrame() {
+    if (isCullingDebugEnabled()) {
+      cullingDebug("renderer-activate-start", {
+        frameId: this._frameId,
+        updateScheduled: this.updateScheduled,
+        rendering: this.rendering,
+        activatingFrame: this.activatingFrame,
+      })
+    }
     if (!this.updateScheduled) {
+      if (isCullingDebugEnabled()) cullingDebug("renderer-activate-skip", { frameId: this._frameId })
       this.resolveIdleIfNeeded()
       return
     }
@@ -1536,6 +1580,13 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       await this.loop()
     } finally {
       this.activatingFrame = false
+      if (isCullingDebugEnabled()) {
+        cullingDebug("renderer-activate-end", {
+          frameId: this._frameId,
+          updateScheduled: this.updateScheduled,
+          rendering: this.rendering,
+        })
+      }
       this.resolveIdleIfNeeded()
     }
   }
@@ -4375,7 +4426,16 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   }
 
   private async loop(): Promise<void> {
-    if (this.rendering || this._isDestroyed) return
+    if (this.rendering || this._isDestroyed) {
+      if (isCullingDebugEnabled()) {
+        cullingDebug("renderer-loop-skip", {
+          frameId: this._frameId,
+          rendering: this.rendering,
+          destroyed: this._isDestroyed,
+        })
+      }
+      return
+    }
     this.renderTimeout = null
 
     this.rendering = true
@@ -4386,6 +4446,15 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     try {
       // Bump before any work so all callers this iteration see the new id.
       this._frameId++
+      if (isCullingDebugEnabled()) {
+        cullingDebug("renderer-loop-start", {
+          frameId: this._frameId,
+          running: this._isRunning,
+          immediateRerenderRequested: this.immediateRerenderRequested,
+          coalescedRequestCount: this.debugCoalescedRequestCount,
+        })
+        this.debugCoalescedRequestCount = 0
+      }
 
       const now = this.normalizeClockTime(this.clock.now(), this.lastTime)
       const elapsed = this.getElapsedMs(now, this.lastTime)
@@ -4436,6 +4505,9 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       // If destroy() was requested during this frame, skip native work and scheduling.
       if (!this._isDestroyed) {
         const nativeStatus = this.renderNative() ?? "rendered"
+        if (isCullingDebugEnabled()) {
+          cullingDebug("renderer-native", { frameId: this._frameId, status: nativeStatus })
+        }
 
         if (nativeStatus === "rendered") {
           // Check if hit grid changed and recheck hover state if needed
@@ -4502,6 +4574,16 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       }
     } finally {
       this.rendering = false
+      if (isCullingDebugEnabled()) {
+        cullingDebug("renderer-loop-end", {
+          frameId: this._frameId,
+          destroyed: this._isDestroyed,
+          destroyPending: this._destroyPending,
+          updateScheduled: this.updateScheduled,
+          hasRenderTimeout: !!this.renderTimeout,
+          immediateRerenderRequested: this.immediateRerenderRequested,
+        })
+      }
       if (this._destroyPending) {
         this.finalizeDestroy()
       }
