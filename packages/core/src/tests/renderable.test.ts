@@ -1,5 +1,6 @@
 import { test, expect, beforeEach, afterEach, describe, spyOn } from "bun:test"
 import { decodePasteBytes } from "../lib/paste.js"
+import { getObjectsInViewport } from "../lib/objects-in-viewport.js"
 import {
   Renderable,
   BaseRenderable,
@@ -48,6 +49,14 @@ export class TestBaseRenderable extends BaseRenderable {
 class TestRenderable extends Renderable {
   constructor(ctx: RenderContext, options: RenderableOptions<TestRenderable>) {
     super(ctx, options)
+  }
+}
+
+class MutablePrimaryPositionRenderable extends TestRenderable {
+  public primaryPosition = 0
+
+  public override get screenY(): number {
+    return this.primaryPosition
   }
 }
 
@@ -1276,6 +1285,61 @@ describe("Renderable - Layout with Viewport Filtering", () => {
     expect(newChild.y).toBe(20)
     expect(child2.y).toBe(35)
     expect(child3.y).toBe(55)
+  })
+
+  test("revalidates cached primary-axis order before viewport binary search", () => {
+    const parent = new TestRenderable(testRenderer, {
+      id: "parent",
+      width: 100,
+      flexDirection: "column",
+    })
+    const children = Array.from({ length: 306 }, (_, index) => {
+      const child = new MutablePrimaryPositionRenderable(testRenderer, {
+        id: `child-${index}`,
+        width: 100,
+        height: 15,
+        flexShrink: 0,
+      })
+      child.primaryPosition = index * 20 - 7000
+      parent.add(child)
+      return child
+    })
+
+    // Prime the cached order, then reproduce the stale-key state observed in
+    // the OpenCode trace: membership is unchanged, but cached object positions move.
+    expect(parent.getChildrenSortedByPrimaryAxis()).toEqual(children)
+    for (const [index, position] of [
+      [101, 166],
+      [107, -297],
+      [127, -375],
+      [129, -14],
+      [164, 224],
+      [241, 44],
+      [247, -103],
+      [280, -33],
+    ] as const) {
+      children[index].primaryPosition = position
+    }
+
+    const sorted = parent.getChildrenSortedByPrimaryAxis()
+    const objects = sorted.map((child) => ({
+      id: child.id,
+      screenX: 0,
+      screenY: child.screenY,
+      width: 100,
+      height: 15,
+      zIndex: 0,
+    }))
+    const viewport = { x: 0, y: 0, width: 100, height: 70 }
+    const actual = getObjectsInViewport(viewport, objects, "column", 0).map((child) => child.id)
+    const expected = objects
+      .filter((child) => child.screenY + child.height > viewport.y && child.screenY < viewport.y + viewport.height)
+      .map((child) => child.id)
+
+    expect(actual).toEqual(expected)
+    for (let index = 1; index < sorted.length; index++) {
+      expect(sorted[index - 1].screenY).toBeLessThanOrEqual(sorted[index].screenY)
+    }
   })
 })
 
