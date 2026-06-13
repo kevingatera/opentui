@@ -24,6 +24,7 @@ pub const ObjectKind = enum(u4) {
     event_sink = 7,
     audio_engine = 8,
     image = 9,
+    video = 10,
 };
 
 const SlotState = enum(u8) {
