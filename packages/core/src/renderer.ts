@@ -437,6 +437,7 @@ class ScrollbackSnapshotRenderContext extends EventEmitter implements RenderCont
   public terminalHeight: number
   public resolution = null
   public frameId = 0
+  public renderBackpressureCount = 0
   public widthMethod: WidthMethod
   public capabilities: TerminalCapabilities | null = null
   public hasSelection: boolean = false
@@ -773,6 +774,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private frameCount: number = 0
   // Bumped once per loop() iteration; see RenderContext.frameId.
   private _frameId: number = 0
+  public renderBackpressureCount = 0
   private lastFpsTime: number = 0
   private currentFps: number = 0
   private targetFrameTime: number = 1000 / this._targetFps
@@ -4459,6 +4461,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
           this.pendingExternalOutputMode === "passthrough",
         )
         if (status === "backpressured") {
+          this.renderBackpressureCount++
           return "backpressured"
         }
         this.forceFullRepaintRequested = false
@@ -4469,6 +4472,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       const force = this.forceFullRepaintRequested
       const nativeStatus = this.lib.render(this.rendererPtr, force)
       if (nativeStatus === NATIVE_RENDER_STATUS_SKIPPED) {
+        this.renderBackpressureCount++
         if (this._feed) {
           this.scheduleRenderAfterFeedIdle()
           return "backpressured"
@@ -4477,6 +4481,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
         return "skipped"
       }
       if (nativeStatus === NATIVE_RENDER_STATUS_FAILED) {
+        this.renderBackpressureCount++
         this.scheduleRenderAfterFeedIdle()
         return "backpressured"
       }
