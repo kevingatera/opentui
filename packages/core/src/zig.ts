@@ -1272,6 +1272,7 @@ function getOpenTUILib(libPath?: string) {
     videoConfigurePng: { args: ["u32", "u32", "u32", "u32"], returns: "u32" },
     videoSeek: { args: ["u32", "i64", "ptr"], returns: "u32" },
     videoUpdate: { args: ["u32", "i64", "ptr"], returns: "u32" },
+    videoPrepare: { args: ["u32", "i64", "ptr"], returns: "u32" },
     videoService: { args: ["u32", "i64", "ptr"], returns: "u32" },
     videoGetCurrentFrame: { args: ["u32", "u64", "ptr", "ptr"], returns: "u32" },
     videoReadAudio: { args: ["u32", "ptr", "u32", "u32", "ptr"], returns: "u32" },
@@ -2349,6 +2350,7 @@ export interface RenderLib extends AudioEngineLib {
   videoConfigurePng: (video: VideoHandle, compressionLevel: number, predictor: number, colorMode: number) => number
   videoSeek: (video: VideoHandle, targetUs: bigint) => { status: number; state: NativeVideoState }
   videoUpdate: (video: VideoHandle, targetUs: bigint) => { status: number; state: NativeVideoState }
+  videoPrepare: (video: VideoHandle, targetUs: bigint) => { status: number; state: NativeVideoState }
   videoService: (video: VideoHandle, targetUs: bigint) => { status: number; state: NativeVideoState }
   videoGetCurrentFrame: (
     video: VideoHandle,
@@ -5002,7 +5004,11 @@ class FFIRenderLib implements RenderLib {
     return this.opentui.symbols.videoConfigurePng(video, compressionLevel, predictor, colorMode)
   }
 
-  private videoStateCall(symbol: "videoSeek" | "videoUpdate" | "videoService", video: VideoHandle, targetUs: bigint) {
+  private videoStateCall(
+    symbol: "videoSeek" | "videoUpdate" | "videoPrepare" | "videoService",
+    video: VideoHandle,
+    targetUs: bigint,
+  ) {
     const output = new ArrayBuffer(NativeVideoStateStruct.size)
     const status = this.opentui.symbols[symbol](video, targetUs, ptr(output))
     const state = NativeVideoStateStruct.unpack(output)
@@ -5030,6 +5036,10 @@ class FFIRenderLib implements RenderLib {
 
   public videoUpdate(video: VideoHandle, targetUs: bigint) {
     return this.videoStateCall("videoUpdate", video, targetUs)
+  }
+
+  public videoPrepare(video: VideoHandle, targetUs: bigint) {
+    return this.videoStateCall("videoPrepare", video, targetUs)
   }
 
   public videoService(video: VideoHandle, targetUs: bigint) {
