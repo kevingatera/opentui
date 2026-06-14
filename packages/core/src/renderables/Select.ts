@@ -19,6 +19,12 @@ export interface SelectOption {
   name: string
   description: string
   value?: any
+  color?: ColorInput
+  selectedColor?: ColorInput
+  attributes?: number
+  detail?: string
+  detailColor?: ColorInput
+  selectedDetailColor?: ColorInput
 }
 
 export type SelectAction = "move-up" | "move-down" | "move-up-fast" | "move-down-fast" | "select-current"
@@ -192,7 +198,10 @@ export class SelectRenderable extends Renderable {
 
       const nameContent = `${isSelected ? "▶ " : "  "}${option.name}`
       const baseTextColor = this._focused ? this._focusedTextColor : this._textColor
-      const nameColor = isSelected ? this._selectedTextColor : baseTextColor
+      const nameColor = parseColor(
+        isSelected ? (option.selectedColor ?? this._selectedTextColor) : (option.color ?? baseTextColor),
+      )
+      const attributes = option.attributes ?? 0
       let descX = contentX + 3
 
       if (this._font) {
@@ -210,7 +219,24 @@ export class SelectRenderable extends Renderable {
         })
         descX = contentX + 1 + indicatorWidth
       } else {
-        this.frameBuffer.drawText(nameContent, contentX + 1, itemY, nameColor)
+        this.frameBuffer.drawText(nameContent, contentX + 1, itemY, nameColor, undefined, attributes)
+      }
+
+      if (option.detail) {
+        const detailX = Math.max(contentX + 3, contentX + contentWidth - option.detail.length - 2)
+        this.frameBuffer.fillRect(
+          Math.max(contentX, detailX - 1),
+          itemY,
+          contentX + contentWidth - detailX + 1,
+          1,
+          isSelected ? this._selectedBackgroundColor : bgColor,
+        )
+        const detailColor = parseColor(
+          isSelected
+            ? (option.selectedDetailColor ?? option.detailColor ?? this._selectedDescriptionColor)
+            : (option.detailColor ?? this._descriptionColor),
+        )
+        this.frameBuffer.drawText(option.detail, detailX, itemY, detailColor)
       }
 
       if (this._showDescription && itemY + this.fontHeight < contentY + contentHeight) {
