@@ -1267,6 +1267,7 @@ function getOpenTUILib(libPath?: string) {
     videoPause: { args: ["u32"], returns: "u32" },
     videoSetMuted: { args: ["u32", "u32"], returns: "u32" },
     videoSetVolume: { args: ["u32", "f32"], returns: "u32" },
+    videoSetAvSyncOffset: { args: ["u32", "i64"], returns: "u32" },
     videoConfigureOutput: { args: ["u32", "u32", "u32", "u32"], returns: "u32" },
     videoConfigurePng: { args: ["u32", "u32", "u32", "u32"], returns: "u32" },
     videoSeek: { args: ["u32", "i64", "ptr"], returns: "u32" },
@@ -2343,6 +2344,7 @@ export interface RenderLib extends AudioEngineLib {
   videoPause: (video: VideoHandle) => number
   videoSetMuted: (video: VideoHandle, muted: boolean) => number
   videoSetVolume: (video: VideoHandle, volume: number) => number
+  videoSetAvSyncOffset: (video: VideoHandle, offsetUs: bigint) => number
   videoConfigureOutput: (video: VideoHandle, width: number, height: number, cover: boolean) => number
   videoConfigurePng: (video: VideoHandle, compressionLevel: number, predictor: number, colorMode: number) => number
   videoSeek: (video: VideoHandle, targetUs: bigint) => { status: number; state: NativeVideoState }
@@ -4986,6 +4988,10 @@ class FFIRenderLib implements RenderLib {
 
   public videoSetVolume(video: VideoHandle, volume: number): number {
     return this.opentui.symbols.videoSetVolume(video, volume)
+  }
+
+  public videoSetAvSyncOffset(video: VideoHandle, offsetUs: bigint): number {
+    return this.opentui.symbols.videoSetAvSyncOffset(video, offsetUs)
   }
 
   public videoConfigureOutput(video: VideoHandle, width: number, height: number, cover: boolean): number {
