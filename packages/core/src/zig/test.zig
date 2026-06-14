@@ -35,6 +35,7 @@ const audio_tests = @import("tests/audio_test.zig");
 const handles_tests = @import("tests/handles_test.zig");
 const image_tests = @import("tests/image_test.zig");
 const terminal_image_tests = @import("tests/terminal-image_test.zig");
+const video_tests = @import("tests/video_test.zig");
 // const example_tests = @import("example_test.zig");
 
 // Re-export test declarations from individual test files
@@ -76,5 +77,6 @@ comptime {
     _ = handles_tests;
     _ = image_tests;
     _ = terminal_image_tests;
+    _ = video_tests;
     // _ = example_tests;
 }
