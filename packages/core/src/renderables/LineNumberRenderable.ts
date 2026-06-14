@@ -256,13 +256,16 @@ class GutterRenderable extends Renderable {
   private refreshFrameBuffer(buffer: OptimizedBuffer): void {
     const startX = this.buffered ? 0 : this.x
     const startY = this.buffered ? 0 : this.y
+    const clearBg = clearBackground()
 
     if (this.buffered) {
-      buffer.clear(this._bg)
+      buffer.clear(this._bg.a > 0 ? this._bg : clearBg)
     } else if (this._bg.a > 0) {
       // Fill background if not buffered and opaque (if buffered, clear handles it)
       // Note: this.height might be determined by parent (flex stretch)
       buffer.fillRect(startX, startY, this.width, this.height, this._bg)
+    } else {
+      buffer.fillRect(startX, startY, this.width, this.height, clearBg)
     }
 
     const lineInfo = this.target.lineInfo
@@ -287,10 +290,11 @@ class GutterRenderable extends Renderable {
       if (visualLineIndex >= sources.length) break
 
       const logicalLine = sources[visualLineIndex]
-      const lineBg = this._lineColorsGutter.get(logicalLine) ?? this._bg
+      const clippedAbove = isRowClippedAbove(i, this.target)
+      const lineBg = clippedAbove ? clearBg : (this._lineColorsGutter.get(logicalLine) ?? this._bg)
 
       // Fill background for this line if it has a custom color
-      if (lineBg !== this._bg) {
+      if (lineBg !== this._bg || clippedAbove) {
         buffer.fillRect(startX, startY + i, this.width, 1, lineBg)
       }
 
@@ -345,6 +349,30 @@ class GutterRenderable extends Renderable {
 // Helper function to darken an RGBA color by 20%
 function darkenColor(color: RGBA): RGBA {
   return RGBA.fromValues(color.r * 0.8, color.g * 0.8, color.b * 0.8, color.a)
+}
+
+function clearBackground(): RGBA {
+  return RGBA.fromValues(0, 0, 0, 1)
+}
+
+function clippedTopScreenY(renderable: Renderable): number {
+  let clipTop = 0
+  const rowBottom = renderable.screenY + renderable.height
+
+  for (let node = renderable.parent; node; node = node.parent) {
+    if (node.overflow !== "hidden" || node.height <= 0) continue
+
+    const nodeBottom = node.screenY + node.height
+    if (renderable.screenY >= nodeBottom || rowBottom <= node.screenY) continue
+
+    clipTop = Math.max(clipTop, node.screenY)
+  }
+
+  return clipTop
+}
+
+function isRowClippedAbove(row: number, target: Renderable): boolean {
+  return target.screenY + row + 1 <= clippedTopScreenY(target)
 }
 
 export class LineNumberRenderable extends Renderable {
@@ -538,6 +566,7 @@ export class LineNumberRenderable extends Renderable {
     // Calculate the area to fill: from after the gutter (if visible) to the end of our width
     const gutterWidth = this.gutter.visible ? this.gutter.width : 0
     const contentWidth = this.width - gutterWidth
+    const clearBg = clearBackground()
 
     // Draw full-width background colors for lines with custom colors
     for (let i = 0; i < this.height; i++) {
@@ -545,12 +574,10 @@ export class LineNumberRenderable extends Renderable {
       if (visualLineIndex >= sources.length) break
 
       const logicalLine = sources[visualLineIndex]
-      const lineBg = this._lineColorsContent.get(logicalLine)
+      const lineBg = isRowClippedAbove(i, this.target) ? undefined : this._lineColorsContent.get(logicalLine)
 
-      if (lineBg) {
-        // Fill from after gutter to the end of the LineNumberRenderable
-        buffer.fillRect(this.x + gutterWidth, this.y + i, contentWidth, 1, lineBg)
-      }
+      // Fill from after gutter to the end of the LineNumberRenderable.
+      buffer.fillRect(this.x + gutterWidth, this.y + i, contentWidth, 1, lineBg ?? clearBg)
     }
   }
 

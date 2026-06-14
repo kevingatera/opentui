@@ -1810,6 +1810,83 @@ test("DiffRenderable - explicit content background colors differ from gutter", a
   expect(frame2).toContain("function hello")
 })
 
+test("DiffRenderable - split view treats identical remove/add rows as context", async () => {
+  const syntaxStyle = SyntaxStyle.fromStyles({
+    default: { fg: RGBA.fromValues(1, 1, 1, 1) },
+  })
+
+  const diff = `--- a/test.txt
++++ b/test.txt
+@@ -1,4 +1,4 @@
+-alpha
+-same line
++beta
++same line
+ context
+ tail`
+
+  const diffRenderable = new DiffRenderable(currentRenderer, {
+    id: "test-diff",
+    diff,
+    view: "split",
+    syntaxStyle,
+    showLineNumbers: true,
+    width: "100%",
+    height: "100%",
+  })
+
+  currentRenderer.root.add(diffRenderable)
+  await renderOnce()
+
+  const sameLine = captureFrame()
+    .split("\n")
+    .find((line) => line.includes("same line"))
+
+  expect(sameLine).toBeDefined()
+  expect(sameLine).not.toContain(" -")
+  expect(sameLine).not.toContain(" +")
+})
+
+test("DiffRenderable - split view applies inline changed token highlight backgrounds", async () => {
+  const mockClient = new MockTreeSitterClient()
+  mockClient.setMockResult({ highlights: [] })
+
+  const syntaxStyle = SyntaxStyle.fromStyles({
+    default: { fg: RGBA.fromValues(1, 1, 1, 1) },
+  })
+
+  const diffRenderable = new DiffRenderable(currentRenderer, {
+    id: "test-diff",
+    diff: simpleDiff,
+    view: "split",
+    filetype: "javascript",
+    syntaxStyle,
+    treeSitterClient: mockClient,
+    highlightAddedBg: "#123456",
+    highlightRemovedBg: "#654321",
+    width: "100%",
+    height: "100%",
+  })
+
+  currentRenderer.root.add(diffRenderable)
+  await settleDiffHighlighting(diffRenderable, mockClient, renderOnce)
+
+  const frame = captureFrame()
+  const line = frame.split("\n").find((item) => item.includes("World"))
+  expect(line).toBeDefined()
+
+  const x = line!.indexOf("World")
+  const y = frame.split("\n").findIndex((item) => item.includes("World"))
+  const bg = currentRenderer.currentRenderBuffer.buffers.bg
+  const offset = (y * currentRenderer.currentRenderBuffer.width + x) * 4
+
+  expect(bg[offset] / 255).toBeCloseTo(0x12 / 255, 2)
+  expect(bg[offset + 1] / 255).toBeCloseTo(0x34 / 255, 2)
+  expect(bg[offset + 2] / 255).toBeCloseTo(0x56 / 255, 2)
+
+  await mockClient.destroy()
+})
+
 test("DiffRenderable - malformed diff string handled gracefully", async () => {
   const syntaxStyle = SyntaxStyle.fromStyles({
     default: { fg: RGBA.fromValues(1, 1, 1, 1) },

@@ -1,12 +1,13 @@
 import { Renderable, type RenderableOptions } from "../Renderable.js"
 import type { RenderContext } from "../types.js"
-import { CodeRenderable, type CodeOptions } from "./Code.js"
+import { CodeRenderable, type CodeOptions, type OnHighlightCallback } from "./Code.js"
 import { LineNumberRenderable, type LineSign, type LineColorConfig } from "./LineNumberRenderable.js"
 import { RGBA, parseColor } from "../lib/RGBA.js"
 import { SyntaxStyle } from "../syntax-style.js"
-import { parsePatch, type StructuredPatch } from "diff"
+import { diffWordsWithSpace, parsePatch, type StructuredPatch } from "diff"
 import { TextRenderable } from "./Text.js"
 import type { TreeSitterClient } from "../lib/tree-sitter/index.js"
+import type { SimpleHighlight } from "../lib/tree-sitter/types.js"
 import type { MouseEvent } from "../renderer.js"
 
 interface LogicalLine {
@@ -46,6 +47,8 @@ export interface DiffRenderableOptions extends RenderableOptions<DiffRenderable>
   addedContentBg?: string | RGBA
   removedContentBg?: string | RGBA
   contextContentBg?: string | RGBA
+  highlightAddedBg?: string | RGBA
+  highlightRemovedBg?: string | RGBA
   addedSignColor?: string | RGBA
   removedSignColor?: string | RGBA
   addedLineNumberBg?: string | RGBA
@@ -84,10 +87,16 @@ export class DiffRenderable extends Renderable {
   private _addedContentBg: RGBA | null
   private _removedContentBg: RGBA | null
   private _contextContentBg: RGBA | null
+  private _highlightAddedBg: RGBA | null
+  private _highlightRemovedBg: RGBA | null
   private _addedSignColor: RGBA
   private _removedSignColor: RGBA
   private _addedLineNumberBg: RGBA
   private _removedLineNumberBg: RGBA
+  private _leftDiffHighlightRanges: CharacterRange[] | null = null
+  private _rightDiffHighlightRanges: CharacterRange[] | null = null
+  private _leftDiffOnHighlight: OnHighlightCallback | null = null
+  private _rightDiffOnHighlight: OnHighlightCallback | null = null
 
   private leftSide: LineNumberRenderable | null = null
   private rightSide: LineNumberRenderable | null = null
@@ -139,6 +148,8 @@ export class DiffRenderable extends Renderable {
     this._addedContentBg = options.addedContentBg ? parseColor(options.addedContentBg) : null
     this._removedContentBg = options.removedContentBg ? parseColor(options.removedContentBg) : null
     this._contextContentBg = options.contextContentBg ? parseColor(options.contextContentBg) : null
+    this._highlightAddedBg = options.highlightAddedBg ? parseColor(options.highlightAddedBg) : null
+    this._highlightRemovedBg = options.highlightRemovedBg ? parseColor(options.highlightRemovedBg) : null
     this._addedSignColor = parseColor(options.addedSignColor ?? "#22c55e")
     this._removedSignColor = parseColor(options.removedSignColor ?? "#ef4444")
     this._addedLineNumberBg = parseColor(options.addedLineNumberBg ?? "transparent")
@@ -664,10 +675,29 @@ export class DiffRenderable extends Renderable {
           const maxLength = Math.max(removes.length, adds.length)
 
           for (let j = 0; j < maxLength; j++) {
-            if (j < removes.length) {
+            const remove = j < removes.length ? removes[j] : null
+            const add = j < adds.length ? adds[j] : null
+
+            if (remove && add && remove.content === add.content) {
               leftLogicalLines.push({
-                content: removes[j].content,
-                lineNum: removes[j].lineNum,
+                content: remove.content,
+                lineNum: remove.lineNum,
+                color: this._contextBg,
+                type: "context",
+              })
+              rightLogicalLines.push({
+                content: add.content,
+                lineNum: add.lineNum,
+                color: this._contextBg,
+                type: "context",
+              })
+              continue
+            }
+
+            if (remove) {
+              leftLogicalLines.push({
+                content: remove.content,
+                lineNum: remove.lineNum,
                 color: this._removedBg,
                 sign: {
                   after: " -",
@@ -683,10 +713,10 @@ export class DiffRenderable extends Renderable {
               })
             }
 
-            if (j < adds.length) {
+            if (add) {
               rightLogicalLines.push({
-                content: adds[j].content,
-                lineNum: adds[j].lineNum,
+                content: add.content,
+                lineNum: add.lineNum,
                 color: this._addedBg,
                 sign: {
                   after: " +",
@@ -755,15 +785,17 @@ export class DiffRenderable extends Renderable {
       const leftSources = leftLineInfo.lineSources || []
       const rightSources = rightLineInfo.lineSources || []
 
-      const leftVisualCounts = new Map<number, number>()
-      const rightVisualCounts = new Map<number, number>()
-
-      for (const logicalLine of leftSources) {
-        leftVisualCounts.set(logicalLine, (leftVisualCounts.get(logicalLine) || 0) + 1)
-      }
-      for (const logicalLine of rightSources) {
-        rightVisualCounts.set(logicalLine, (rightVisualCounts.get(logicalLine) || 0) + 1)
-      }
+      const leftLineInfoReady =
+        leftCodeRenderable.lineCount === leftLogicalLines.length &&
+        leftSources.length > 0 &&
+        leftSources.every((line) => line >= 0 && line < leftLogicalLines.length)
+      const rightLineInfoReady =
+        rightCodeRenderable.lineCount === rightLogicalLines.length &&
+        rightSources.length > 0 &&
+        rightSources.every((line) => line >= 0 && line < rightLogicalLines.length)
+      const sideWidth = Math.max(12, Math.floor((this.width || 80) / 2) - 8)
+      const leftVisualCounts = this.buildVisualCounts(leftSources, leftLogicalLines, leftLineInfoReady, sideWidth)
+      const rightVisualCounts = this.buildVisualCounts(rightSources, rightLogicalLines, rightLineInfoReady, sideWidth)
 
       finalLeftLines = []
       finalRightLines = []
@@ -775,7 +807,6 @@ export class DiffRenderable extends Renderable {
         const leftLine = leftLogicalLines[i]
         const rightLine = rightLogicalLines[i]
 
-        // Concealed logical lines have zero visual rows; counting them as one misaligns split panes.
         const leftVisualCount = leftVisualCounts.get(i) ?? 0
         const rightVisualCount = rightVisualCounts.get(i) ?? 0
 
@@ -898,6 +929,8 @@ export class DiffRenderable extends Renderable {
     const leftContentFinal = finalLeftLines.map((l) => l.content).join("\n")
     const rightContentFinal = finalRightLines.map((l) => l.content).join("\n")
 
+    this.updateDiffHighlighting(leftCodeRenderable, rightCodeRenderable, finalLeftLines, finalRightLines)
+
     leftCodeRenderable.content = leftContentFinal
     rightCodeRenderable.content = rightContentFinal
 
@@ -919,6 +952,125 @@ export class DiffRenderable extends Renderable {
       rightHideLineNumbers,
       "50%",
     )
+  }
+
+  private buildVisualCounts(
+    sources: number[],
+    lines: LogicalLine[],
+    lineInfoReady: boolean,
+    sideWidth: number,
+  ): Map<number, number> {
+    const counts = new Map<number, number>()
+
+    if (lineInfoReady) {
+      for (const logicalLine of sources) {
+        counts.set(logicalLine, (counts.get(logicalLine) || 0) + 1)
+      }
+      return counts
+    }
+
+    for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+      if (this._wrapMode === "none") {
+        counts.set(lineIndex, 1)
+      } else {
+        counts.set(lineIndex, Math.max(1, Math.ceil(lines[lineIndex].content.length / sideWidth)))
+      }
+    }
+
+    return counts
+  }
+
+  private updateDiffHighlighting(
+    leftCodeRenderable: CodeRenderable,
+    rightCodeRenderable: CodeRenderable,
+    finalLeftLines: LogicalLine[],
+    finalRightLines: LogicalLine[],
+  ): void {
+    const leftHighlightRanges: CharacterRange[] = []
+    const rightHighlightRanges: CharacterRange[] = []
+    let leftCharOffset = 0
+    let rightCharOffset = 0
+
+    const maxLines = Math.max(finalLeftLines.length, finalRightLines.length)
+
+    for (let i = 0; i < maxLines; i++) {
+      const leftLine = finalLeftLines[i]
+      const rightLine = finalRightLines[i]
+
+      if (leftLine && rightLine && leftLine.type === "remove" && rightLine.type === "add") {
+        const ranges = changedTokenRanges(leftLine.content, rightLine.content)
+
+        for (const range of ranges.left) {
+          leftHighlightRanges.push([leftCharOffset + range[0], leftCharOffset + range[1]])
+        }
+        for (const range of ranges.right) {
+          rightHighlightRanges.push([rightCharOffset + range[0], rightCharOffset + range[1]])
+        }
+      }
+
+      if (leftLine) {
+        leftCharOffset += leftLine.content.length + 1
+      }
+      if (rightLine) {
+        rightCharOffset += rightLine.content.length + 1
+      }
+    }
+
+    this._leftDiffHighlightRanges = leftHighlightRanges.length > 0 ? leftHighlightRanges : null
+    this._rightDiffHighlightRanges = rightHighlightRanges.length > 0 ? rightHighlightRanges : null
+
+    if (!this._syntaxStyle || (!this._leftDiffHighlightRanges && !this._rightDiffHighlightRanges)) {
+      this.clearDiffHighlighting(leftCodeRenderable, rightCodeRenderable)
+      return
+    }
+
+    const highlightRemovedBg = this._highlightRemovedBg ?? this._removedLineNumberBg
+    const highlightAddedBg = this._highlightAddedBg ?? this._addedLineNumberBg
+
+    if (this._syntaxStyle.resolveStyleId("diff-removed-highlight") === null) {
+      this._syntaxStyle.registerStyle("diff-removed-highlight", { bg: highlightRemovedBg })
+    }
+    if (this._syntaxStyle.resolveStyleId("diff-added-highlight") === null) {
+      this._syntaxStyle.registerStyle("diff-added-highlight", { bg: highlightAddedBg })
+    }
+
+    if (!this._leftDiffOnHighlight) {
+      this._leftDiffOnHighlight = (highlights) => {
+        if (!this._leftDiffHighlightRanges) return highlights
+        return [
+          ...highlights,
+          ...this._leftDiffHighlightRanges.map(
+            (range): SimpleHighlight => [range[0], range[1], "diff-removed-highlight"],
+          ),
+        ]
+      }
+    }
+    if (!this._rightDiffOnHighlight) {
+      this._rightDiffOnHighlight = (highlights) => {
+        if (!this._rightDiffHighlightRanges) return highlights
+        return [
+          ...highlights,
+          ...this._rightDiffHighlightRanges.map(
+            (range): SimpleHighlight => [range[0], range[1], "diff-added-highlight"],
+          ),
+        ]
+      }
+    }
+
+    leftCodeRenderable.onHighlight = this._leftDiffOnHighlight
+    rightCodeRenderable.onHighlight = this._rightDiffOnHighlight
+  }
+
+  private clearDiffHighlighting(leftCodeRenderable: CodeRenderable, rightCodeRenderable: CodeRenderable): void {
+    this._leftDiffHighlightRanges = null
+    this._rightDiffHighlightRanges = null
+
+    if (leftCodeRenderable.onHighlight === this._leftDiffOnHighlight) {
+      leftCodeRenderable.onHighlight = undefined
+    }
+    if (rightCodeRenderable.onHighlight === this._rightDiffOnHighlight) {
+      rightCodeRenderable.onHighlight = undefined
+    }
   }
 
   public get diff(): string {
@@ -1155,6 +1307,30 @@ export class DiffRenderable extends Renderable {
     }
   }
 
+  public get highlightAddedBg(): RGBA | null {
+    return this._highlightAddedBg
+  }
+
+  public set highlightAddedBg(value: string | RGBA | null) {
+    const parsed = value ? parseColor(value) : null
+    if (this._highlightAddedBg !== parsed) {
+      this._highlightAddedBg = parsed
+      this.rebuildView()
+    }
+  }
+
+  public get highlightRemovedBg(): RGBA | null {
+    return this._highlightRemovedBg
+  }
+
+  public set highlightRemovedBg(value: string | RGBA | null) {
+    const parsed = value ? parseColor(value) : null
+    if (this._highlightRemovedBg !== parsed) {
+      this._highlightRemovedBg = parsed
+      this.rebuildView()
+    }
+  }
+
   public get selectionBg(): RGBA | undefined {
     return this._selectionBg
   }
@@ -1275,4 +1451,37 @@ export class DiffRenderable extends Renderable {
 
     return offsets
   }
+}
+
+type CharacterRange = [start: number, end: number]
+
+function changedTokenRanges(left: string, right: string): { left: CharacterRange[]; right: CharacterRange[] } {
+  if (left.length === 0 || right.length === 0) return { left: [], right: [] }
+
+  const leftRanges: CharacterRange[] = []
+  const rightRanges: CharacterRange[] = []
+  let leftOffset = 0
+  let rightOffset = 0
+
+  for (const change of diffWordsWithSpace(left, right, { maxEditLength: 10000 }) ?? []) {
+    if (change.removed) {
+      leftRanges.push([leftOffset, leftOffset + change.value.length])
+      leftOffset += change.value.length
+    } else if (change.added) {
+      rightRanges.push([rightOffset, rightOffset + change.value.length])
+      rightOffset += change.value.length
+    } else {
+      leftOffset += change.value.length
+      rightOffset += change.value.length
+    }
+  }
+
+  const leftChangedChars = leftRanges.reduce((sum, range) => sum + range[1] - range[0], 0)
+  const rightChangedChars = rightRanges.reduce((sum, range) => sum + range[1] - range[0], 0)
+
+  if (Math.max(leftChangedChars / left.length, rightChangedChars / right.length) > 0.85) {
+    return { left: [], right: [] }
+  }
+
+  return { left: leftRanges, right: rightRanges }
 }
